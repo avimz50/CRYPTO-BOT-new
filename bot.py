@@ -1,4 +1,5 @@
 import os
+import json
 import ccxt
 import telebot
 import time
@@ -18,12 +19,11 @@ exchange = ccxt.bitget({
 bot = telebot.TeleBot(os.environ['TELEGRAM_TOKEN'])
 CHAT_ID = os.environ['CHAT_ID']
 
-# --- רשימות מעקב (Watchlist) ---
-WATCHLIST = {
-    'TOP_10': ['BTC/USDT', 'ETH/USDT', 'SOL/USDT'],
-    'AI_GEMS': ['FET/USDT', 'RENDER/USDT', 'NEAR/USDT'],
-    'ENERGY_GEO': ['PAXG/USDT', 'POWR/USDT', 'HNT/USDT']
-}
+# רשימה קבועה לאסטרטגיית EMA בלבד
+ENERGY_GEO = ['PAXG/USDT', 'POWR/USDT', 'HNT/USDT']
+
+# נתיב לקובץ המועמדים החמים (לדאשבורד)
+HOT_CANDIDATES_FILE = 'artifacts/bot-dashboard/public/hot_candidates.json'
 
 # רשימה למעקב אחרי עסקאות דמו פתוחות
 active_trades = []
@@ -49,9 +49,63 @@ def get_data(symbol, timeframe='1h', limit=250):
     df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     return df
 
+# --- שלב 1+2: משפך — מועמדים חמים ---
+
+def get_hot_candidates():
+    """שלב 1: שליפת כל זוגות USDT מ-Bitget
+       שלב 2: סינון Top 15 Gainers עם ווליום $1M+ ב-24 שעות"""
+    try:
+        print("Fetching all tickers for hot candidates...")
+        tickers = exchange.fetch_tickers()
+
+        candidates = []
+        for symbol, ticker in tickers.items():
+            if not symbol.endswith('/USDT'):
+                continue
+            change_pct = ticker.get('percentage', None)
+            volume_usd = ticker.get('quoteVolume', 0) or 0
+            last_price = ticker.get('last', 0) or 0
+
+            # סינון: שינוי חיובי + ווליום $1M+ + מחיר קיים
+            if change_pct is None or change_pct <= 0:
+                continue
+            if volume_usd < 1_000_000:
+                continue
+            if last_price <= 0:
+                continue
+
+            candidates.append({
+                'symbol': symbol,
+                'change_pct': round(change_pct, 2),
+                'volume_usd': round(volume_usd),
+                'price': last_price
+            })
+
+        # מיון לפי שינוי % יורד, לקיחת Top 15
+        candidates.sort(key=lambda x: x['change_pct'], reverse=True)
+        top_15 = candidates[:15]
+
+        # שמירה לדאשבורד
+        data = {
+            'updated': datetime.now().strftime('%H:%M:%S'),
+            'count': len(top_15),
+            'candidates': top_15
+        }
+        os.makedirs(os.path.dirname(HOT_CANDIDATES_FILE), exist_ok=True)
+        with open(HOT_CANDIDATES_FILE, 'w') as f:
+            json.dump(data, f)
+
+        print(f"Hot candidates found: {[c['symbol'] for c in top_15]}")
+        return top_15
+
+    except Exception as e:
+        print(f"Hot candidates error: {e}")
+        return []
+
 # --- אסטרטגיות ---
 
-def check_top_10(df):
+def check_rsi_trend(df):
+    """RSI < 40 + מחיר מעל EMA 200"""
     rsi_series = ta.rsi(df['close'], length=14)
     ema200_series = ta.ema(df['close'], length=200)
     if rsi_series is None or ema200_series is None:
@@ -65,7 +119,8 @@ def check_top_10(df):
         return True, f"RSI Oversold ({rsi:.1f}) + Above EMA200"
     return False, ""
 
-def check_ai_breakout(df):
+def check_breakout(df):
+    """פריצת שיא 24 שעות + ווליום ×1.5"""
     if len(df) < 26:
         return False, ""
     current_price = df['close'].iloc[-1]
@@ -73,12 +128,13 @@ def check_ai_breakout(df):
     breakout_pct = (current_price - high_24h) / high_24h * 100
     current_vol = df['volume'].iloc[-1]
     avg_vol = df['volume'].iloc[-21:-1].mean()
-    volume_confirmed = current_vol > avg_vol * 1.5
+    volume_confirmed = avg_vol > 0 and current_vol > avg_vol * 1.5
     if breakout_pct >= 0.5 and volume_confirmed:
         return True, f"24H Breakout +{breakout_pct:.1f}% + Volume ×{current_vol/avg_vol:.1f}"
     return False, ""
 
 def check_energy_trend(df):
+    """EMA 9 חוצה מעל EMA 21 + ווליום ×1.3"""
     ema9 = ta.ema(df['close'], length=9)
     ema21 = ta.ema(df['close'], length=21)
     if ema9 is None or ema21 is None:
@@ -200,7 +256,6 @@ def handle_test(message):
         print(f"Test signal sent for BTC/USDT at {price}")
     except Exception as e:
         send_msg(f"❌ שגיאה בטסט: {e}")
-        print(f"Test command error: {e}")
 
 @bot.message_handler(commands=['status'])
 def handle_status(message):
@@ -230,7 +285,6 @@ def start_telegram_polling():
 def main():
     global last_daily_report_date
 
-    # הפעל את האזנת הטלגרם בthread נפרד
     polling_thread = threading.Thread(target=start_telegram_polling, daemon=True)
     polling_thread.start()
 
@@ -238,31 +292,66 @@ def main():
 
     while True:
         try:
+            # מעקב עסקאות קיימות
             track_trades()
+
+            # בדיקת דוח יומי
             check_daily_report()
 
-            now = datetime.now().strftime('%H:%M:%S')
-            send_msg(f"🔍 *סריקה שעתית* — {now}\nבודק {sum(len(v) for v in WATCHLIST.values())} מטבעות...")
+            now_str = datetime.now().strftime('%H:%M:%S')
 
-            for category, symbols in WATCHLIST.items():
-                for symbol in symbols:
-                    if any(t['symbol'] == symbol for t in active_trades):
-                        continue
+            # ═══════════════════════════════════════
+            # שלב 1+2: שליפת מועמדים חמים (Funnel)
+            # ═══════════════════════════════════════
+            hot_candidates = get_hot_candidates()
+            hot_symbols = [c['symbol'] for c in hot_candidates]
 
+            send_msg(
+                f"🔍 *סריקה שעתית* — {now_str}\n"
+                f"🌡️ מועמדים חמים: {len(hot_symbols)} מטבעות\n"
+                f"⚡ EMA גיאו: {len(ENERGY_GEO)} מטבעות קבועים"
+            )
+
+            # ═══════════════════════════════════════
+            # שלב 3: סריקה עמוקה — RSI + Breakout
+            # על המועמדים החמים בלבד
+            # ═══════════════════════════════════════
+            for candidate in hot_candidates:
+                symbol = candidate['symbol']
+                if any(t['symbol'] == symbol for t in active_trades):
+                    continue
+                try:
                     df = get_data(symbol)
                     price = df['close'].iloc[-1]
-                    signal = False
-                    reason = ""
 
-                    if category == 'TOP_10':
-                        signal, reason = check_top_10(df)
-                    elif category == 'AI_GEMS':
-                        signal, reason = check_ai_breakout(df)
-                    elif category == 'ENERGY_GEO':
-                        signal, reason = check_energy_trend(df)
-
+                    # בדיקת RSI + EMA200
+                    signal, reason = check_rsi_trend(df)
                     if signal:
                         open_demo_trade(symbol, price, reason)
+                        continue
+
+                    # בדיקת פריצת 24 שעות
+                    signal, reason = check_breakout(df)
+                    if signal:
+                        open_demo_trade(symbol, price, reason)
+
+                except Exception as e:
+                    print(f"Error scanning {symbol}: {e}")
+
+            # ═══════════════════════════════════════
+            # אסטרטגיית EMA — רשימה קבועה בלבד
+            # ═══════════════════════════════════════
+            for symbol in ENERGY_GEO:
+                if any(t['symbol'] == symbol for t in active_trades):
+                    continue
+                try:
+                    df = get_data(symbol)
+                    price = df['close'].iloc[-1]
+                    signal, reason = check_energy_trend(df)
+                    if signal:
+                        open_demo_trade(symbol, price, reason)
+                except Exception as e:
+                    print(f"Error scanning {symbol}: {e}")
 
             print("Scan complete. Waiting 1 hour...")
             time.sleep(3600)
