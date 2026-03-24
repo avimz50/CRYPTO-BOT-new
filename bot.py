@@ -157,9 +157,26 @@ def check_energy_trend(df):
 
 # --- ניהול עסקאות דמו ---
 
-def open_demo_trade(symbol, price, reason):
-    sl = price * 0.98
-    tp = price * 1.06
+def get_strategy_label(reason):
+    """מחזיר שם אסטרטגיה קריא לפי תוכן הסיבה"""
+    if 'RSI' in reason:
+        return "📉 RSI Recovery"
+    elif 'Breakout' in reason:
+        return "🚀 High Volume Breakout"
+    elif 'EMA Cross' in reason:
+        return "📈 EMA Trend Cross"
+    return "📊 Signal"
+
+def open_demo_trade(symbol, price, candle_low, reason):
+    # SL = תחתית הנר (בפחות חיץ קטן), אבל לא יותר מ-2% מתחת לכניסה
+    sl = max(candle_low * 0.999, price * 0.98)
+    # TP = כניסה + (סיכון × 3) — יחס 1:3 אמיתי לפי ה-SL בפועל
+    risk = price - sl
+    tp = price + (risk * 3)
+
+    sl_pct = (price - sl) / price * 100
+    tp_pct = (tp - price) / price * 100
+
     trade = {
         'symbol': symbol,
         'entry': price,
@@ -169,11 +186,15 @@ def open_demo_trade(symbol, price, reason):
     }
     active_trades.append(trade)
 
+    strategy_label = get_strategy_label(reason)
+
     msg = f"🚀 *עסקת דמו חדשה!*\n\n"
-    msg += f"מטבע: `{symbol}`\nסיבה: {reason}\n"
-    msg += f"מחיר כניסה: {price:.4f}\n"
-    msg += f"🛑 סטופ לוס: {sl:.4f} (-2%)\n"
-    msg += f"🎯 יעד (1:3): {tp:.4f} (+6%)\n"
+    msg += f"*{strategy_label}*\n"
+    msg += f"מטבע: `{symbol}`\n"
+    msg += f"פירוט: {reason}\n\n"
+    msg += f"מחיר כניסה: `{price:.4f}`\n"
+    msg += f"🛑 סטופ לוס: `{sl:.4f}` (-{sl_pct:.1f}% · תחתית נר)\n"
+    msg += f"🎯 יעד (1:3): `{tp:.4f}` (+{tp_pct:.1f}%)\n"
     msg += f"💰 גודל פוזיציה: $20"
     send_msg(msg)
 
@@ -252,7 +273,9 @@ def handle_test(message):
         send_msg("🧪 *מריץ איתות טסט ל-BTC/USDT...*")
         ticker = exchange.fetch_ticker('BTC/USDT')
         price = ticker['last']
-        open_demo_trade('BTC/USDT', price, 'RSI Oversold (38.4) + Above EMA200 [TEST]')
+        # נר טסט: תחתית מדומה של 1% מתחת למחיר
+        candle_low = price * 0.99
+        open_demo_trade('BTC/USDT', price, candle_low, 'RSI Oversold (38.4) + Above EMA200 [TEST]')
         print(f"Test signal sent for BTC/USDT at {price}")
     except Exception as e:
         send_msg(f"❌ שגיאה בטסט: {e}")
@@ -324,16 +347,18 @@ def main():
                     df = get_data(symbol)
                     price = df['close'].iloc[-1]
 
+                    candle_low = df['low'].iloc[-1]
+
                     # בדיקת RSI + EMA200
                     signal, reason = check_rsi_trend(df)
                     if signal:
-                        open_demo_trade(symbol, price, reason)
+                        open_demo_trade(symbol, price, candle_low, reason)
                         continue
 
                     # בדיקת פריצת 24 שעות
                     signal, reason = check_breakout(df)
                     if signal:
-                        open_demo_trade(symbol, price, reason)
+                        open_demo_trade(symbol, price, candle_low, reason)
 
                 except Exception as e:
                     print(f"Error scanning {symbol}: {e}")
@@ -347,9 +372,10 @@ def main():
                 try:
                     df = get_data(symbol)
                     price = df['close'].iloc[-1]
+                    candle_low = df['low'].iloc[-1]
                     signal, reason = check_energy_trend(df)
                     if signal:
-                        open_demo_trade(symbol, price, reason)
+                        open_demo_trade(symbol, price, candle_low, reason)
                 except Exception as e:
                     print(f"Error scanning {symbol}: {e}")
 
