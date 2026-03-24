@@ -25,6 +25,11 @@ ENERGY_GEO = ['PAXG/USDT', 'POWR/USDT', 'HNT/USDT']
 # נתיב לקובץ המועמדים החמים (לדאשבורד)
 HOT_CANDIDATES_FILE = 'artifacts/bot-dashboard/public/hot_candidates.json'
 
+# --- פרמטרי מינוף (דמו) ---
+LEVERAGE       = 10          # מינוף 10x
+MARGIN         = 50          # בטחון ($) לכל עסקה
+POSITION_SIZE  = MARGIN * LEVERAGE   # $500 נשלט
+
 # רשימה למעקב אחרי עסקאות דמו פתוחות
 active_trades = []
 
@@ -32,6 +37,7 @@ active_trades = []
 daily_stats = {
     'wins': 0,
     'losses': 0,
+    'total_pnl': 0.0,   # רווח/הפסד כולל ($) עם מינוף
     'date': date.today()
 }
 
@@ -179,42 +185,54 @@ def get_strategy_label(reason):
     return "📊 Signal"
 
 def open_demo_trade(symbol, price, candle_low, reason):
-    # SL = תחתית הנר (חיץ 0.1%), תקרה 3% מהכניסה (רחב יותר — פחות רעש)
+    # SL = תחתית הנר (חיץ 0.1%), תקרה 3% מהכניסה
     sl = max(candle_low * 0.999, price * 0.97)
-    # TP = כניסה + (סיכון × 3) — יחס 1:3 אמיתי (בסביבות 9% אם SL=3%)
+    # TP = כניסה + (סיכון × 3) — יחס 1:3 (בסביבות 9% אם SL=3%)
     risk = price - sl
     tp = price + (risk * 3)
 
-    sl_pct = (price - sl) / price * 100
-    tp_pct = (tp - price) / price * 100
+    sl_pct  = (price - sl) / price * 100
+    tp_pct  = (tp - price) / price * 100
+
+    # חישוב P&L עם מינוף 10x על $50 בטחון ($500 נשלט)
+    potential_profit = round(POSITION_SIZE * (tp_pct / 100), 2)
+    potential_loss   = round(POSITION_SIZE * (sl_pct / 100), 2)
+    profit_pct_margin = round(potential_profit / MARGIN * 100, 1)
+    loss_pct_margin   = round(potential_loss   / MARGIN * 100, 1)
 
     trade = {
         'symbol': symbol,
         'entry': price,
         'sl': sl,
         'tp': tp,
-        'be_triggered': False,   # האם הסטופ הועבר ל-Break Even
+        'sl_pct': sl_pct,
+        'tp_pct': tp_pct,
+        'be_triggered': False,
         'status': 'OPEN'
     }
     active_trades.append(trade)
 
     strategy_label = get_strategy_label(reason)
 
-    msg = f"🚀 *עסקת דמו חדשה!*\n\n"
+    msg  = f"🚀 *עסקת דמו חדשה!*\n\n"
     msg += f"*{strategy_label}*\n"
     msg += f"מטבע: `{symbol}`\n"
     msg += f"פירוט: {reason}\n\n"
-    msg += f"מחיר כניסה: `{price:.4f}`\n"
-    msg += f"🛑 סטופ לוס: `{sl:.4f}` (-{sl_pct:.1f}% · תחתית נר)\n"
-    msg += f"🎯 יעד (1:3): `{tp:.4f}` (+{tp_pct:.1f}%)\n"
-    msg += f"💰 גודל פוזיציה: $20"
+    msg += f"מחיר כניסה:  `{price:.4f}`\n"
+    msg += f"🛑 סטופ לוס: `{sl:.4f}` (-{sl_pct:.1f}%)\n"
+    msg += f"🎯 יעד (1:3): `{tp:.4f}` (+{tp_pct:.1f}%)\n\n"
+    msg += f"{'─' * 26}\n"
+    msg += f"💼 *Leverage: {LEVERAGE}x (Isolated)*\n"
+    msg += f"💰 בטחון: ${MARGIN} · נשלט: ${POSITION_SIZE}\n"
+    msg += f"📈 רווח פוטנציאלי: *+${potential_profit} (+{profit_pct_margin}%)*\n"
+    msg += f"📉 הפסד פוטנציאלי: *-${potential_loss} (-{loss_pct_margin}%)*"
     send_msg(msg)
 
 def track_trades():
     global active_trades, daily_stats
 
     if daily_stats['date'] != date.today():
-        daily_stats = {'wins': 0, 'losses': 0, 'date': date.today()}
+        daily_stats = {'wins': 0, 'losses': 0, 'total_pnl': 0.0, 'date': date.today()}
 
     for trade in active_trades[:]:
         ticker = exchange.fetch_ticker(trade['symbol'])
@@ -228,34 +246,47 @@ def track_trades():
                 send_msg(
                     f"🔒 *Break Even מופעל — {trade['symbol']}*\n"
                     f"הסטופ הועבר למחיר כניסה: `{trade['entry']:.4f}`\n"
-                    f"ההון מוגן — ללא סיכון!"
+                    f"ההון מוגן — ללא סיכון! · {LEVERAGE}x Isolated"
                 )
 
         # ── בדיקת TP / SL ──
         if current_price >= trade['tp']:
-            profit = round((trade['tp'] - trade['entry']) / trade['entry'] * 20, 2)
+            tp_pct   = trade.get('tp_pct', (trade['tp'] - trade['entry']) / trade['entry'] * 100)
+            pnl      = round(POSITION_SIZE * tp_pct / 100, 2)
+            pnl_pct  = round(pnl / MARGIN * 100, 1)
+            daily_stats['wins']      += 1
+            daily_stats['total_pnl'] += pnl
             send_msg(
                 f"✅ *רווח (TP) הושג ב-{trade['symbol']}!*\n"
-                f"כניסה: {trade['entry']:.4f} → TP: {trade['tp']:.4f}\n"
-                f"רווח מוערך: +${profit}"
+                f"כניסה: `{trade['entry']:.4f}` → TP: `{trade['tp']:.4f}`\n"
+                f"💼 {LEVERAGE}x Isolated · בטחון: ${MARGIN}\n"
+                f"*רווח: +${pnl} (+{pnl_pct}% על המרג'ין)*\n"
+                f"סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
             )
-            daily_stats['wins'] += 1
             active_trades.remove(trade)
         elif current_price <= trade['sl']:
             be = trade.get('be_triggered', False)
             if be:
+                daily_stats['losses']    += 1
+                # יצאנו ב-Break Even — ללא הפסד
                 send_msg(
                     f"🔒 *יצאנו ב-Break Even — {trade['symbol']}*\n"
-                    f"ללא הפסד · ההון נשמר"
+                    f"ללא הפסד · ההון נשמר\n"
+                    f"סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                 )
             else:
-                loss = round((trade['entry'] - trade['sl']) / trade['entry'] * 20, 2)
+                sl_pct   = trade.get('sl_pct', (trade['entry'] - trade['sl']) / trade['entry'] * 100)
+                pnl      = round(POSITION_SIZE * sl_pct / 100, 2)
+                pnl_pct  = round(pnl / MARGIN * 100, 1)
+                daily_stats['losses']    += 1
+                daily_stats['total_pnl'] -= pnl
                 send_msg(
                     f"🛑 *הפסד (SL) ב-{trade['symbol']}*\n"
-                    f"כניסה: {trade['entry']:.4f} → SL: {trade['sl']:.4f}\n"
-                    f"הפסד מוערך: -${loss}"
+                    f"כניסה: `{trade['entry']:.4f}` → SL: `{trade['sl']:.4f}`\n"
+                    f"💼 {LEVERAGE}x Isolated · בטחון: ${MARGIN}\n"
+                    f"*הפסד: -${pnl} (-{pnl_pct}% על המרג'ין)*\n"
+                    f"סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                 )
-            daily_stats['losses'] += 1
             active_trades.remove(trade)
 
 # --- דוח יומי ---
@@ -281,6 +312,10 @@ def send_daily_report():
     else:
         trades_lines = "  _אין עסקאות פעילות כרגע_\n"
 
+    total_pnl  = daily_stats.get('total_pnl', 0.0)
+    pnl_sign   = "+" if total_pnl >= 0 else ""
+    pnl_on_margin = round(total_pnl / MARGIN * 100, 1) if MARGIN else 0
+
     msg = f"📊 *דוח יומי — {now}*\n"
     msg += f"{'─' * 28}\n\n"
     msg += f"*📂 עסקאות פתוחות ({len(active_trades)}):*\n"
@@ -289,6 +324,8 @@ def send_daily_report():
     msg += f"  ✅ רווחים: {daily_stats['wins']}\n"
     msg += f"  ❌ הפסדים: {daily_stats['losses']}\n"
     msg += f"  🎯 אחוז הצלחה: {win_rate:.0f}%\n\n"
+    msg += f"*💼 P&L כולל (10x Isolated):*\n"
+    msg += f"  {pnl_sign}${total_pnl:.2f} ({pnl_sign}{pnl_on_margin}% על מרג'ין)\n\n"
     msg += f"*🔌 חיבור Bitget API:* {api_status}\n"
     msg += f"{'─' * 28}\n"
     msg += f"_הבוט פעיל ומסרוק כל שעה_ 🤖"
