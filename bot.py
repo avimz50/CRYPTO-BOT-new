@@ -7,7 +7,7 @@ import time
 import threading
 import pandas as pd
 import pandas_ta as ta
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 # ספריות גרף — fallback אם לא קיימות
 try:
@@ -754,6 +754,21 @@ def handle_close(message):
 def handle_report(message):
     send_daily_report()
 
+@bot.message_handler(commands=['ping'])
+def handle_ping(message):
+    now        = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+    uptime_msg = f"🟢 *הבוט פעיל!*\n\n"
+    uptime_msg += f"🕐 שעה: `{now}`\n"
+    uptime_msg += f"📊 עסקאות פעילות: *{len(active_trades)}*\n"
+    if active_trades:
+        for t in active_trades:
+            phase = "🔄 Trailing" if t.get('phase') == 'trailing' else "📊 Initial"
+            uptime_msg += f"   • `{t['symbol']}` — {phase}\n"
+    uptime_msg += f"\n📈 P&L היום: *${round(daily_stats.get('total_pnl', 0), 2):+}*\n"
+    uptime_msg += f"✅ ניצחונות: {daily_stats.get('wins', 0)} · ❌ הפסדים: {daily_stats.get('losses', 0)}\n"
+    uptime_msg += f"\n_הסריקה הבאה בעוד פחות משעה_"
+    send_msg(uptime_msg)
+
 def start_telegram_polling():
     print("Telegram polling started...")
     while True:
@@ -774,10 +789,10 @@ def main():
     send_msg(
         "🤖 *הבוט התחיל לסרוק ב-Replit!*\n\n"
         "*פקודות זמינות:*\n"
+        "/ping — בדיקת חיות הבוט ומצב מיידי\n"
         "/test — איתות BTC מזויף + גרף\n"
         "/status — עסקאות פעילות (שלב, SL, TP, Trailing)\n"
         "/update BTC 84000 95000 — עדכון SL ו-TP\n"
-        "/update BTC sl=84000 — עדכון SL בלבד\n"
         "/close BTC — סגירה ידנית של עסקה\n"
         "/report — דוח יומי מיידי"
     )
@@ -847,6 +862,25 @@ def main():
                         open_demo_trade(symbol, price, candle_low, reason, df)
                 except Exception as e:
                     print(f"Error scanning {symbol}: {e}")
+
+            # ── מיני סיכום אחרי כל סריקה ──
+            now = datetime.now().strftime('%H:%M')
+            next_scan = (datetime.now() + timedelta(hours=1)).strftime('%H:%M')
+            active_count = len(active_trades)
+            pnl_today = round(daily_stats.get('total_pnl', 0), 2)
+            pnl_icon  = "📈" if pnl_today >= 0 else "📉"
+
+            summary  = f"✅ *סריקה הושלמה — {now}*\n\n"
+            summary += f"🔍 מועמדים שנסרקו: *15 Top Gainers*\n"
+            summary += f"📊 עסקאות פעילות: *{active_count}*\n"
+            if active_trades:
+                for t in active_trades:
+                    phase = "🔄 Trailing" if t.get('phase') == 'trailing' else "📊 Initial"
+                    summary += f"   • `{t['symbol']}` {phase}\n"
+            summary += f"\n{pnl_icon} P&L היום: *${pnl_today:+}*\n"
+            summary += f"⏰ סריקה הבאה: `{next_scan}`\n"
+            summary += f"_שלח /ping בכל עת לבדיקת מצב_"
+            send_msg(summary)
 
             print("Scan complete. Waiting 1 hour...")
             time.sleep(3600)
