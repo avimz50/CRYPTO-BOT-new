@@ -4,7 +4,7 @@ import telebot
 import time
 import pandas as pd
 import pandas_ta as ta
-from datetime import datetime
+from datetime import datetime, date
 
 # --- הגדרות וחיבורים ---
 exchange = ccxt.bitget({
@@ -21,11 +21,21 @@ CHAT_ID = os.environ['CHAT_ID']
 WATCHLIST = {
     'TOP_10': ['BTC/USDT', 'ETH/USDT', 'SOL/USDT'],
     'AI_GEMS': ['FET/USDT', 'RENDER/USDT', 'NEAR/USDT'],
-    'ENERGY_GEO': ['PAXG/USDT'] # זהב כנכס מקלט/אנרגיה
+    'ENERGY_GEO': ['PAXG/USDT']
 }
 
 # רשימה למעקב אחרי עסקאות דמו פתוחות
 active_trades = []
+
+# מעקב אחרי עסקאות שנסגרו היום
+daily_stats = {
+    'wins': 0,
+    'losses': 0,
+    'date': date.today()
+}
+
+# שמירת תאריך הדוח האחרון שנשלח
+last_daily_report_date = None
 
 def send_msg(text):
     try:
@@ -41,7 +51,6 @@ def get_data(symbol, timeframe='1h', limit=100):
 # --- אסטרטגיות ---
 
 def check_top_10(df):
-    # אסטרטגיה: RSI נמוך (מכירת יתר) במגמה עולה
     rsi_series = ta.rsi(df['close'], length=14)
     ema200_series = ta.ema(df['close'], length=200)
     if rsi_series is None or ema200_series is None:
@@ -56,7 +65,6 @@ def check_top_10(df):
     return False, ""
 
 def check_ai_breakout(df):
-    # אסטרטגיה: פריצת שיא של 24 נרות (יום)
     if len(df) < 26:
         return False, ""
     current_price = df['close'].iloc[-1]
@@ -66,7 +74,6 @@ def check_ai_breakout(df):
     return False, ""
 
 def check_energy_trend(df):
-    # אסטרטגיה: חציית ממוצעים EMA 9/21
     ema9 = ta.ema(df['close'], length=9)
     ema21 = ta.ema(df['close'], length=21)
     if ema9 is None or ema21 is None:
@@ -82,7 +89,6 @@ def check_energy_trend(df):
 # --- ניהול עסקאות דמו ---
 
 def open_demo_trade(symbol, price, reason):
-    # חישוב יחס 1:3 (סטופ של 2%, יעד של 6%)
     sl = price * 0.98
     tp = price * 1.06
     trade = {
@@ -93,8 +99,8 @@ def open_demo_trade(symbol, price, reason):
         'status': 'OPEN'
     }
     active_trades.append(trade)
-    
-    msg = f"🚀 **עסקת דמו חדשה!**\n\n"
+
+    msg = f"🚀 *עסקת דמו חדשה!*\n\n"
     msg += f"מטבע: `{symbol}`\nסיבה: {reason}\n"
     msg += f"מחיר כניסה: {price:.4f}\n"
     msg += f"🛑 סטופ לוס: {sl:.4f}\n"
@@ -103,27 +109,87 @@ def open_demo_trade(symbol, price, reason):
     send_msg(msg)
 
 def track_trades():
-    global active_trades
+    global active_trades, daily_stats
+
+    # אם עבר יום, אפס את הסטטיסטיקות
+    if daily_stats['date'] != date.today():
+        daily_stats = {'wins': 0, 'losses': 0, 'date': date.today()}
+
     for trade in active_trades[:]:
         ticker = exchange.fetch_ticker(trade['symbol'])
         current_price = ticker['last']
-        
+
         if current_price >= trade['tp']:
-            send_msg(f"✅ **רווח (TP) הושג ב-{trade['symbol']}!**\nרווח מוערך: $1.20")
+            send_msg(f"✅ *רווח (TP) הושג ב-{trade['symbol']}!*\nרווח מוערך: $1.20")
+            daily_stats['wins'] += 1
             active_trades.remove(trade)
         elif current_price <= trade['sl']:
-            send_msg(f"🛑 **הפסד (SL) ב-{trade['symbol']}**\nהפסד מוערך: $0.40")
+            send_msg(f"🛑 *הפסד (SL) ב-{trade['symbol']}*\nהפסד מוערך: $0.40")
+            daily_stats['losses'] += 1
             active_trades.remove(trade)
+
+# --- דוח יומי ---
+
+def check_api_connection():
+    try:
+        exchange.fetch_ticker('BTC/USDT')
+        return True
+    except Exception:
+        return False
+
+def send_daily_report():
+    now = datetime.now().strftime('%d/%m/%Y %H:%M')
+    total_closed = daily_stats['wins'] + daily_stats['losses']
+    win_rate = (daily_stats['wins'] / total_closed * 100) if total_closed > 0 else 0
+    api_ok = check_api_connection()
+    api_status = "✅ פעיל" if api_ok else "❌ בעיה בחיבור!"
+
+    # עסקאות פעילות
+    if active_trades:
+        trades_lines = ""
+        for t in active_trades:
+            trades_lines += f"  • `{t['symbol']}` — כניסה: {t['entry']:.4f}\n"
+    else:
+        trades_lines = "  _אין עסקאות פעילות כרגע_\n"
+
+    msg = f"📊 *דוח יומי — {now}*\n"
+    msg += f"{'─' * 28}\n\n"
+    msg += f"*📂 עסקאות פתוחות ({len(active_trades)}):*\n"
+    msg += trades_lines + "\n"
+    msg += f"*📈 תוצאות 24 שעות אחרונות:*\n"
+    msg += f"  ✅ רווחים: {daily_stats['wins']}\n"
+    msg += f"  ❌ הפסדים: {daily_stats['losses']}\n"
+    msg += f"  🎯 אחוז הצלחה: {win_rate:.0f}%\n\n"
+    msg += f"*🔌 חיבור Bitget API:* {api_status}\n"
+    msg += f"{'─' * 28}\n"
+    msg += f"_הבוט פעיל ומסרוק כל 15 דקות_ 🤖"
+
+    send_msg(msg)
+    print(f"Daily report sent at {now}")
+
+def check_daily_report():
+    global last_daily_report_date
+    now = datetime.now()
+    today = date.today()
+
+    if now.hour == 9 and now.minute < 15:
+        if last_daily_report_date != today:
+            send_daily_report()
+            last_daily_report_date = today
 
 # --- הלולאה הראשית ---
 
 def main():
+    global last_daily_report_date
     send_msg("🤖 הבוט התחיל לסרוק ב-Replit...")
     while True:
         try:
             # מעקב אחרי עסקאות קיימות
             track_trades()
-            
+
+            # בדיקה אם צריך לשלוח דוח יומי (09:00)
+            check_daily_report()
+
             # הודעת התחלת סריקה
             now = datetime.now().strftime('%H:%M:%S')
             send_msg(f"🔍 *סריקה חדשה החלה* — {now}\nבודק {sum(len(v) for v in WATCHLIST.values())} מטבעות...")
@@ -131,10 +197,9 @@ def main():
             # סריקה לאיתותים חדשים
             for category, symbols in WATCHLIST.items():
                 for symbol in symbols:
-                    # בדיקה אם כבר יש עסקה פתוחה על המטבע הזה
                     if any(t['symbol'] == symbol for t in active_trades):
                         continue
-                        
+
                     df = get_data(symbol)
                     price = df['close'].iloc[-1]
                     signal = False
@@ -149,10 +214,10 @@ def main():
 
                     if signal:
                         open_demo_trade(symbol, price, reason)
-            
+
             print("Scan complete. Waiting 15 minutes...")
-            time.sleep(900) # סריקה כל 15 דקות
-            
+            time.sleep(900)
+
         except Exception as e:
             print(f"Main Loop Error: {e}")
             time.sleep(60)
