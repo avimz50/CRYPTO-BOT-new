@@ -1,4 +1,5 @@
 import os
+import io
 import json
 import ccxt
 import telebot
@@ -7,6 +8,17 @@ import threading
 import pandas as pd
 import pandas_ta as ta
 from datetime import datetime, date
+
+# ספריות גרף — fallback אם לא קיימות
+try:
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import mplfinance as mpf
+    CHARTS_ENABLED = True
+except ImportError:
+    CHARTS_ENABLED = False
+    print("mplfinance not available — charts disabled")
 
 # --- הגדרות וחיבורים ---
 exchange = ccxt.bitget({
@@ -54,6 +66,106 @@ def get_data(symbol, timeframe='1h', limit=250):
     bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
     df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     return df
+
+def generate_chart(df, symbol, entry, sl, tp):
+    """מייצר גרף נרות עם EMA200, RSI, ווליום וקווי SL/Entry/TP.
+       מחזיר BytesIO או None אם נכשל."""
+    if not CHARTS_ENABLED:
+        return None
+    try:
+        # ── נתונים: 72 נרות אחרונים (3 ימים ב-1H) ──
+        plot_df = df.tail(72).copy()
+        plot_df.index = pd.to_datetime(plot_df['timestamp'], unit='ms')
+        plot_df = plot_df[['open', 'high', 'low', 'close', 'volume']].rename(
+            columns={'open': 'Open', 'high': 'High', 'low': 'Low',
+                     'close': 'Close', 'volume': 'Volume'}
+        )
+
+        # ── אינדיקטורים ──
+        ema200_vals = ta.ema(df['close'], length=200).tail(72).values
+        rsi_vals    = ta.rsi(df['close'], length=14).tail(72).values
+
+        # קווי RSI 30 / 70
+        rsi_30 = [30] * 72
+        rsi_70 = [70] * 72
+
+        apds = [
+            mpf.make_addplot(ema200_vals, color='#f5a623', width=1.8,
+                             label='EMA 200'),
+            mpf.make_addplot(rsi_vals, panel=2, color='#9b59b6',
+                             ylabel='RSI', ylim=(0, 100)),
+            mpf.make_addplot(rsi_30, panel=2, color='#27ae60',
+                             linestyle='--', width=0.8),
+            mpf.make_addplot(rsi_70, panel=2, color='#e74c3c',
+                             linestyle='--', width=0.8),
+        ]
+
+        # ── עיצוב כהה ──
+        BG = '#0d1117'
+        mc = mpf.make_marketcolors(
+            up='#26a69a', down='#ef5350',
+            wick={'up': '#26a69a', 'down': '#ef5350'},
+            volume={'up': '#26a69a', 'down': '#ef5350'},
+            edge='inherit'
+        )
+        style = mpf.make_mpf_style(
+            marketcolors=mc,
+            facecolor=BG, figcolor=BG,
+            gridcolor='#21262d', gridstyle='-',
+            y_on_right=False,
+            rc={'axes.labelcolor': '#c9d1d9',
+                'xtick.color': '#8b949e',
+                'ytick.color': '#8b949e',
+                'text.color': '#c9d1d9'}
+        )
+
+        buf = io.BytesIO()
+        fig, axes = mpf.plot(
+            plot_df,
+            type='candle',
+            style=style,
+            addplot=apds,
+            volume=True,
+            panel_ratios=(4, 1, 2),
+            figsize=(13, 9),
+            title=f'\n  {symbol}  ·  1H  ·  Last 72 candles',
+            returnfig=True,
+            tight_layout=True
+        )
+
+        # ── קווים אופקיים: Entry / TP / SL ──
+        ax = axes[0]
+        ax.axhline(entry, color='#3498db', linewidth=1.5,
+                   linestyle='--', label=f'Entry  {entry:.4f}')
+        ax.axhline(tp,    color='#2ecc71', linewidth=1.5,
+                   linestyle='--', label=f'TP     {tp:.4f}')
+        ax.axhline(sl,    color='#e74c3c', linewidth=1.5,
+                   linestyle='--', label=f'SL     {sl:.4f}')
+        ax.legend(loc='upper left', fontsize=8,
+                  facecolor='#161b22', labelcolor='#c9d1d9',
+                  edgecolor='#30363d')
+
+        fig.savefig(buf, format='png', dpi=120,
+                    bbox_inches='tight', facecolor=BG)
+        plt.close(fig)
+        buf.seek(0)
+        return buf
+
+    except Exception as e:
+        print(f"Chart error: {e}")
+        return None
+
+def send_chart_alert(chart_buf, symbol, caption):
+    """שולח גרף עם כיתוב קצר, ואז את ההודעה המלאה בנפרד."""
+    try:
+        if chart_buf:
+            short = f"📊 *{symbol}* — גרף 1H עם SL/Entry/TP"
+            bot.send_photo(CHAT_ID, chart_buf, caption=short,
+                           parse_mode='Markdown')
+        send_msg(caption)
+    except Exception as e:
+        print(f"Send chart error: {e}")
+        send_msg(caption)
 
 # --- שלב 1+2: משפך — מועמדים חמים ---
 
@@ -184,7 +296,7 @@ def get_strategy_label(reason):
         return "📈 EMA Trend Cross"
     return "📊 Signal"
 
-def open_demo_trade(symbol, price, candle_low, reason):
+def open_demo_trade(symbol, price, candle_low, reason, df=None):
     # ── מחירי כניסה / יציאה ──
     sl      = max(candle_low * 0.999, price * 0.97)   # SL: תחתית נר, תקרה 3%
     tp_full = price * 1.09                             # TP מלא: 9%
@@ -234,7 +346,10 @@ def open_demo_trade(symbol, price, candle_low, reason):
     msg += f"💰 בטחון: ${MARGIN} · נשלט: ${POSITION_SIZE}\n"
     msg += f"📈 מקסימום רווח: *+${max_profit}* (TP1 + TP)\n"
     msg += f"📉 מקסימום הפסד: *-${sl_loss}* (-{sl_pct}%)"
-    send_msg(msg)
+
+    # ── גרף: שלח תמונה + טקסט ──
+    chart_buf = generate_chart(df, symbol, price, sl, tp_full) if df is not None else None
+    send_chart_alert(chart_buf, symbol, msg)
 
 def track_trades():
     global active_trades, daily_stats
@@ -425,11 +540,11 @@ def check_daily_report():
 def handle_test(message):
     try:
         send_msg("🧪 *מריץ איתות טסט ל-BTC/USDT...*")
-        ticker = exchange.fetch_ticker('BTC/USDT')
-        price = ticker['last']
-        # נר טסט: תחתית מדומה של 1% מתחת למחיר
-        candle_low = price * 0.99
-        open_demo_trade('BTC/USDT', price, candle_low, 'RSI Oversold (38.4) + Above EMA200 [TEST]')
+        df_test = get_data('BTC/USDT')
+        price = df_test['close'].iloc[-1]
+        candle_low = df_test['low'].iloc[-1]
+        open_demo_trade('BTC/USDT', price, candle_low,
+                        'RSI Turnaround (33.1→36.2) + EMA200 + Vol ×1.8 [TEST]', df_test)
         print(f"Test signal sent for BTC/USDT at {price}")
     except Exception as e:
         send_msg(f"❌ שגיאה בטסט: {e}")
@@ -506,13 +621,13 @@ def main():
                     # בדיקת RSI + EMA200
                     signal, reason = check_rsi_trend(df)
                     if signal:
-                        open_demo_trade(symbol, price, candle_low, reason)
+                        open_demo_trade(symbol, price, candle_low, reason, df)
                         continue
 
                     # בדיקת פריצת 24 שעות
                     signal, reason = check_breakout(df)
                     if signal:
-                        open_demo_trade(symbol, price, candle_low, reason)
+                        open_demo_trade(symbol, price, candle_low, reason, df)
 
                 except Exception as e:
                     print(f"Error scanning {symbol}: {e}")
@@ -529,7 +644,7 @@ def main():
                     candle_low = df['low'].iloc[-1]
                     signal, reason = check_energy_trend(df)
                     if signal:
-                        open_demo_trade(symbol, price, candle_low, reason)
+                        open_demo_trade(symbol, price, candle_low, reason, df)
                 except Exception as e:
                     print(f"Error scanning {symbol}: {e}")
 
