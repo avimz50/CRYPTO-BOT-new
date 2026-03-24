@@ -128,7 +128,7 @@ def generate_chart(df, symbol, entry, sl, tp, direction='LONG'):
             marketcolors=mc,
             facecolor=BG, figcolor=BG,
             gridcolor='#21262d', gridstyle='-',
-            y_on_right=False,
+            y_on_right=True,
             rc={'axes.labelcolor': '#c9d1d9',
                 'xtick.color': '#8b949e',
                 'ytick.color': '#8b949e',
@@ -149,14 +149,45 @@ def generate_chart(df, symbol, entry, sl, tp, direction='LONG'):
             tight_layout=True
         )
 
-        # ── קווים אופקיים: Entry / TP / SL ──
+        # ── אזורי רווח / הפסד לפי כיוון ──
         ax = axes[0]
-        ax.axhline(entry, color='#3498db', linewidth=1.5,
-                   linestyle='--', label=f'Entry  {entry:.4f}')
-        ax.axhline(tp,    color=tp_color, linewidth=1.5,
-                   linestyle='--', label=f'TP     {tp:.4f}')
-        ax.axhline(sl,    color=sl_color, linewidth=1.5,
-                   linestyle='--', label=f'SL     {sl:.4f}')
+
+        if direction == 'SHORT':
+            # SHORT: רווח (ירוק) מתחת לכניסה → TP | הפסד (אדום) מעל כניסה → SL
+            ax.axhspan(tp,    entry, alpha=0.10, color='forestgreen', zorder=0)
+            ax.axhspan(entry, sl,    alpha=0.10, color='crimson',     zorder=0)
+            # קווי גבול האזורים
+            ax.axhline(tp,    color='forestgreen', linewidth=0.6, linestyle=':')
+            ax.axhline(sl,    color='crimson',     linewidth=0.6, linestyle=':')
+        else:
+            # LONG: רווח (ירוק) מעל כניסה → TP | הפסד (אדום) מתחת כניסה → SL
+            ax.axhspan(entry, tp,    alpha=0.10, color='forestgreen', zorder=0)
+            ax.axhspan(sl,    entry, alpha=0.10, color='crimson',     zorder=0)
+            ax.axhline(tp,    color='forestgreen', linewidth=0.6, linestyle=':')
+            ax.axhline(sl,    color='crimson',     linewidth=0.6, linestyle=':')
+
+        # ── קווים ראשיים: Entry / TP / SL ──
+        ax.axhline(entry, color='#3498db',    linewidth=1.8,
+                   linestyle='--', label=f'🔵 Entry  {entry:.4f}')
+        ax.axhline(tp,    color='forestgreen', linewidth=1.8,
+                   linestyle='--', label=f'✅ TP     {tp:.4f}')
+        ax.axhline(sl,    color='crimson',     linewidth=1.8,
+                   linestyle='--', label=f'🛑 SL     {sl:.4f}')
+
+        # ── תוויות טקסט על ציר Y ──
+        y_min, y_max = ax.get_ylim()
+        x_pos = ax.get_xlim()[1] * 0.98
+        for price_lvl, label_txt, col in [
+            (tp,    'TP',    'forestgreen'),
+            (entry, 'ENTRY', '#3498db'),
+            (sl,    'SL',    'crimson'),
+        ]:
+            if y_min < price_lvl < y_max:
+                ax.text(x_pos, price_lvl, f' {label_txt}', color=col,
+                        fontsize=7.5, fontweight='bold', va='center',
+                        bbox=dict(facecolor=BG, edgecolor=col,
+                                  boxstyle='round,pad=0.2', alpha=0.8))
+
         ax.legend(loc='upper left', fontsize=8,
                   facecolor='#161b22', labelcolor='#c9d1d9',
                   edgecolor='#30363d')
