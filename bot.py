@@ -67,12 +67,29 @@ def get_data(symbol, timeframe='1h', limit=250):
     df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     return df
 
-def generate_chart(df, symbol, entry, sl, tp):
+def generate_chart(df, symbol, entry, sl, tp, direction='LONG'):
     """מייצר גרף נרות עם EMA200, RSI, ווליום וקווי SL/Entry/TP.
+       direction='LONG' → ירוק | 'SHORT' → אדום.
        מחזיר BytesIO או None אם נכשל."""
     if not CHARTS_ENABLED:
         return None
     try:
+        # ── צבעי נרות לפי כיוון ──
+        if direction == 'SHORT':
+            candle_up   = '#ef5350'   # אדום — SHORT
+            candle_down = '#b71c1c'
+            accent      = '#ff5252'   # accent לקו TP/SL
+            tp_color    = '#e74c3c'   # TP — מטרה לירידה
+            sl_color    = '#2ecc71'   # SL — עצירה מעל
+            dir_label   = '🐻 BEARISH SHORT'
+        else:
+            candle_up   = '#26a69a'   # ירוק — LONG
+            candle_down = '#ef5350'
+            accent      = '#00e676'
+            tp_color    = '#2ecc71'   # TP — מטרה לעלייה
+            sl_color    = '#e74c3c'   # SL — עצירה מתחת
+            dir_label   = '🐂 BULLISH LONG'
+
         # ── נתונים: 72 נרות אחרונים (3 ימים ב-1H) ──
         plot_df = df.tail(72).copy()
         plot_df.index = pd.to_datetime(plot_df['timestamp'], unit='ms')
@@ -85,7 +102,6 @@ def generate_chart(df, symbol, entry, sl, tp):
         ema200_vals = ta.ema(df['close'], length=200).tail(72).values
         rsi_vals    = ta.rsi(df['close'], length=14).tail(72).values
 
-        # קווי RSI 30 / 70
         rsi_30 = [30] * 72
         rsi_70 = [70] * 72
 
@@ -100,12 +116,12 @@ def generate_chart(df, symbol, entry, sl, tp):
                              linestyle='--', width=0.8),
         ]
 
-        # ── עיצוב כהה ──
+        # ── עיצוב כהה עם צבע לפי כיוון ──
         BG = '#0d1117'
         mc = mpf.make_marketcolors(
-            up='#26a69a', down='#ef5350',
-            wick={'up': '#26a69a', 'down': '#ef5350'},
-            volume={'up': '#26a69a', 'down': '#ef5350'},
+            up=candle_up, down=candle_down,
+            wick={'up': candle_up, 'down': candle_down},
+            volume={'up': candle_up, 'down': candle_down},
             edge='inherit'
         )
         style = mpf.make_mpf_style(
@@ -128,7 +144,7 @@ def generate_chart(df, symbol, entry, sl, tp):
             volume=True,
             panel_ratios=(4, 1, 2),
             figsize=(13, 9),
-            title=f'\n  {symbol}  ·  1H  ·  Last 72 candles',
+            title=f'\n  {symbol}  ·  1H  ·  {dir_label}',
             returnfig=True,
             tight_layout=True
         )
@@ -137,9 +153,9 @@ def generate_chart(df, symbol, entry, sl, tp):
         ax = axes[0]
         ax.axhline(entry, color='#3498db', linewidth=1.5,
                    linestyle='--', label=f'Entry  {entry:.4f}')
-        ax.axhline(tp,    color='#2ecc71', linewidth=1.5,
+        ax.axhline(tp,    color=tp_color, linewidth=1.5,
                    linestyle='--', label=f'TP     {tp:.4f}')
-        ax.axhline(sl,    color='#e74c3c', linewidth=1.5,
+        ax.axhline(sl,    color=sl_color, linewidth=1.5,
                    linestyle='--', label=f'SL     {sl:.4f}')
         ax.legend(loc='upper left', fontsize=8,
                   facecolor='#161b22', labelcolor='#c9d1d9',
@@ -289,14 +305,32 @@ def check_energy_trend(df):
 def get_strategy_label(reason):
     """מחזיר שם אסטרטגיה קריא לפי תוכן הסיבה"""
     if 'RSI' in reason:
-        return "📉 RSI Recovery"
+        return "RSI Turnaround Recovery"
     elif 'Breakout' in reason:
-        return "🚀 High Volume Breakout"
+        return "High Volume Breakout"
     elif 'EMA Cross' in reason:
-        return "📈 EMA Trend Cross"
-    return "📊 Signal"
+        return "EMA Trend Cross"
+    return "Signal"
 
-def open_demo_trade(symbol, price, candle_low, reason, df=None):
+def get_direction_header(direction):
+    """מחזיר כותרת Bull/Bear ויזואלית לפי כיוון"""
+    if direction == 'SHORT':
+        return (
+            "🐻 *BEARISH SHORT (מכירה)*\n"
+            "🔴🔴 _הדוב מוחץ למטה!_ 🔴🔴"
+        )
+    return (
+        "🐂 *BULLISH LONG (קנייה)*\n"
+        "🟢🟢 _השור נוגח למעלה!_ 🟢🟢"
+    )
+
+def get_momentum_tip(direction):
+    """מחזיר טיפ מומנטום בסוף ההודעה"""
+    if direction == 'SHORT':
+        return "📉 _השוק נחלש — מנצלים את הירידה._"
+    return "🌊 _המומנטום חיובי — רוכבים על הגל._"
+
+def open_demo_trade(symbol, price, candle_low, reason, df=None, direction='LONG'):
     # ── מחירי כניסה / יציאה ──
     sl      = max(candle_low * 0.999, price * 0.97)   # SL: תחתית נר, תקרה 3%
     tp_full = price * 1.09                             # TP מלא: 9%
@@ -307,48 +341,53 @@ def open_demo_trade(symbol, price, candle_low, reason, df=None):
     tp_pct  = round((tp_full - price) / price * 100, 2)
 
     # ── P&L אפשרי עם מינוף ──
-    half = POSITION_SIZE / 2                           # $250 — חצי פוזיציה
-    tp1_pnl     = round(half * 0.05, 2)               # +$12.50 ב-TP1
-    tp_full_pnl = round(half * 0.09, 2)               # +$22.50 ב-TP מלא
-    max_profit  = round(tp1_pnl + tp_full_pnl, 2)     # +$35.00
+    half        = POSITION_SIZE / 2
+    tp1_pnl     = round(half * 0.05, 2)
+    tp_full_pnl = round(half * 0.09, 2)
+    max_profit  = round(tp1_pnl + tp_full_pnl, 2)
     sl_loss     = round(POSITION_SIZE * sl_pct / 100, 2)
 
     trade = {
-        'symbol':       symbol,
-        'entry':        price,
-        'sl':           sl,
-        'tp':           tp_full,
-        'sl_pct':       sl_pct,
-        'tp_pct':       tp_pct,
-        # שלבי ניהול
-        'phase':        'initial',   # initial → trailing
-        'be_triggered': False,
-        'tp1_triggered':False,
-        'tp1_pnl':      0.0,         # רווח נעול מ-TP1
-        'peak_price':   price,       # שיא מחיר (לטריילינג)
-        'trailing_sl':  None,        # SL דינמי אחרי TP1
+        'symbol':        symbol,
+        'entry':         price,
+        'sl':            sl,
+        'tp':            tp_full,
+        'sl_pct':        sl_pct,
+        'tp_pct':        tp_pct,
+        'direction':     direction,
+        'phase':         'initial',
+        'be_triggered':  False,
+        'tp1_triggered': False,
+        'tp1_pnl':       0.0,
+        'peak_price':    price,
+        'trailing_sl':   None,
     }
     active_trades.append(trade)
 
-    strategy_label = get_strategy_label(reason)
+    strategy_label  = get_strategy_label(reason)
+    dir_header      = get_direction_header(direction)
+    momentum_tip    = get_momentum_tip(direction)
+    bull_bear_emoji = "🟢" if direction == 'LONG' else "🔴"
 
-    msg  = f"🚀 *עסקת דמו חדשה!*\n\n"
-    msg += f"*{strategy_label}*\n"
+    msg  = f"{dir_header}\n\n"
+    msg += f"{'─' * 26}\n"
+    msg += f"{bull_bear_emoji} *{strategy_label}*\n"
     msg += f"מטבע: `{symbol}`\n"
     msg += f"פירוט: {reason}\n\n"
     msg += f"מחיר כניסה: `{price:.4f}`\n"
-    msg += f"🛑 SL (-3%):  `{sl:.4f}`\n"
-    msg += f"🔒 BE (+3%):  `{be_lvl:.4f}` ← SL עובר לכניסה\n"
-    msg += f"🎯 TP1 (+5%): `{tp1:.4f}` ← סגירת 50%\n"
-    msg += f"🎯 TP  (+9%): `{tp_full:.4f}` ← שאר 50% + Trailing\n\n"
+    msg += f"🛑 SL (-{sl_pct}%):  `{sl:.4f}`\n"
+    msg += f"🔒 BE (+3%):    `{be_lvl:.4f}` ← SL → כניסה\n"
+    msg += f"🎯 TP1 (+5%):  `{tp1:.4f}` ← סגירת 50%\n"
+    msg += f"🎯 TP  (+9%):  `{tp_full:.4f}` ← שאר 50% + Trailing\n\n"
     msg += f"{'─' * 26}\n"
     msg += f"💼 *Leverage: {LEVERAGE}x (Isolated)*\n"
     msg += f"💰 בטחון: ${MARGIN} · נשלט: ${POSITION_SIZE}\n"
-    msg += f"📈 מקסימום רווח: *+${max_profit}* (TP1 + TP)\n"
-    msg += f"📉 מקסימום הפסד: *-${sl_loss}* (-{sl_pct}%)"
+    msg += f"📈 מקסימום רווח: *+${max_profit}*\n"
+    msg += f"📉 מקסימום הפסד: *-${sl_loss}*\n\n"
+    msg += f"{momentum_tip}"
 
     # ── גרף: שלח תמונה + טקסט ──
-    chart_buf = generate_chart(df, symbol, price, sl, tp_full) if df is not None else None
+    chart_buf = generate_chart(df, symbol, price, sl, tp_full, direction) if df is not None else None
     send_chart_alert(chart_buf, symbol, msg)
 
 def track_trades():
@@ -395,37 +434,36 @@ def track_trades():
                     send_msg(
                         f"🎯 *TP1 הושג — {sym}!*\n"
                         f"מחיר: `{current_price:.4f}` (+5%)\n"
-                        f"50% נסגרו · רווח נעול: *+${tp1_pnl} (+{tp1_pct}%)*\n"
+                        f"50% נסגרו · 📈 רווח נעול: *+${tp1_pnl} (+{tp1_pct}%)*\n"
                         f"💼 {LEVERAGE}x · שאר 50% ($250) בטריילינג 2%\n"
-                        f"Trailing SL: `{trade['trailing_sl']:.4f}`\n"
-                        f"סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
+                        f"📍 Trailing SL: `{trade['trailing_sl']:.4f}`\n"
+                        f"📈 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                     )
-                    continue   # לא לבדוק SL גנרי באותה איטרציה
+                    continue
 
                 # 3. SL נגע
                 if current_price <= trade['sl']:
                     if trade['be_triggered']:
-                        # יצאנו ב-Break Even
                         daily_stats['losses']    += 1
                         send_msg(
                             f"🔒 *Break Even — יצאנו ב-{sym}*\n"
                             f"מחיר: `{current_price:.4f}` | כניסה: `{entry:.4f}`\n"
                             f"*ללא הפסד · ההון נשמר*\n"
                             f"💼 {LEVERAGE}x Isolated\n"
-                            f"סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
+                            f"📊 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                         )
                     else:
-                        sl_pct = trade['sl_pct']
-                        loss   = round(POSITION_SIZE * sl_pct / 100, 2)
+                        sl_pct   = trade['sl_pct']
+                        loss     = round(POSITION_SIZE * sl_pct / 100, 2)
                         loss_pct = round(loss / MARGIN * 100, 1)
                         daily_stats['losses']    += 1
                         daily_stats['total_pnl'] -= loss
                         send_msg(
                             f"🛑 *SL נגע — {sym}*\n"
                             f"כניסה: `{entry:.4f}` → SL: `{trade['sl']:.4f}`\n"
-                            f"*הפסד: -${loss} (-{loss_pct}% על מרג'ין)*\n"
+                            f"📉 *הפסד: -${loss} (-{loss_pct}% על מרג'ין)*\n"
                             f"💼 {LEVERAGE}x Isolated · בטחון: ${MARGIN}\n"
-                            f"סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
+                            f"📉 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                         )
                     active_trades.remove(trade)
 
@@ -447,12 +485,12 @@ def track_trades():
                     daily_stats['wins']      += 1
                     daily_stats['total_pnl'] += tp_pnl
                     send_msg(
-                        f"✅ *TP מלא הושג — {sym}!*\n"
+                        f"✅ *TP מלא הושג — {sym}!* 🎉\n"
                         f"מחיר: `{current_price:.4f}` (+9%)\n"
-                        f"שאר 50% נסגרו: *+${tp_pnl} (+{tp_pct}%)*\n"
-                        f"TP1 + TP סה\"כ: *+${total}*\n"
+                        f"שאר 50% נסגרו: 📈 *+${tp_pnl} (+{tp_pct}%)*\n"
+                        f"TP1 + TP סה\"כ: 📈 *+${total}*\n"
                         f"💼 {LEVERAGE}x Isolated\n"
-                        f"סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
+                        f"📈 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                     )
                     active_trades.remove(trade)
 
@@ -461,19 +499,19 @@ def track_trades():
                     exit_pct = (current_price - entry) / entry * 100
                     half_pnl = round(half * exit_pct / 100, 2)
                     total    = round(trade['tp1_pnl'] + half_pnl, 2)
+                    pnl_icon = "📈" if half_pnl >= 0 else "📉"
                     if half_pnl >= 0:
                         daily_stats['wins'] += 1
                     else:
                         daily_stats['losses'] += 1
                     daily_stats['total_pnl'] += half_pnl
-                    sign = "+" if half_pnl >= 0 else ""
                     send_msg(
                         f"📍 *Trailing Stop נגע — {sym}*\n"
                         f"שיא: `{trade['peak_price']:.4f}` → יציאה: `{current_price:.4f}`\n"
-                        f"50% נסגרו: *{sign}${half_pnl}*\n"
-                        f"TP1 + Trailing סה\"כ: *{'+' if total>=0 else ''}${total}*\n"
+                        f"50% נסגרו: {pnl_icon} *{'+' if half_pnl>=0 else ''}${half_pnl}*\n"
+                        f"TP1 + Trailing סה\"כ: {pnl_icon} *{'+' if total>=0 else ''}${total}*\n"
                         f"💼 {LEVERAGE}x Isolated\n"
-                        f"סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
+                        f"{pnl_icon} סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                     )
                     active_trades.remove(trade)
 
