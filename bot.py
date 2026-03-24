@@ -36,6 +36,7 @@ ENERGY_GEO = ['PAXG/USDT', 'POWR/USDT', 'HNT/USDT']
 
 # נתיב לקובץ המועמדים החמים (לדאשבורד)
 HOT_CANDIDATES_FILE = 'artifacts/bot-dashboard/public/hot_candidates.json'
+DASHBOARD_URL       = 'https://95de2b83-78fc-4e84-b223-d602409dd064-00-ri9mebduqgwx.kirk.replit.dev/bot-dashboard'
 
 # --- פרמטרי מינוף (דמו) ---
 LEVERAGE       = 10          # מינוף 10x
@@ -797,8 +798,17 @@ def handle_ping(message):
             uptime_msg += f"   • `{t['symbol']}` — {phase}\n"
     uptime_msg += f"\n📈 P&L היום: *${round(daily_stats.get('total_pnl', 0), 2):+}*\n"
     uptime_msg += f"✅ ניצחונות: {daily_stats.get('wins', 0)} · ❌ הפסדים: {daily_stats.get('losses', 0)}\n"
-    uptime_msg += f"\n_הסריקה הבאה בעוד פחות משעה_"
+    uptime_msg += f"\n🖥 [פתח דאשבורד]({DASHBOARD_URL})\n"
+    uptime_msg += f"_הסריקה הבאה בעוד פחות משעה_"
     send_msg(uptime_msg)
+
+@bot.message_handler(commands=['dashboard'])
+def handle_dashboard(message):
+    send_msg(
+        f"🖥 *דאשבורד הבוט*\n\n"
+        f"[👉 לחץ כאן לפתיחת הדאשבורד]({DASHBOARD_URL})\n\n"
+        f"_תראה שם: Top 15 מועמדים חמים, גיינרים, ווליום ועוד_"
+    )
 
 def start_telegram_polling():
     print("Telegram polling started...")
@@ -938,11 +948,13 @@ def main():
         "📍 מעקב SL/TP:    כל *60 שניות*\n\n"
         "*פקודות:*\n"
         "/ping — מצב הבוט\n"
+        "/dashboard — קישור לדאשבורד\n"
         "/test — איתות BTC מזויף\n"
         "/status — עסקאות פעילות\n"
         "/update BTC 84000 95000 — עדכון SL/TP\n"
         "/close BTC — סגירה ידנית\n"
-        "/report — דוח יומי"
+        "/report — דוח יומי\n\n"
+        f"🖥 [פתח דאשבורד]({DASHBOARD_URL})"
     )
 
     # Thread הראשי נשאר ער
