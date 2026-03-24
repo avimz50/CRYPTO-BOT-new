@@ -809,40 +809,41 @@ def start_telegram_polling():
             print(f"Polling error: {e}")
             time.sleep(5)
 
-# --- הלולאה הראשית ---
+# --- לולאת מעקב עסקאות — Thread נפרד ---
 
-def main():
-    global last_daily_report_date
-
-    polling_thread = threading.Thread(target=start_telegram_polling, daemon=True)
-    polling_thread.start()
-
-    send_msg(
-        "🤖 *הבוט התחיל לסרוק ב-Replit!*\n\n"
-        "*פקודות זמינות:*\n"
-        "/ping — בדיקת חיות הבוט ומצב מיידי\n"
-        "/test — איתות BTC מזויף + גרף\n"
-        "/status — עסקאות פעילות (שלב, SL, TP, Trailing)\n"
-        "/update BTC 84000 95000 — עדכון SL ו-TP\n"
-        "/close BTC — סגירה ידנית של עסקה\n"
-        "/report — דוח יומי מיידי"
-    )
-
+def trade_monitor_loop():
+    """
+    רץ בThread נפרד.
+    בודק SL / TP / BE / Trailing כל 60 שניות — ללא תלות בסריקה.
+    """
+    print("Trade monitor started — checking every 60s")
     while True:
         try:
-            # מעקב עסקאות קיימות
-            track_trades()
+            if active_trades:
+                track_trades()
+                check_daily_report()
+        except Exception as e:
+            print(f"Trade monitor error: {e}")
+        time.sleep(60)
 
-            # בדיקת דוח יומי
+# --- לולאת סריקת איתותים — Thread נפרד ---
+
+def scan_loop():
+    """
+    רץ בThread נפרד.
+    מחפש איתותים חדשים פעם בשעה בלבד (נרות 1H נסגרים פעם בשעה).
+    """
+    print("Scan loop started — scanning every 60 minutes")
+    while True:
+        try:
             check_daily_report()
-
             now_str = datetime.now().strftime('%H:%M:%S')
 
             # ═══════════════════════════════════════
             # שלב 1+2: שליפת מועמדים חמים (Funnel)
             # ═══════════════════════════════════════
             hot_candidates = get_hot_candidates()
-            hot_symbols = [c['symbol'] for c in hot_candidates]
+            hot_symbols    = [c['symbol'] for c in hot_candidates]
 
             send_msg(
                 f"🔍 *סריקה שעתית* — {now_str}\n"
@@ -852,25 +853,21 @@ def main():
 
             # ═══════════════════════════════════════
             # שלב 3: סריקה עמוקה — RSI + Breakout
-            # על המועמדים החמים בלבד
             # ═══════════════════════════════════════
             for candidate in hot_candidates:
                 symbol = candidate['symbol']
                 if any(t['symbol'] == symbol for t in active_trades):
                     continue
                 try:
-                    df = get_data(symbol)
-                    price = df['close'].iloc[-1]
-
+                    df         = get_data(symbol)
+                    price      = df['close'].iloc[-1]
                     candle_low = df['low'].iloc[-1]
 
-                    # בדיקת RSI + EMA200
                     signal, reason = check_rsi_trend(df)
                     if signal:
                         open_demo_trade(symbol, price, candle_low, reason, df)
                         continue
 
-                    # בדיקת פריצת 24 שעות
                     signal, reason = check_breakout(df)
                     if signal:
                         open_demo_trade(symbol, price, candle_low, reason, df)
@@ -885,8 +882,8 @@ def main():
                 if any(t['symbol'] == symbol for t in active_trades):
                     continue
                 try:
-                    df = get_data(symbol)
-                    price = df['close'].iloc[-1]
+                    df         = get_data(symbol)
+                    price      = df['close'].iloc[-1]
                     candle_low = df['low'].iloc[-1]
                     signal, reason = check_energy_trend(df)
                     if signal:
@@ -894,31 +891,63 @@ def main():
                 except Exception as e:
                     print(f"Error scanning {symbol}: {e}")
 
-            # ── מיני סיכום אחרי כל סריקה ──
-            now = datetime.now().strftime('%H:%M')
-            next_scan = (datetime.now() + timedelta(hours=1)).strftime('%H:%M')
-            active_count = len(active_trades)
-            pnl_today = round(daily_stats.get('total_pnl', 0), 2)
-            pnl_icon  = "📈" if pnl_today >= 0 else "📉"
+            # ── סיכום סריקה ──
+            now        = datetime.now().strftime('%H:%M')
+            next_scan  = (datetime.now() + timedelta(hours=1)).strftime('%H:%M')
+            pnl_today  = round(daily_stats.get('total_pnl', 0), 2)
+            pnl_icon   = "📈" if pnl_today >= 0 else "📉"
 
             summary  = f"✅ *סריקה הושלמה — {now}*\n\n"
             summary += f"🔍 מועמדים שנסרקו: *15 Top Gainers*\n"
-            summary += f"📊 עסקאות פעילות: *{active_count}*\n"
+            summary += f"📊 עסקאות פעילות: *{len(active_trades)}*\n"
             if active_trades:
                 for t in active_trades:
                     phase = "🔄 Trailing" if t.get('phase') == 'trailing' else "📊 Initial"
                     summary += f"   • `{t['symbol']}` {phase}\n"
             summary += f"\n{pnl_icon} P&L היום: *${pnl_today:+}*\n"
             summary += f"⏰ סריקה הבאה: `{next_scan}`\n"
-            summary += f"_שלח /ping בכל עת לבדיקת מצב_"
+            summary += f"_📍 מעקב עסקאות פעיל כל 60 שניות_"
             send_msg(summary)
 
-            print("Scan complete. Waiting 1 hour...")
-            time.sleep(3600)
+            print(f"Scan complete at {now}. Next scan at {next_scan}.")
 
         except Exception as e:
-            print(f"Main Loop Error: {e}")
-            time.sleep(60)
+            print(f"Scan loop error: {e}")
+
+        time.sleep(3600)   # שינה שעה בין סריקות
+
+# --- הלולאה הראשית ---
+
+def main():
+    # Thread 1 — Telegram polling
+    polling_thread = threading.Thread(target=start_telegram_polling, daemon=True)
+    polling_thread.start()
+
+    # Thread 2 — מעקב עסקאות כל 60 שניות
+    monitor_thread = threading.Thread(target=trade_monitor_loop, daemon=True)
+    monitor_thread.start()
+
+    # Thread 3 — סריקת איתותים כל שעה
+    scan_thread = threading.Thread(target=scan_loop, daemon=True)
+    scan_thread.start()
+
+    send_msg(
+        "🤖 *הבוט התחיל ב-Replit!*\n\n"
+        "⚙️ *מצב הלולאות:*\n"
+        "🔍 סריקת איתותים: כל *60 דקות*\n"
+        "📍 מעקב SL/TP:    כל *60 שניות*\n\n"
+        "*פקודות:*\n"
+        "/ping — מצב הבוט\n"
+        "/test — איתות BTC מזויף\n"
+        "/status — עסקאות פעילות\n"
+        "/update BTC 84000 95000 — עדכון SL/TP\n"
+        "/close BTC — סגירה ידנית\n"
+        "/report — דוח יומי"
+    )
+
+    # Thread הראשי נשאר ער
+    while True:
+        time.sleep(3600)
 
 if __name__ == "__main__":
     main()
