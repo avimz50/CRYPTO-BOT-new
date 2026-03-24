@@ -555,9 +555,162 @@ def handle_status(message):
         send_msg("📭 *אין עסקאות פעילות כרגע.*")
         return
     msg = f"📋 *עסקאות פעילות ({len(active_trades)}):*\n\n"
-    for t in active_trades:
-        msg += f"• `{t['symbol']}` — כניסה: {t['entry']:.4f} | SL: {t['sl']:.4f} | TP: {t['tp']:.4f}\n"
+    for i, t in enumerate(active_trades, 1):
+        phase_label = "🔄 Trailing" if t.get('phase') == 'trailing' else "📊 Initial"
+        be_label    = " · 🔒 BE" if t.get('be_triggered') else ""
+        tp1_label   = " · TP1✅" if t.get('tp1_triggered') else ""
+        msg += (
+            f"*{i}. {t['symbol']}* {phase_label}{be_label}{tp1_label}\n"
+            f"   כניסה: `{t['entry']:.4f}`\n"
+            f"   🛑 SL: `{t['sl']:.4f}` | 🎯 TP: `{t['tp']:.4f}`\n"
+        )
+        if t.get('phase') == 'trailing' and t.get('trailing_sl'):
+            msg += f"   📍 Trailing SL: `{t['trailing_sl']:.4f}` | שיא: `{t['peak_price']:.4f}`\n"
+        msg += "\n"
+    msg += f"_לעדכון SL/TP: /update SYMBOL SL TP_\n"
+    msg += f"_לסגירה ידנית: /close SYMBOL_"
     send_msg(msg)
+
+@bot.message_handler(commands=['update'])
+def handle_update(message):
+    """
+    שימוש: /update BTC 84000 95000
+    או:    /update BTC sl=84000
+    או:    /update BTC tp=95000
+    """
+    try:
+        parts = message.text.strip().split()
+        if len(parts) < 3:
+            send_msg(
+                "⚠️ *שימוש שגוי*\n\n"
+                "פורמט: `/update SYMBOL SL TP`\n"
+                "דוגמה: `/update BTC 84000 95000`\n\n"
+                "לעדכון SL בלבד: `/update BTC sl=84000`\n"
+                "לעדכון TP בלבד: `/update BTC tp=95000`"
+            )
+            return
+
+        raw_sym = parts[1].upper()
+        symbol  = raw_sym if '/' in raw_sym else f"{raw_sym}/USDT"
+
+        # מציאת העסקה
+        trade = next((t for t in active_trades if t['symbol'] == symbol), None)
+        if not trade:
+            symbols_list = ', '.join(f"`{t['symbol']}`" for t in active_trades) or "_אין_"
+            send_msg(f"❌ לא נמצאה עסקה פתוחה עבור `{symbol}`\n\nפתוחות: {symbols_list}")
+            return
+
+        new_sl = trade['sl']
+        new_tp = trade['tp']
+        changes = []
+
+        # פענוח פרמטרים: /update BTC 84000 95000  או sl=84000 tp=95000
+        for arg in parts[2:]:
+            arg_l = arg.lower()
+            if arg_l.startswith('sl='):
+                new_sl = float(arg_l.replace('sl=', ''))
+                changes.append(f"SL → `{new_sl:.4f}`")
+            elif arg_l.startswith('tp='):
+                new_tp = float(arg_l.replace('tp=', ''))
+                changes.append(f"TP → `{new_tp:.4f}`")
+            else:
+                # פוזיציה: ארגומנט 2 = SL, ארגומנט 3 = TP
+                try:
+                    val = float(arg)
+                    if len(changes) == 0:
+                        new_sl = val
+                        changes.append(f"SL → `{new_sl:.4f}`")
+                    else:
+                        new_tp = val
+                        changes.append(f"TP → `{new_tp:.4f}`")
+                except ValueError:
+                    pass
+
+        # ולידציה: SL < מחיר כניסה < TP
+        entry = trade['entry']
+        if new_sl >= entry:
+            send_msg(f"⚠️ SL ({new_sl}) חייב להיות *מתחת* למחיר הכניסה ({entry:.4f})")
+            return
+        if new_tp <= entry:
+            send_msg(f"⚠️ TP ({new_tp}) חייב להיות *מעל* למחיר הכניסה ({entry:.4f})")
+            return
+
+        # עדכון
+        old_sl, old_tp = trade['sl'], trade['tp']
+        trade['sl'] = new_sl
+        trade['tp'] = new_tp
+        trade['sl_pct'] = round((entry - new_sl) / entry * 100, 2)
+        trade['tp_pct'] = round((new_tp - entry) / entry * 100, 2)
+
+        sl_pct = trade['sl_pct']
+        tp_pct = trade['tp_pct']
+        sl_pnl = round(POSITION_SIZE * sl_pct / 100, 2)
+        tp_pnl = round(POSITION_SIZE * tp_pct / 100, 2)
+
+        send_msg(
+            f"✏️ *עסקה עודכנה — {symbol}*\n\n"
+            f"{''.join(chr(10) + '  ' + c for c in changes)}\n\n"
+            f"כניסה: `{entry:.4f}`\n"
+            f"🛑 SL חדש: `{new_sl:.4f}` (-{sl_pct}% · סיכון: -${sl_pnl})\n"
+            f"🎯 TP חדש: `{new_tp:.4f}` (+{tp_pct}% · פוטנציאל: +${tp_pnl})\n\n"
+            f"💼 {LEVERAGE}x Isolated · בטחון: ${MARGIN}"
+        )
+        print(f"Trade updated: {symbol} SL={new_sl} TP={new_tp}")
+
+    except Exception as e:
+        send_msg(f"❌ שגיאה בעדכון: {e}")
+        print(f"Update error: {e}")
+
+@bot.message_handler(commands=['close'])
+def handle_close(message):
+    """סגירה ידנית של עסקה: /close BTC"""
+    try:
+        parts = message.text.strip().split()
+        if len(parts) < 2:
+            send_msg("⚠️ שימוש: `/close BTC` או `/close BTC/USDT`")
+            return
+
+        raw_sym = parts[1].upper()
+        symbol  = raw_sym if '/' in raw_sym else f"{raw_sym}/USDT"
+
+        trade = next((t for t in active_trades if t['symbol'] == symbol), None)
+        if not trade:
+            send_msg(f"❌ לא נמצאה עסקה פתוחה עבור `{symbol}`")
+            return
+
+        ticker        = exchange.fetch_ticker(symbol)
+        current_price = ticker['last']
+        entry         = trade['entry']
+
+        # חישוב P&L בפועל
+        if trade.get('tp1_triggered'):
+            # חצי פוזיציה נסגרת עכשיו, חצי כבר נסגר ב-TP1
+            half    = POSITION_SIZE / 2
+            half_pnl = round(half * (current_price - entry) / entry * 100 / 100, 2)
+            total   = round(trade.get('tp1_pnl', 0) + half_pnl, 2)
+            pnl_str = f"TP1 + יציאה: *{'+' if total>=0 else ''}${total}*"
+        else:
+            pct     = (current_price - entry) / entry * 100
+            pnl     = round(POSITION_SIZE * pct / 100, 2)
+            pnl_str = f"P&L: *{'+' if pnl>=0 else ''}${pnl}* ({pct:+.2f}%)"
+
+        active_trades.remove(trade)
+        if current_price >= entry:
+            daily_stats['wins'] += 1
+        else:
+            daily_stats['losses'] += 1
+
+        send_msg(
+            f"🚪 *סגירה ידנית — {symbol}*\n\n"
+            f"כניסה: `{entry:.4f}` → יציאה: `{current_price:.4f}`\n"
+            f"{pnl_str}\n"
+            f"💼 {LEVERAGE}x Isolated\n"
+            f"סה\"כ היום: ${round(daily_stats.get('total_pnl', 0), 2):+}"
+        )
+        print(f"Manual close: {symbol} at {current_price}")
+
+    except Exception as e:
+        send_msg(f"❌ שגיאה בסגירה: {e}")
 
 @bot.message_handler(commands=['report'])
 def handle_report(message):
@@ -580,7 +733,16 @@ def main():
     polling_thread = threading.Thread(target=start_telegram_polling, daemon=True)
     polling_thread.start()
 
-    send_msg("🤖 *הבוט התחיל לסרוק ב-Replit!*\n\nפקודות זמינות:\n/test — איתות BTC מזויף\n/status — עסקאות פעילות\n/report — דוח יומי")
+    send_msg(
+        "🤖 *הבוט התחיל לסרוק ב-Replit!*\n\n"
+        "*פקודות זמינות:*\n"
+        "/test — איתות BTC מזויף + גרף\n"
+        "/status — עסקאות פעילות (שלב, SL, TP, Trailing)\n"
+        "/update BTC 84000 95000 — עדכון SL ו-TP\n"
+        "/update BTC sl=84000 — עדכון SL בלבד\n"
+        "/close BTC — סגירה ידנית של עסקה\n"
+        "/report — דוח יומי מיידי"
+    )
 
     while True:
         try:
