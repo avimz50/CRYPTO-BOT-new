@@ -105,19 +105,30 @@ def get_hot_candidates():
 # --- אסטרטגיות ---
 
 def check_rsi_trend(df):
-    """RSI < 40 + מחיר מעל EMA 200"""
+    """RSI חוצה מעל 35 (Turnaround) + מחיר מעל EMA 200 + ווליום ×1.5"""
     rsi_series = ta.rsi(df['close'], length=14)
     ema200_series = ta.ema(df['close'], length=200)
     if rsi_series is None or ema200_series is None:
         return False, ""
-    rsi = rsi_series.iloc[-1]
+    rsi_prev = rsi_series.iloc[-2]
+    rsi_curr = rsi_series.iloc[-1]
     ema200 = ema200_series.iloc[-1]
     price = df['close'].iloc[-1]
-    if pd.isna(rsi) or pd.isna(ema200):
+    if pd.isna(rsi_prev) or pd.isna(rsi_curr) or pd.isna(ema200):
         return False, ""
-    if rsi < 40 and price > ema200:
-        return True, f"RSI Oversold ({rsi:.1f}) + Above EMA200"
-    return False, ""
+    # תנאי Turnaround: RSI חצה מעל 35 בנר האחרון
+    rsi_cross = rsi_prev < 35 and rsi_curr > 35
+    if not rsi_cross:
+        return False, ""
+    if price <= ema200:
+        return False, ""
+    # אישור ווליום: נר נוכחי × 1.5 מעל ממוצע 10 נרות אחרונים
+    current_vol = df['volume'].iloc[-1]
+    avg_vol_10 = df['volume'].iloc[-11:-1].mean()
+    if avg_vol_10 == 0 or current_vol < avg_vol_10 * 1.5:
+        return False, ""
+    vol_ratio = current_vol / avg_vol_10
+    return True, f"RSI Turnaround ({rsi_prev:.1f}→{rsi_curr:.1f}) + EMA200 + Vol ×{vol_ratio:.1f}"
 
 def check_breakout(df):
     """פריצת שיא 24 שעות + ווליום ×1.5"""
@@ -168,9 +179,9 @@ def get_strategy_label(reason):
     return "📊 Signal"
 
 def open_demo_trade(symbol, price, candle_low, reason):
-    # SL = תחתית הנר (בפחות חיץ קטן), אבל לא יותר מ-2% מתחת לכניסה
-    sl = max(candle_low * 0.999, price * 0.98)
-    # TP = כניסה + (סיכון × 3) — יחס 1:3 אמיתי לפי ה-SL בפועל
+    # SL = תחתית הנר (חיץ 0.1%), תקרה 3% מהכניסה (רחב יותר — פחות רעש)
+    sl = max(candle_low * 0.999, price * 0.97)
+    # TP = כניסה + (סיכון × 3) — יחס 1:3 אמיתי (בסביבות 9% אם SL=3%)
     risk = price - sl
     tp = price + (risk * 3)
 
@@ -182,6 +193,7 @@ def open_demo_trade(symbol, price, candle_low, reason):
         'entry': price,
         'sl': sl,
         'tp': tp,
+        'be_triggered': False,   # האם הסטופ הועבר ל-Break Even
         'status': 'OPEN'
     }
     active_trades.append(trade)
@@ -208,12 +220,41 @@ def track_trades():
         ticker = exchange.fetch_ticker(trade['symbol'])
         current_price = ticker['last']
 
+        # ── Trailing Stop: העבר SL ל-Break Even כשהמחיר עולה 2% ──
+        if not trade.get('be_triggered', False):
+            if current_price >= trade['entry'] * 1.02:
+                trade['sl'] = trade['entry']
+                trade['be_triggered'] = True
+                send_msg(
+                    f"🔒 *Break Even מופעל — {trade['symbol']}*\n"
+                    f"הסטופ הועבר למחיר כניסה: `{trade['entry']:.4f}`\n"
+                    f"ההון מוגן — ללא סיכון!"
+                )
+
+        # ── בדיקת TP / SL ──
         if current_price >= trade['tp']:
-            send_msg(f"✅ *רווח (TP) הושג ב-{trade['symbol']}!*\nרווח מוערך: $1.20")
+            profit = round((trade['tp'] - trade['entry']) / trade['entry'] * 20, 2)
+            send_msg(
+                f"✅ *רווח (TP) הושג ב-{trade['symbol']}!*\n"
+                f"כניסה: {trade['entry']:.4f} → TP: {trade['tp']:.4f}\n"
+                f"רווח מוערך: +${profit}"
+            )
             daily_stats['wins'] += 1
             active_trades.remove(trade)
         elif current_price <= trade['sl']:
-            send_msg(f"🛑 *הפסד (SL) ב-{trade['symbol']}*\nהפסד מוערך: $0.40")
+            be = trade.get('be_triggered', False)
+            if be:
+                send_msg(
+                    f"🔒 *יצאנו ב-Break Even — {trade['symbol']}*\n"
+                    f"ללא הפסד · ההון נשמר"
+                )
+            else:
+                loss = round((trade['entry'] - trade['sl']) / trade['entry'] * 20, 2)
+                send_msg(
+                    f"🛑 *הפסד (SL) ב-{trade['symbol']}*\n"
+                    f"כניסה: {trade['entry']:.4f} → SL: {trade['sl']:.4f}\n"
+                    f"הפסד מוערך: -${loss}"
+                )
             daily_stats['losses'] += 1
             active_trades.remove(trade)
 
