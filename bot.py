@@ -4,6 +4,7 @@ import telebot
 import time
 import pandas as pd
 import pandas_ta as ta
+from datetime import datetime
 
 # --- הגדרות וחיבורים ---
 exchange = ccxt.bitget({
@@ -123,6 +124,10 @@ def main():
             # מעקב אחרי עסקאות קיימות
             track_trades()
             
+            # הודעת התחלת סריקה
+            now = datetime.now().strftime('%H:%M:%S')
+            send_msg(f"🔍 *סריקה חדשה החלה* — {now}\nבודק {sum(len(v) for v in WATCHLIST.values())} מטבעות...")
+
             # סריקה לאיתותים חדשים
             for category, symbols in WATCHLIST.items():
                 for symbol in symbols:
