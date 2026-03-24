@@ -2,6 +2,7 @@ import os
 import ccxt
 import telebot
 import time
+import threading
 import pandas as pd
 import pandas_ta as ta
 from datetime import datetime, date
@@ -51,7 +52,6 @@ def get_data(symbol, timeframe='1h', limit=250):
 # --- אסטרטגיות ---
 
 def check_top_10(df):
-    # RSI < 40 (רחב יותר מ-35 לקבלת יותר איתותים) + מחיר מעל EMA 200
     rsi_series = ta.rsi(df['close'], length=14)
     ema200_series = ta.ema(df['close'], length=200)
     if rsi_series is None or ema200_series is None:
@@ -70,9 +70,7 @@ def check_ai_breakout(df):
         return False, ""
     current_price = df['close'].iloc[-1]
     high_24h = df['high'].iloc[-25:-1].max()
-    # פריצה מינימלית של 0.5% מעל השיא — לא סתם פיפס אחד
     breakout_pct = (current_price - high_24h) / high_24h * 100
-    # אישור ווליום — הנר הנוכחי חייב להיות מעל פי 1.5 מממוצע 20 הנרות האחרונים
     current_vol = df['volume'].iloc[-1]
     avg_vol = df['volume'].iloc[-21:-1].mean()
     volume_confirmed = current_vol > avg_vol * 1.5
@@ -89,11 +87,9 @@ def check_energy_trend(df):
         return False, ""
     if pd.isna(ema21.iloc[-2]) or pd.isna(ema21.iloc[-1]):
         return False, ""
-    # חציית EMA 9 מעל EMA 21
     cross = ema9.iloc[-2] < ema21.iloc[-2] and ema9.iloc[-1] > ema21.iloc[-1]
     if not cross:
         return False, ""
-    # אישור ווליום — הנר הנוכחי מעל פי 1.3 מממוצע 20 האחרונים (סף נמוך יותר ממטבעות גדולים)
     current_vol = df['volume'].iloc[-1]
     avg_vol = df['volume'].iloc[-21:-1].mean()
     if avg_vol == 0:
@@ -120,15 +116,14 @@ def open_demo_trade(symbol, price, reason):
     msg = f"🚀 *עסקת דמו חדשה!*\n\n"
     msg += f"מטבע: `{symbol}`\nסיבה: {reason}\n"
     msg += f"מחיר כניסה: {price:.4f}\n"
-    msg += f"🛑 סטופ לוס: {sl:.4f}\n"
-    msg += f"🎯 יעד (1:3): {tp:.4f}\n"
+    msg += f"🛑 סטופ לוס: {sl:.4f} (-2%)\n"
+    msg += f"🎯 יעד (1:3): {tp:.4f} (+6%)\n"
     msg += f"💰 גודל פוזיציה: $20"
     send_msg(msg)
 
 def track_trades():
     global active_trades, daily_stats
 
-    # אם עבר יום, אפס את הסטטיסטיקות
     if daily_stats['date'] != date.today():
         daily_stats = {'wins': 0, 'losses': 0, 'date': date.today()}
 
@@ -161,7 +156,6 @@ def send_daily_report():
     api_ok = check_api_connection()
     api_status = "✅ פעיל" if api_ok else "❌ בעיה בחיבור!"
 
-    # עסקאות פעילות
     if active_trades:
         trades_lines = ""
         for t in active_trades:
@@ -179,7 +173,7 @@ def send_daily_report():
     msg += f"  🎯 אחוז הצלחה: {win_rate:.0f}%\n\n"
     msg += f"*🔌 חיבור Bitget API:* {api_status}\n"
     msg += f"{'─' * 28}\n"
-    msg += f"_הבוט פעיל ומסרוק כל 15 דקות_ 🤖"
+    msg += f"_הבוט פעיל ומסרוק כל שעה_ 🤖"
 
     send_msg(msg)
     print(f"Daily report sent at {now}")
@@ -194,24 +188,62 @@ def check_daily_report():
             send_daily_report()
             last_daily_report_date = today
 
+# --- פקודות טלגרם ---
+
+@bot.message_handler(commands=['test'])
+def handle_test(message):
+    try:
+        send_msg("🧪 *מריץ איתות טסט ל-BTC/USDT...*")
+        ticker = exchange.fetch_ticker('BTC/USDT')
+        price = ticker['last']
+        open_demo_trade('BTC/USDT', price, 'RSI Oversold (38.4) + Above EMA200 [TEST]')
+        print(f"Test signal sent for BTC/USDT at {price}")
+    except Exception as e:
+        send_msg(f"❌ שגיאה בטסט: {e}")
+        print(f"Test command error: {e}")
+
+@bot.message_handler(commands=['status'])
+def handle_status(message):
+    if not active_trades:
+        send_msg("📭 *אין עסקאות פעילות כרגע.*")
+        return
+    msg = f"📋 *עסקאות פעילות ({len(active_trades)}):*\n\n"
+    for t in active_trades:
+        msg += f"• `{t['symbol']}` — כניסה: {t['entry']:.4f} | SL: {t['sl']:.4f} | TP: {t['tp']:.4f}\n"
+    send_msg(msg)
+
+@bot.message_handler(commands=['report'])
+def handle_report(message):
+    send_daily_report()
+
+def start_telegram_polling():
+    print("Telegram polling started...")
+    while True:
+        try:
+            bot.polling(non_stop=True, timeout=30, long_polling_timeout=30)
+        except Exception as e:
+            print(f"Polling error: {e}")
+            time.sleep(5)
+
 # --- הלולאה הראשית ---
 
 def main():
     global last_daily_report_date
-    send_msg("🤖 הבוט התחיל לסרוק ב-Replit...")
+
+    # הפעל את האזנת הטלגרם בthread נפרד
+    polling_thread = threading.Thread(target=start_telegram_polling, daemon=True)
+    polling_thread.start()
+
+    send_msg("🤖 *הבוט התחיל לסרוק ב-Replit!*\n\nפקודות זמינות:\n/test — איתות BTC מזויף\n/status — עסקאות פעילות\n/report — דוח יומי")
+
     while True:
         try:
-            # מעקב אחרי עסקאות קיימות
             track_trades()
-
-            # בדיקה אם צריך לשלוח דוח יומי (09:00)
             check_daily_report()
 
-            # הודעת התחלת סריקה
             now = datetime.now().strftime('%H:%M:%S')
             send_msg(f"🔍 *סריקה שעתית* — {now}\nבודק {sum(len(v) for v in WATCHLIST.values())} מטבעות...")
 
-            # סריקה לאיתותים חדשים
             for category, symbols in WATCHLIST.items():
                 for symbol in symbols:
                     if any(t['symbol'] == symbol for t in active_trades):
