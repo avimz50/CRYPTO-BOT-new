@@ -185,30 +185,36 @@ def get_strategy_label(reason):
     return "📊 Signal"
 
 def open_demo_trade(symbol, price, candle_low, reason):
-    # SL = תחתית הנר (חיץ 0.1%), תקרה 3% מהכניסה
-    sl = max(candle_low * 0.999, price * 0.97)
-    # TP = כניסה + (סיכון × 3) — יחס 1:3 (בסביבות 9% אם SL=3%)
-    risk = price - sl
-    tp = price + (risk * 3)
+    # ── מחירי כניסה / יציאה ──
+    sl      = max(candle_low * 0.999, price * 0.97)   # SL: תחתית נר, תקרה 3%
+    tp_full = price * 1.09                             # TP מלא: 9%
+    tp1     = price * 1.05                             # TP1 (50%): 5%
+    be_lvl  = price * 1.03                             # הפעלת Break Even: 3%
 
-    sl_pct  = (price - sl) / price * 100
-    tp_pct  = (tp - price) / price * 100
+    sl_pct  = round((price - sl)      / price * 100, 2)
+    tp_pct  = round((tp_full - price) / price * 100, 2)
 
-    # חישוב P&L עם מינוף 10x על $50 בטחון ($500 נשלט)
-    potential_profit = round(POSITION_SIZE * (tp_pct / 100), 2)
-    potential_loss   = round(POSITION_SIZE * (sl_pct / 100), 2)
-    profit_pct_margin = round(potential_profit / MARGIN * 100, 1)
-    loss_pct_margin   = round(potential_loss   / MARGIN * 100, 1)
+    # ── P&L אפשרי עם מינוף ──
+    half = POSITION_SIZE / 2                           # $250 — חצי פוזיציה
+    tp1_pnl     = round(half * 0.05, 2)               # +$12.50 ב-TP1
+    tp_full_pnl = round(half * 0.09, 2)               # +$22.50 ב-TP מלא
+    max_profit  = round(tp1_pnl + tp_full_pnl, 2)     # +$35.00
+    sl_loss     = round(POSITION_SIZE * sl_pct / 100, 2)
 
     trade = {
-        'symbol': symbol,
-        'entry': price,
-        'sl': sl,
-        'tp': tp,
-        'sl_pct': sl_pct,
-        'tp_pct': tp_pct,
+        'symbol':       symbol,
+        'entry':        price,
+        'sl':           sl,
+        'tp':           tp_full,
+        'sl_pct':       sl_pct,
+        'tp_pct':       tp_pct,
+        # שלבי ניהול
+        'phase':        'initial',   # initial → trailing
         'be_triggered': False,
-        'status': 'OPEN'
+        'tp1_triggered':False,
+        'tp1_pnl':      0.0,         # רווח נעול מ-TP1
+        'peak_price':   price,       # שיא מחיר (לטריילינג)
+        'trailing_sl':  None,        # SL דינמי אחרי TP1
     }
     active_trades.append(trade)
 
@@ -218,14 +224,16 @@ def open_demo_trade(symbol, price, candle_low, reason):
     msg += f"*{strategy_label}*\n"
     msg += f"מטבע: `{symbol}`\n"
     msg += f"פירוט: {reason}\n\n"
-    msg += f"מחיר כניסה:  `{price:.4f}`\n"
-    msg += f"🛑 סטופ לוס: `{sl:.4f}` (-{sl_pct:.1f}%)\n"
-    msg += f"🎯 יעד (1:3): `{tp:.4f}` (+{tp_pct:.1f}%)\n\n"
+    msg += f"מחיר כניסה: `{price:.4f}`\n"
+    msg += f"🛑 SL (-3%):  `{sl:.4f}`\n"
+    msg += f"🔒 BE (+3%):  `{be_lvl:.4f}` ← SL עובר לכניסה\n"
+    msg += f"🎯 TP1 (+5%): `{tp1:.4f}` ← סגירת 50%\n"
+    msg += f"🎯 TP  (+9%): `{tp_full:.4f}` ← שאר 50% + Trailing\n\n"
     msg += f"{'─' * 26}\n"
     msg += f"💼 *Leverage: {LEVERAGE}x (Isolated)*\n"
     msg += f"💰 בטחון: ${MARGIN} · נשלט: ${POSITION_SIZE}\n"
-    msg += f"📈 רווח פוטנציאלי: *+${potential_profit} (+{profit_pct_margin}%)*\n"
-    msg += f"📉 הפסד פוטנציאלי: *-${potential_loss} (-{loss_pct_margin}%)*"
+    msg += f"📈 מקסימום רווח: *+${max_profit}* (TP1 + TP)\n"
+    msg += f"📉 מקסימום הפסד: *-${sl_loss}* (-{sl_pct}%)"
     send_msg(msg)
 
 def track_trades():
@@ -234,60 +242,128 @@ def track_trades():
     if daily_stats['date'] != date.today():
         daily_stats = {'wins': 0, 'losses': 0, 'total_pnl': 0.0, 'date': date.today()}
 
+    half = POSITION_SIZE / 2   # $250 — חצי פוזיציה אחרי TP1
+
     for trade in active_trades[:]:
-        ticker = exchange.fetch_ticker(trade['symbol'])
-        current_price = ticker['last']
+        try:
+            ticker        = exchange.fetch_ticker(trade['symbol'])
+            current_price = ticker['last']
+            entry         = trade['entry']
+            sym           = trade['symbol']
 
-        # ── Trailing Stop: העבר SL ל-Break Even כשהמחיר עולה 2% ──
-        if not trade.get('be_triggered', False):
-            if current_price >= trade['entry'] * 1.02:
-                trade['sl'] = trade['entry']
-                trade['be_triggered'] = True
-                send_msg(
-                    f"🔒 *Break Even מופעל — {trade['symbol']}*\n"
-                    f"הסטופ הועבר למחיר כניסה: `{trade['entry']:.4f}`\n"
-                    f"ההון מוגן — ללא סיכון! · {LEVERAGE}x Isolated"
-                )
+            # ════════════════════════════════════════
+            # שלב: INITIAL — פוזיציה מלאה $500
+            # ════════════════════════════════════════
+            if trade['phase'] == 'initial':
 
-        # ── בדיקת TP / SL ──
-        if current_price >= trade['tp']:
-            tp_pct   = trade.get('tp_pct', (trade['tp'] - trade['entry']) / trade['entry'] * 100)
-            pnl      = round(POSITION_SIZE * tp_pct / 100, 2)
-            pnl_pct  = round(pnl / MARGIN * 100, 1)
-            daily_stats['wins']      += 1
-            daily_stats['total_pnl'] += pnl
-            send_msg(
-                f"✅ *רווח (TP) הושג ב-{trade['symbol']}!*\n"
-                f"כניסה: `{trade['entry']:.4f}` → TP: `{trade['tp']:.4f}`\n"
-                f"💼 {LEVERAGE}x Isolated · בטחון: ${MARGIN}\n"
-                f"*רווח: +${pnl} (+{pnl_pct}% על המרג'ין)*\n"
-                f"סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
-            )
-            active_trades.remove(trade)
-        elif current_price <= trade['sl']:
-            be = trade.get('be_triggered', False)
-            if be:
-                daily_stats['losses']    += 1
-                # יצאנו ב-Break Even — ללא הפסד
-                send_msg(
-                    f"🔒 *יצאנו ב-Break Even — {trade['symbol']}*\n"
-                    f"ללא הפסד · ההון נשמר\n"
-                    f"סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
-                )
-            else:
-                sl_pct   = trade.get('sl_pct', (trade['entry'] - trade['sl']) / trade['entry'] * 100)
-                pnl      = round(POSITION_SIZE * sl_pct / 100, 2)
-                pnl_pct  = round(pnl / MARGIN * 100, 1)
-                daily_stats['losses']    += 1
-                daily_stats['total_pnl'] -= pnl
-                send_msg(
-                    f"🛑 *הפסד (SL) ב-{trade['symbol']}*\n"
-                    f"כניסה: `{trade['entry']:.4f}` → SL: `{trade['sl']:.4f}`\n"
-                    f"💼 {LEVERAGE}x Isolated · בטחון: ${MARGIN}\n"
-                    f"*הפסד: -${pnl} (-{pnl_pct}% על המרג'ין)*\n"
-                    f"סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
-                )
-            active_trades.remove(trade)
+                # 1. Break Even: מחיר עלה 3% → SL לכניסה
+                if not trade['be_triggered'] and current_price >= entry * 1.03:
+                    trade['sl']           = entry
+                    trade['be_triggered'] = True
+                    send_msg(
+                        f"🔒 *Break Even מופעל — {sym}*\n"
+                        f"מחיר: `{current_price:.4f}` (+3%)\n"
+                        f"SL הועבר לכניסה: `{entry:.4f}`\n"
+                        f"💼 {LEVERAGE}x Isolated · ההון מוגן!"
+                    )
+
+                # 2. TP1: מחיר עלה 5% → סגור 50%, הפעל Trailing
+                if current_price >= entry * 1.05:
+                    tp1_pnl = round(half * 0.05, 2)
+                    tp1_pct = round(tp1_pnl / MARGIN * 100, 1)
+                    trade['tp1_triggered'] = True
+                    trade['tp1_pnl']       = tp1_pnl
+                    trade['phase']         = 'trailing'
+                    trade['peak_price']    = current_price
+                    trade['trailing_sl']   = current_price * 0.98
+                    daily_stats['total_pnl'] += tp1_pnl
+                    send_msg(
+                        f"🎯 *TP1 הושג — {sym}!*\n"
+                        f"מחיר: `{current_price:.4f}` (+5%)\n"
+                        f"50% נסגרו · רווח נעול: *+${tp1_pnl} (+{tp1_pct}%)*\n"
+                        f"💼 {LEVERAGE}x · שאר 50% ($250) בטריילינג 2%\n"
+                        f"Trailing SL: `{trade['trailing_sl']:.4f}`\n"
+                        f"סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
+                    )
+                    continue   # לא לבדוק SL גנרי באותה איטרציה
+
+                # 3. SL נגע
+                if current_price <= trade['sl']:
+                    if trade['be_triggered']:
+                        # יצאנו ב-Break Even
+                        daily_stats['losses']    += 1
+                        send_msg(
+                            f"🔒 *Break Even — יצאנו ב-{sym}*\n"
+                            f"מחיר: `{current_price:.4f}` | כניסה: `{entry:.4f}`\n"
+                            f"*ללא הפסד · ההון נשמר*\n"
+                            f"💼 {LEVERAGE}x Isolated\n"
+                            f"סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
+                        )
+                    else:
+                        sl_pct = trade['sl_pct']
+                        loss   = round(POSITION_SIZE * sl_pct / 100, 2)
+                        loss_pct = round(loss / MARGIN * 100, 1)
+                        daily_stats['losses']    += 1
+                        daily_stats['total_pnl'] -= loss
+                        send_msg(
+                            f"🛑 *SL נגע — {sym}*\n"
+                            f"כניסה: `{entry:.4f}` → SL: `{trade['sl']:.4f}`\n"
+                            f"*הפסד: -${loss} (-{loss_pct}% על מרג'ין)*\n"
+                            f"💼 {LEVERAGE}x Isolated · בטחון: ${MARGIN}\n"
+                            f"סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
+                        )
+                    active_trades.remove(trade)
+
+            # ════════════════════════════════════════
+            # שלב: TRAILING — 50% פוזיציה נותרת ($250)
+            # ════════════════════════════════════════
+            elif trade['phase'] == 'trailing':
+
+                # עדכן שיא ו-Trailing SL
+                if current_price > trade['peak_price']:
+                    trade['peak_price']  = current_price
+                    trade['trailing_sl'] = round(current_price * 0.98, 6)
+
+                # TP מלא (9%) — סגור את השאר
+                if current_price >= entry * 1.09:
+                    tp_pnl  = round(half * 0.09, 2)
+                    tp_pct  = round(tp_pnl / MARGIN * 100, 1)
+                    total   = round(trade['tp1_pnl'] + tp_pnl, 2)
+                    daily_stats['wins']      += 1
+                    daily_stats['total_pnl'] += tp_pnl
+                    send_msg(
+                        f"✅ *TP מלא הושג — {sym}!*\n"
+                        f"מחיר: `{current_price:.4f}` (+9%)\n"
+                        f"שאר 50% נסגרו: *+${tp_pnl} (+{tp_pct}%)*\n"
+                        f"TP1 + TP סה\"כ: *+${total}*\n"
+                        f"💼 {LEVERAGE}x Isolated\n"
+                        f"סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
+                    )
+                    active_trades.remove(trade)
+
+                # Trailing Stop נגע
+                elif current_price <= trade['trailing_sl']:
+                    exit_pct = (current_price - entry) / entry * 100
+                    half_pnl = round(half * exit_pct / 100, 2)
+                    total    = round(trade['tp1_pnl'] + half_pnl, 2)
+                    if half_pnl >= 0:
+                        daily_stats['wins'] += 1
+                    else:
+                        daily_stats['losses'] += 1
+                    daily_stats['total_pnl'] += half_pnl
+                    sign = "+" if half_pnl >= 0 else ""
+                    send_msg(
+                        f"📍 *Trailing Stop נגע — {sym}*\n"
+                        f"שיא: `{trade['peak_price']:.4f}` → יציאה: `{current_price:.4f}`\n"
+                        f"50% נסגרו: *{sign}${half_pnl}*\n"
+                        f"TP1 + Trailing סה\"כ: *{'+' if total>=0 else ''}${total}*\n"
+                        f"💼 {LEVERAGE}x Isolated\n"
+                        f"סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
+                    )
+                    active_trades.remove(trade)
+
+        except Exception as e:
+            print(f"Track error {trade.get('symbol','?')}: {e}")
 
 # --- דוח יומי ---
 
