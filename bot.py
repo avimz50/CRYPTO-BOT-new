@@ -21,7 +21,7 @@ CHAT_ID = os.environ['CHAT_ID']
 WATCHLIST = {
     'TOP_10': ['BTC/USDT', 'ETH/USDT', 'SOL/USDT'],
     'AI_GEMS': ['FET/USDT', 'RENDER/USDT', 'NEAR/USDT'],
-    'ENERGY_GEO': ['PAXG/USDT']
+    'ENERGY_GEO': ['PAXG/USDT', 'LTC/USDT', 'LINK/USDT']
 }
 
 # רשימה למעקב אחרי עסקאות דמו פתוחות
@@ -43,7 +43,7 @@ def send_msg(text):
     except Exception as e:
         print(f"Telegram Error: {e}")
 
-def get_data(symbol, timeframe='1h', limit=100):
+def get_data(symbol, timeframe='1h', limit=250):
     bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
     df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     return df
@@ -51,6 +51,7 @@ def get_data(symbol, timeframe='1h', limit=100):
 # --- אסטרטגיות ---
 
 def check_top_10(df):
+    # RSI < 40 (רחב יותר מ-35 לקבלת יותר איתותים) + מחיר מעל EMA 200
     rsi_series = ta.rsi(df['close'], length=14)
     ema200_series = ta.ema(df['close'], length=200)
     if rsi_series is None or ema200_series is None:
@@ -60,8 +61,8 @@ def check_top_10(df):
     price = df['close'].iloc[-1]
     if pd.isna(rsi) or pd.isna(ema200):
         return False, ""
-    if rsi < 35 and price > ema200:
-        return True, "RSI Oversold + Bullish Trend"
+    if rsi < 40 and price > ema200:
+        return True, f"RSI Oversold ({rsi:.1f}) + Above EMA200"
     return False, ""
 
 def check_ai_breakout(df):
@@ -69,12 +70,14 @@ def check_ai_breakout(df):
         return False, ""
     current_price = df['close'].iloc[-1]
     high_24h = df['high'].iloc[-25:-1].max()
+    # פריצה מינימלית של 0.5% מעל השיא — לא סתם פיפס אחד
+    breakout_pct = (current_price - high_24h) / high_24h * 100
     # אישור ווליום — הנר הנוכחי חייב להיות מעל פי 1.5 מממוצע 20 הנרות האחרונים
     current_vol = df['volume'].iloc[-1]
     avg_vol = df['volume'].iloc[-21:-1].mean()
     volume_confirmed = current_vol > avg_vol * 1.5
-    if current_price > high_24h and volume_confirmed:
-        return True, f"24H High Breakout + Volume ×{current_vol/avg_vol:.1f}"
+    if breakout_pct >= 0.5 and volume_confirmed:
+        return True, f"24H Breakout +{breakout_pct:.1f}% + Volume ×{current_vol/avg_vol:.1f}"
     return False, ""
 
 def check_energy_trend(df):

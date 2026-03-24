@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 const WATCHLIST = {
   "TOP 10": ["BTC/USDT", "ETH/USDT", "SOL/USDT"],
   "AI Gems": ["FET/USDT", "RENDER/USDT", "NEAR/USDT"],
-  "Energy/Geo": ["PAXG/USDT"],
+  "Energy/Geo": ["PAXG/USDT", "LTC/USDT", "LINK/USDT"],
 };
 
 const STRATEGIES = [
@@ -73,7 +73,7 @@ export default function App() {
         {/* Stats Row */}
         <div className="grid grid-cols-3 gap-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
-            <p className="text-3xl font-bold text-white">7</p>
+            <p className="text-3xl font-bold text-white">9</p>
             <p className="text-gray-400 text-sm mt-1">מטבעות במעקב</p>
           </div>
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
