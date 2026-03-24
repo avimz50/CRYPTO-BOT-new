@@ -69,8 +69,12 @@ def check_ai_breakout(df):
         return False, ""
     current_price = df['close'].iloc[-1]
     high_24h = df['high'].iloc[-25:-1].max()
-    if current_price > high_24h:
-        return True, "24H High Breakout"
+    # אישור ווליום — הנר הנוכחי חייב להיות מעל פי 1.5 מממוצע 20 הנרות האחרונים
+    current_vol = df['volume'].iloc[-1]
+    avg_vol = df['volume'].iloc[-21:-1].mean()
+    volume_confirmed = current_vol > avg_vol * 1.5
+    if current_price > high_24h and volume_confirmed:
+        return True, f"24H High Breakout + Volume ×{current_vol/avg_vol:.1f}"
     return False, ""
 
 def check_energy_trend(df):
