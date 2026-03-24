@@ -41,15 +41,23 @@ def get_data(symbol, timeframe='1h', limit=100):
 
 def check_top_10(df):
     # אסטרטגיה: RSI נמוך (מכירת יתר) במגמה עולה
-    rsi = ta.rsi(df['close'], length=14).iloc[-1]
-    ema200 = ta.ema(df['close'], length=200).iloc[-1]
+    rsi_series = ta.rsi(df['close'], length=14)
+    ema200_series = ta.ema(df['close'], length=200)
+    if rsi_series is None or ema200_series is None:
+        return False, ""
+    rsi = rsi_series.iloc[-1]
+    ema200 = ema200_series.iloc[-1]
     price = df['close'].iloc[-1]
+    if pd.isna(rsi) or pd.isna(ema200):
+        return False, ""
     if rsi < 35 and price > ema200:
         return True, "RSI Oversold + Bullish Trend"
     return False, ""
 
 def check_ai_breakout(df):
     # אסטרטגיה: פריצת שיא של 24 נרות (יום)
+    if len(df) < 26:
+        return False, ""
     current_price = df['close'].iloc[-1]
     high_24h = df['high'].iloc[-25:-1].max()
     if current_price > high_24h:
@@ -60,6 +68,12 @@ def check_energy_trend(df):
     # אסטרטגיה: חציית ממוצעים EMA 9/21
     ema9 = ta.ema(df['close'], length=9)
     ema21 = ta.ema(df['close'], length=21)
+    if ema9 is None or ema21 is None:
+        return False, ""
+    if pd.isna(ema9.iloc[-2]) or pd.isna(ema9.iloc[-1]):
+        return False, ""
+    if pd.isna(ema21.iloc[-2]) or pd.isna(ema21.iloc[-1]):
+        return False, ""
     if ema9.iloc[-2] < ema21.iloc[-2] and ema9.iloc[-1] > ema21.iloc[-1]:
         return True, "EMA Cross (9/21)"
     return False, ""
