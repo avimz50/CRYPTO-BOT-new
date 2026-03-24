@@ -21,7 +21,7 @@ CHAT_ID = os.environ['CHAT_ID']
 WATCHLIST = {
     'TOP_10': ['BTC/USDT', 'ETH/USDT', 'SOL/USDT'],
     'AI_GEMS': ['FET/USDT', 'RENDER/USDT', 'NEAR/USDT'],
-    'ENERGY_GEO': ['PAXG/USDT', 'LTC/USDT', 'LINK/USDT']
+    'ENERGY_GEO': ['PAXG/USDT', 'POWR/USDT', 'HNT/USDT']
 }
 
 # רשימה למעקב אחרי עסקאות דמו פתוחות

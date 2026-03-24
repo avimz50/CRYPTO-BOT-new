@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 const WATCHLIST = {
   "TOP 10": ["BTC/USDT", "ETH/USDT", "SOL/USDT"],
   "AI Gems": ["FET/USDT", "RENDER/USDT", "NEAR/USDT"],
-  "Energy/Geo": ["PAXG/USDT", "LTC/USDT", "LINK/USDT"],
+  "Energy/Geo": ["PAXG/USDT", "POWR/USDT", "HNT/USDT"],
 };
 
 const STRATEGIES = [
