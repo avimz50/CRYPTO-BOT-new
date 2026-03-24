@@ -89,8 +89,18 @@ def check_energy_trend(df):
         return False, ""
     if pd.isna(ema21.iloc[-2]) or pd.isna(ema21.iloc[-1]):
         return False, ""
-    if ema9.iloc[-2] < ema21.iloc[-2] and ema9.iloc[-1] > ema21.iloc[-1]:
-        return True, "EMA Cross (9/21)"
+    # חציית EMA 9 מעל EMA 21
+    cross = ema9.iloc[-2] < ema21.iloc[-2] and ema9.iloc[-1] > ema21.iloc[-1]
+    if not cross:
+        return False, ""
+    # אישור ווליום — הנר הנוכחי מעל פי 1.3 מממוצע 20 האחרונים (סף נמוך יותר ממטבעות גדולים)
+    current_vol = df['volume'].iloc[-1]
+    avg_vol = df['volume'].iloc[-21:-1].mean()
+    if avg_vol == 0:
+        return False, ""
+    vol_ratio = current_vol / avg_vol
+    if vol_ratio >= 1.3:
+        return True, f"EMA Cross (9/21) + Volume ×{vol_ratio:.1f}"
     return False, ""
 
 # --- ניהול עסקאות דמו ---
