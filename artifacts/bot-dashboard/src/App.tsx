@@ -42,10 +42,11 @@ function useClock() {
 export default function App() {
   const now = useClock();
   const nextScan = new Date(
-    Math.ceil(now.getTime() / (15 * 60 * 1000)) * (15 * 60 * 1000)
+    Math.ceil(now.getTime() / (60 * 60 * 1000)) * (60 * 60 * 1000)
   );
   const diff = Math.max(0, Math.floor((nextScan.getTime() - now.getTime()) / 1000));
-  const mm = String(Math.floor(diff / 60)).padStart(2, "0");
+  const hh = String(Math.floor(diff / 3600)).padStart(2, "0");
+  const mm = String(Math.floor((diff % 3600) / 60)).padStart(2, "0");
   const ss = String(diff % 60).padStart(2, "0");
 
   return (
@@ -76,7 +77,7 @@ export default function App() {
             <p className="text-gray-400 text-sm mt-1">מטבעות במעקב</p>
           </div>
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
-            <p className="text-3xl font-bold text-blue-400">{mm}:{ss}</p>
+            <p className="text-3xl font-bold text-blue-400">{hh}:{mm}:{ss}</p>
             <p className="text-gray-400 text-sm mt-1">עד סריקה הבאה</p>
           </div>
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
@@ -94,7 +95,7 @@ export default function App() {
           <div className="grid grid-cols-2 gap-4 text-sm">
             <div className="flex items-center gap-3 text-gray-300">
               <span className="text-gray-500">תדירות</span>
-              <span className="font-medium">כל 15 דקות</span>
+              <span className="font-medium">כל שעה</span>
             </div>
             <div className="flex items-center gap-3 text-gray-300">
               <span className="text-gray-500">דוח יומי</span>

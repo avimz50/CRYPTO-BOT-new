@@ -192,7 +192,7 @@ def main():
 
             # הודעת התחלת סריקה
             now = datetime.now().strftime('%H:%M:%S')
-            send_msg(f"🔍 *סריקה חדשה החלה* — {now}\nבודק {sum(len(v) for v in WATCHLIST.values())} מטבעות...")
+            send_msg(f"🔍 *סריקה שעתית* — {now}\nבודק {sum(len(v) for v in WATCHLIST.values())} מטבעות...")
 
             # סריקה לאיתותים חדשים
             for category, symbols in WATCHLIST.items():
@@ -215,8 +215,8 @@ def main():
                     if signal:
                         open_demo_trade(symbol, price, reason)
 
-            print("Scan complete. Waiting 15 minutes...")
-            time.sleep(900)
+            print("Scan complete. Waiting 1 hour...")
+            time.sleep(3600)
 
         except Exception as e:
             print(f"Main Loop Error: {e}")
