@@ -9,6 +9,10 @@ import pandas as pd
 import pandas_ta as ta
 from datetime import datetime, date, timedelta
 
+# ── אזור זמן ישראל (UTC+2/+3 לפי שעון קיץ) ──
+os.environ['TZ'] = 'Asia/Jerusalem'
+time.tzset()
+
 # ספריות גרף — fallback אם לא קיימות
 try:
     import matplotlib
