@@ -335,6 +335,95 @@ RSI_VETO_LONG  = 72   # RSI מעל זה = לא קונים (overbought)
 RSI_VETO_SHORT = 28   # RSI מתחת זה = לא מוכרים (oversold)
 BE_BUFFER_PCT  = 3.0  # % עלייה/ירידה לפני הזזת SL ל-Break Even
 
+
+def score_candles(df_15m, direction):
+    """
+    זיהוי תבניות נרות יפניים על טיים-פריים 15m — 10 נקודות מקסימום.
+
+    LONG:  Hammer, Bullish Engulfing, Morning Star, Three White Soldiers, Bullish Harami
+    SHORT: Shooting Star, Bearish Engulfing, Evening Star, Three Black Crows, Bearish Harami
+
+    משתמש בשלושת הנרות הסגורים האחרונים (iloc[-4:-1]).
+    מחזיר: (points: int, pattern_name: str)
+    """
+    try:
+        if len(df_15m) < 6:
+            return 0, "no data"
+
+        # 3 נרות סגורים: c3=הישן, c2=האמצעי, c1=האחרון
+        o3 = df_15m['open'].iloc[-4];  c3 = df_15m['close'].iloc[-4]
+        h3 = df_15m['high'].iloc[-4];  l3 = df_15m['low'].iloc[-4]
+        o2 = df_15m['open'].iloc[-3];  c2 = df_15m['close'].iloc[-3]
+        h2 = df_15m['high'].iloc[-3];  l2 = df_15m['low'].iloc[-3]
+        o1 = df_15m['open'].iloc[-2];  c1 = df_15m['close'].iloc[-2]
+        h1 = df_15m['high'].iloc[-2];  l1 = df_15m['low'].iloc[-2]
+
+        body1 = abs(c1 - o1);  range1 = h1 - l1 if h1 != l1 else 1e-10
+        body2 = abs(c2 - o2);  body3  = abs(c3 - o3)
+        upper_wick1 = h1 - max(c1, o1)
+        lower_wick1 = min(c1, o1) - l1
+
+        green1 = c1 > o1;  red1 = c1 < o1
+        green2 = c2 > o2;  red2 = c2 < o2
+        green3 = c3 > o3;  red3 = c3 < o3
+
+        if direction == 'LONG':
+            # 1. Hammer — גוף קטן, צל תחתון ארוך, צל עליון קצר
+            if (body1 < range1 * 0.35 and
+                    lower_wick1 >= 2.0 * max(body1, range1 * 0.01) and
+                    upper_wick1 <= body1 * 1.1):
+                return 10, "Hammer"
+
+            # 2. Bullish Engulfing — נר אדום אחריו נר ירוק שבולע
+            if red2 and green1 and c1 > o2 and o1 < c2:
+                return 10, "Bullish Engulfing"
+
+            # 3. Morning Star — אדום, גוף קטן (doji/spinning), ירוק מעל אמצע הראשון
+            if (red3 and body2 < body3 * 0.35 and green1 and
+                    c1 > (o3 + c3) / 2):
+                return 10, "Morning Star"
+
+            # 4. Three White Soldiers — 3 נרות ירוקים עולים
+            if green3 and green2 and green1 and c1 > c2 > c3:
+                return 10, "Three White Soldiers"
+
+            # 5. Bullish Harami — נר אדום גדול אחריו ירוק קטן בתוכו
+            if (red2 and green1 and
+                    o1 >= c2 and c1 <= o2 and body1 < body2 * 0.5):
+                return 5, "Bullish Harami"
+
+        else:  # SHORT
+            # 1. Shooting Star — גוף קטן, צל עליון ארוך, צל תחתון קצר
+            if (body1 < range1 * 0.35 and
+                    upper_wick1 >= 2.0 * max(body1, range1 * 0.01) and
+                    lower_wick1 <= body1 * 1.1):
+                return 10, "Shooting Star"
+
+            # 2. Bearish Engulfing — נר ירוק אחריו אדום שבולע
+            if green2 and red1 and c1 < o2 and o1 > c2:
+                return 10, "Bearish Engulfing"
+
+            # 3. Evening Star — ירוק, גוף קטן, אדום מתחת אמצע הראשון
+            if (green3 and body2 < body3 * 0.35 and red1 and
+                    c1 < (o3 + c3) / 2):
+                return 10, "Evening Star"
+
+            # 4. Three Black Crows — 3 נרות אדומים יורדים
+            if red3 and red2 and red1 and c1 < c2 < c3:
+                return 10, "Three Black Crows"
+
+            # 5. Bearish Harami — נר ירוק גדול אחריו אדום קטן בתוכו
+            if (green2 and red1 and
+                    o1 <= c2 and c1 >= o2 and body1 < body2 * 0.5):
+                return 5, "Bearish Harami"
+
+        return 0, "no pattern"
+
+    except Exception as e:
+        print(f"  score_candles error: {e}")
+        return 0, "error"
+
+
 def score_symbol(df_1h, df_15m, symbol, direction='LONG'):
     """
     מערכת ניקוד מקצועית 0–100 נקודות.
@@ -346,7 +435,8 @@ def score_symbol(df_1h, df_15m, symbol, direction='LONG'):
       Trend     (30): EMA200 ב-1H (+20) + ב-15m (+10)
       Momentum  (25): MACD מעל/מתחת Signal (+15) + Histogram מתחזק (+10)
       RSI       (20): Sweet-spot (+20), Acceptable (+10)
-      BB+Volume (25): מחיר מעל/מתחת MidBB (+15) + Volume ×1.2 (+10)
+      BB+Volume (15): מחיר מעל/מתחת MidBB (+10) + Volume ×1.2 (+5)
+      Candles   (10): תבנית נרות יפניים חזקה (+10), חלשה (+5)
 
     מחזיר: (score: int, breakdown: str, atr: float)
     """
@@ -470,7 +560,7 @@ def score_symbol(df_1h, df_15m, symbol, direction='LONG'):
         print(f"  [{symbol}] {direction} | RSI={r_pts} (rsi={rsi_v:.1f})")
 
         # ════════════════════════════════
-        # 4. BOLLINGER + VOLUME — 25 נקודות
+        # 4. BOLLINGER + VOLUME — 15 נקודות
         # ════════════════════════════════
         if direction == 'LONG':
             bb_ok = price > bb_mid
@@ -481,13 +571,23 @@ def score_symbol(df_1h, df_15m, symbol, direction='LONG'):
 
         b_pts = 0
         if bb_ok:
-            b_pts += 15
-        if vol_ok:
             b_pts += 10
+        if vol_ok:
+            b_pts += 5
         score += b_pts
-        parts.append(f"BB+Vol={b_pts}/25")
-        print(f"  [{symbol}] {direction} | BB={b_pts} "
+        parts.append(f"BB+Vol={b_pts}/15")
+        print(f"  [{symbol}] {direction} | BB+Vol={b_pts} "
               f"(bb={'✓' if bb_ok else '✗'} vol×{vol_rat:.1f}={'✓' if vol_ok else '✗'})")
+
+        # ════════════════════════════════
+        # 5. CANDLES (נרות יפניים) — 10 נקודות
+        # ════════════════════════════════
+        c_pts, pattern_name = score_candles(df_15m, direction)
+        score += c_pts
+        candle_icon = "🕯" if c_pts > 0 else "—"
+        parts.append(f"Candles={c_pts}/10({pattern_name})")
+        print(f"  [{symbol}] {direction} | Candles={c_pts} "
+              f"({candle_icon} {pattern_name})")
 
         breakdown = " | ".join(parts) + f"  →  TOTAL={score}/100"
         print(f"  [{symbol}] {direction} SCORE={score}/100 {'🟢 SIGNAL!' if score >= MIN_SCORE else '🔴 skip'}")
@@ -952,8 +1052,8 @@ def handle_test(message):
         atr    = ta.atr(df_1h['high'], df_1h['low'], df_1h['close'], length=14).iloc[-1]
         open_demo_trade(
             'BTC/USDT', price,
-            'Trend=20/30 | MACD=25/25 | RSI=20/20 | BB+Vol=15/25 → TOTAL=80/100 [TEST]',
-            df_1h, direction='LONG', score=80, atr=atr
+            'Trend=30/30 | MACD=25/25 | RSI=20/20 | BB+Vol=10/15 | Candles=0/10 → TOTAL=85/100 [TEST]',
+            df_1h, direction='LONG', score=85, atr=atr
         )
         print(f"Test signal sent for BTC/USDT at {price}")
     except Exception as e:
