@@ -270,76 +270,153 @@ def get_hot_candidates():
 
 # --- אסטרטגיות ---
 
-def check_rsi_trend(df):
-    """RSI חוצה מעל 35 (Turnaround) + מחיר מעל EMA 200 + ווליום ×1.5"""
-    rsi_series = ta.rsi(df['close'], length=14)
-    ema200_series = ta.ema(df['close'], length=200)
-    if rsi_series is None or ema200_series is None:
+def check_rsi_momentum(df, symbol=""):
+    """
+    RSI Trend Active: RSI ב-55-75 ועולה בנר הנוכחי (אין צורך ב-cross)
+    + מחיר מעל EMA20 + ווליום ×1.2
+    מתאים ל-Top Gainers שנמצאים כבר בטרנד עולה
+    """
+    rsi_series   = ta.rsi(df['close'], length=14)
+    ema20_series = ta.ema(df['close'], length=20)
+    if rsi_series is None or ema20_series is None:
         return False, ""
-    rsi_prev = rsi_series.iloc[-2]
-    rsi_curr = rsi_series.iloc[-1]
-    ema200 = ema200_series.iloc[-1]
-    price = df['close'].iloc[-1]
-    if pd.isna(rsi_prev) or pd.isna(rsi_curr) or pd.isna(ema200):
-        return False, ""
-    # תנאי Turnaround: RSI חצה מעל 35 בנר האחרון
-    rsi_cross = rsi_prev < 35 and rsi_curr > 35
-    if not rsi_cross:
-        return False, ""
-    if price <= ema200:
-        return False, ""
-    # אישור ווליום: נר נוכחי × 1.5 מעל ממוצע 10 נרות אחרונים
-    current_vol = df['volume'].iloc[-1]
-    avg_vol_10 = df['volume'].iloc[-11:-1].mean()
-    if avg_vol_10 == 0 or current_vol < avg_vol_10 * 1.5:
-        return False, ""
-    vol_ratio = current_vol / avg_vol_10
-    return True, f"RSI Turnaround ({rsi_prev:.1f}→{rsi_curr:.1f}) + EMA200 + Vol ×{vol_ratio:.1f}"
 
-def check_breakout(df):
-    """פריצת שיא 24 שעות + ווליום ×1.5"""
-    if len(df) < 26:
-        return False, ""
-    current_price = df['close'].iloc[-1]
-    high_24h = df['high'].iloc[-25:-1].max()
-    breakout_pct = (current_price - high_24h) / high_24h * 100
-    current_vol = df['volume'].iloc[-1]
-    avg_vol = df['volume'].iloc[-21:-1].mean()
-    volume_confirmed = avg_vol > 0 and current_vol > avg_vol * 1.5
-    if breakout_pct >= 0.5 and volume_confirmed:
-        return True, f"24H Breakout +{breakout_pct:.1f}% + Volume ×{current_vol/avg_vol:.1f}"
-    return False, ""
+    rsi_curr  = rsi_series.iloc[-1]
+    rsi_prev1 = rsi_series.iloc[-2]
+    ema20     = ema20_series.iloc[-1]
+    price     = df['close'].iloc[-1]
 
-def check_energy_trend(df):
-    """EMA 9 חוצה מעל EMA 21 + ווליום ×1.3"""
-    ema9 = ta.ema(df['close'], length=9)
-    ema21 = ta.ema(df['close'], length=21)
-    if ema9 is None or ema21 is None:
+    if any(pd.isna(v) for v in [rsi_curr, rsi_prev1, ema20]):
         return False, ""
-    if pd.isna(ema9.iloc[-2]) or pd.isna(ema9.iloc[-1]):
+
+    # RSI ב-zone מומנטום ועולה (לא נדרשת חציה ספציפית)
+    in_momentum_zone = 55 <= rsi_curr <= 75
+    rsi_rising       = rsi_curr > rsi_prev1 + 0.5   # עלייה של לפחות 0.5 נקודות
+
+    if not in_momentum_zone:
+        print(f"  [{symbol}] RSI={rsi_curr:.1f} — outside momentum zone (55-75)")
         return False, ""
-    if pd.isna(ema21.iloc[-2]) or pd.isna(ema21.iloc[-1]):
+    if not rsi_rising:
+        print(f"  [{symbol}] RSI={rsi_curr:.1f} (prev={rsi_prev1:.1f}) — RSI not rising")
         return False, ""
-    cross = ema9.iloc[-2] < ema21.iloc[-2] and ema9.iloc[-1] > ema21.iloc[-1]
-    if not cross:
+    if price <= ema20:
+        print(f"  [{symbol}] RSI OK but price {price:.4f} < EMA20 {ema20:.4f}")
         return False, ""
+
     current_vol = df['volume'].iloc[-1]
-    avg_vol = df['volume'].iloc[-21:-1].mean()
+    avg_vol     = df['volume'].iloc[-11:-1].mean()
     if avg_vol == 0:
         return False, ""
     vol_ratio = current_vol / avg_vol
-    if vol_ratio >= 1.3:
-        return True, f"EMA Cross (9/21) + Volume ×{vol_ratio:.1f}"
-    return False, ""
+    if vol_ratio < 1.2:
+        print(f"  [{symbol}] RSI+EMA20 OK but Vol ×{vol_ratio:.2f} < 1.2")
+        return False, ""
+
+    return True, f"RSI Momentum ({rsi_prev1:.1f}→{rsi_curr:.1f}) + EMA20 + Vol ×{vol_ratio:.1f}"
+
+
+def check_breakout(df, symbol=""):
+    """
+    Local Breakout: מחיר שובר שיא 6 נרות (6H) — פריצה טריה ורלוונטית
+    + ווליום ×1.3. סף הורד ל-0.2% (מ-0.5% המקורי).
+    """
+    if len(df) < 10:
+        return False, ""
+    current_price = df['close'].iloc[-1]
+    # שיא של 6 הנרות הקודמים (לא כולל הנוכחי)
+    high_6h      = df['high'].iloc[-7:-1].max()
+    breakout_pct = (current_price - high_6h) / high_6h * 100
+    current_vol  = df['volume'].iloc[-1]
+    avg_vol      = df['volume'].iloc[-11:-1].mean()
+    vol_ratio    = current_vol / avg_vol if avg_vol > 0 else 0
+
+    if breakout_pct < 0.2:
+        print(f"  [{symbol}] 6H-Breakout {breakout_pct:.2f}% < 0.2%")
+        return False, ""
+    if vol_ratio < 1.3:
+        print(f"  [{symbol}] 6H-Breakout +{breakout_pct:.2f}% but Vol ×{vol_ratio:.2f} < 1.3")
+        return False, ""
+
+    return True, f"6H Breakout +{breakout_pct:.1f}% + Volume ×{vol_ratio:.1f}"
+
+
+def check_bull_candle(df, symbol=""):
+    """
+    Bull Candle: נר ירוק חזק (close > open ב-0.5%+) עם ווליום ×1.5
+    + close ב-80%+ של טווח הנר (דחייה נמוכה)
+    אסטרטגיה נוספת לתפוס מומנטום בנר הנוכחי
+    """
+    close  = df['close'].iloc[-1]
+    open_  = df['open'].iloc[-1]
+    high   = df['high'].iloc[-1]
+    low    = df['low'].iloc[-1]
+    candle_range = high - low
+    if candle_range == 0:
+        return False, ""
+
+    # נר ירוק של לפחות 0.5%
+    body_pct = (close - open_) / open_ * 100
+    if body_pct < 0.5:
+        print(f"  [{symbol}] Bull candle body {body_pct:.2f}% < 0.5%")
+        return False, ""
+
+    # close ב-70%+ של טווח הנר (לא כמעט בשפל)
+    close_position = (close - low) / candle_range
+    if close_position < 0.70:
+        print(f"  [{symbol}] Bull candle position {close_position:.2f} < 0.70")
+        return False, ""
+
+    # ווליום ×1.5
+    current_vol = df['volume'].iloc[-1]
+    avg_vol     = df['volume'].iloc[-11:-1].mean()
+    if avg_vol == 0:
+        return False, ""
+    vol_ratio = current_vol / avg_vol
+    if vol_ratio < 1.5:
+        print(f"  [{symbol}] Bull candle OK (+{body_pct:.2f}%) but Vol ×{vol_ratio:.2f} < 1.5")
+        return False, ""
+
+    return True, f"Bull Candle +{body_pct:.1f}% + Vol ×{vol_ratio:.1f}"
+
+
+def check_energy_trend(df, symbol=""):
+    """EMA 9 חוצה מעל EMA 21 + ווליום ×1.2 (הורד מ-×1.3)"""
+    ema9  = ta.ema(df['close'], length=9)
+    ema21 = ta.ema(df['close'], length=21)
+    if ema9 is None or ema21 is None:
+        return False, ""
+    if any(pd.isna(v) for v in [ema9.iloc[-2], ema9.iloc[-1],
+                                 ema21.iloc[-2], ema21.iloc[-1]]):
+        return False, ""
+
+    cross = ema9.iloc[-2] < ema21.iloc[-2] and ema9.iloc[-1] > ema21.iloc[-1]
+    if not cross:
+        print(f"  [{symbol}] EMA9={ema9.iloc[-1]:.4f} EMA21={ema21.iloc[-1]:.4f} — no cross")
+        return False, ""
+
+    current_vol = df['volume'].iloc[-1]
+    avg_vol     = df['volume'].iloc[-21:-1].mean()
+    if avg_vol == 0:
+        return False, ""
+    vol_ratio = current_vol / avg_vol
+    if vol_ratio < 1.2:
+        print(f"  [{symbol}] EMA cross OK but Vol ×{vol_ratio:.2f} < 1.2")
+        return False, ""
+
+    return True, f"EMA Cross (9/21) + Volume ×{vol_ratio:.1f}"
 
 # --- ניהול עסקאות דמו ---
 
 def get_strategy_label(reason):
     """מחזיר שם אסטרטגיה קריא לפי תוכן הסיבה"""
-    if 'RSI' in reason:
+    if 'RSI Momentum' in reason:
+        return "RSI Momentum Surge"
+    elif 'RSI Turnaround' in reason:
         return "RSI Turnaround Recovery"
     elif 'Breakout' in reason:
         return "High Volume Breakout"
+    elif 'Bull Candle' in reason:
+        return "Bull Candle Surge"
     elif 'EMA Cross' in reason:
         return "EMA Trend Cross"
     return "Signal"
@@ -864,6 +941,7 @@ def scan_loop():
             # ═══════════════════════════════════════
             # שלב 3: סריקה עמוקה — RSI + Breakout
             # ═══════════════════════════════════════
+            signals_found = 0
             for candidate in hot_candidates:
                 symbol = candidate['symbol']
                 if any(t['symbol'] == symbol for t in active_trades):
@@ -872,15 +950,25 @@ def scan_loop():
                     df         = get_data(symbol)
                     price      = df['close'].iloc[-1]
                     candle_low = df['low'].iloc[-1]
+                    rsi_now    = ta.rsi(df['close'], length=14).iloc[-1]
+                    print(f"Scanning {symbol}: price={price:.4f} RSI={rsi_now:.1f}")
 
-                    signal, reason = check_rsi_trend(df)
+                    signal, reason = check_rsi_momentum(df, symbol)
                     if signal:
                         open_demo_trade(symbol, price, candle_low, reason, df)
+                        signals_found += 1
                         continue
 
-                    signal, reason = check_breakout(df)
+                    signal, reason = check_breakout(df, symbol)
                     if signal:
                         open_demo_trade(symbol, price, candle_low, reason, df)
+                        signals_found += 1
+                        continue
+
+                    signal, reason = check_bull_candle(df, symbol)
+                    if signal:
+                        open_demo_trade(symbol, price, candle_low, reason, df)
+                        signals_found += 1
 
                 except Exception as e:
                     print(f"Error scanning {symbol}: {e}")
@@ -895,11 +983,15 @@ def scan_loop():
                     df         = get_data(symbol)
                     price      = df['close'].iloc[-1]
                     candle_low = df['low'].iloc[-1]
-                    signal, reason = check_energy_trend(df)
+                    print(f"Scanning EMA {symbol}: price={price:.4f}")
+                    signal, reason = check_energy_trend(df, symbol)
                     if signal:
                         open_demo_trade(symbol, price, candle_low, reason, df)
+                        signals_found += 1
                 except Exception as e:
                     print(f"Error scanning {symbol}: {e}")
+
+            print(f"Scan done — {signals_found} signal(s) found out of {len(hot_candidates)+len(ENERGY_GEO)} scanned")
 
             # ── סיכום סריקה ──
             now        = datetime.now().strftime('%H:%M')
