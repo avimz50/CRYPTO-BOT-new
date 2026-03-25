@@ -50,13 +50,15 @@ POSITION_SIZE  = MARGIN * LEVERAGE   # $500 נשלט
 
 # רשימה למעקב אחרי עסקאות דמו פתוחות
 active_trades = []
+trades_lock   = threading.RLock()   # מגן מ-race conditions בין Threads
 
 # מעקב אחרי עסקאות שנסגרו היום
 daily_stats = {
-    'wins': 0,
-    'losses': 0,
-    'total_pnl': 0.0,   # רווח/הפסד כולל ($) עם מינוף
-    'date': date.today()
+    'wins':         0,
+    'losses':       0,
+    'total_pnl':    0.0,
+    'date':         date.today(),
+    'close_reasons': {'TP': 0, 'TP1+Trail': 0, 'SL': 0, 'BE': 0, 'Manual': 0},
 }
 
 # שמירת תאריך הדוח האחרון שנשלח
@@ -282,10 +284,12 @@ def get_hot_candidates():
 def save_active_trades():
     """שומר את רשימת העסקאות הפעילות לקובץ JSON לדאשבורד."""
     try:
+        with trades_lock:
+            snapshot = list(active_trades)
         data = {
             'updated': datetime.now().strftime('%H:%M:%S'),
-            'count':   len(active_trades),
-            'trades':  active_trades,
+            'count':   len(snapshot),
+            'trades':  snapshot,
         }
         os.makedirs(os.path.dirname(ACTIVE_TRADES_FILE), exist_ok=True)
         with open(ACTIVE_TRADES_FILE, 'w') as f:
@@ -293,14 +297,35 @@ def save_active_trades():
     except Exception as e:
         print(f"save_active_trades error: {e}")
 
+
+def get_btc_regime():
+    """
+    מחזיר את מצב השוק לפי BTC/USDT ו-EMA50.
+    'BULL' — BTC מעל EMA50 → מאפשר LONG
+    'BEAR' — BTC מתחת EMA50 → מאפשר SHORT
+    'NEUTRAL' — שגיאה בשליפה → מאפשר הכל (safe fallback)
+    """
+    try:
+        df   = get_data('BTC/USDT', timeframe='1h', limit=100)
+        ema50 = ta.ema(df['close'], length=50).iloc[-1]
+        price = df['close'].iloc[-1]
+        regime = 'BULL' if price > ema50 else 'BEAR'
+        pct = round((price - ema50) / ema50 * 100, 2)
+        print(f"BTC Regime: {regime} | price={price:.0f} EMA50={ema50:.0f} ({pct:+.2f}%)")
+        return regime
+    except Exception as e:
+        print(f"BTC regime check failed: {e} — defaulting to NEUTRAL")
+        return 'NEUTRAL'
+
 # ═══════════════════════════════════════════════════════════════
 # מנוע ניקוד מקצועי — Professional Scoring System
 # ═══════════════════════════════════════════════════════════════
 
-MIN_SCORE  = 75   # סף מינימום לפתיחת עסקה
+MIN_SCORE  = 85   # סף מינימום לפתיחת עסקה (85 = alignment מושלם)
 MAX_TRADES = 5    # מקסימום עסקאות פתוחות במקביל
 RSI_VETO_LONG  = 72   # RSI מעל זה = לא קונים (overbought)
 RSI_VETO_SHORT = 28   # RSI מתחת זה = לא מוכרים (oversold)
+BE_BUFFER_PCT  = 3.0  # % עלייה/ירידה לפני הזזת SL ל-Break Even
 
 def score_symbol(df_1h, df_15m, symbol, direction='LONG'):
     """
@@ -492,9 +517,9 @@ def open_demo_trade(symbol, price, reason, df_1h=None,
     else:
         sl_dist = price * 0.03                    # fallback: 3%
 
-    tp_dist  = 3.0 * sl_dist    # RR 1:3
-    be_dist  = 1.5 * sl_dist    # Break-Even: 1.5× SL dist
-    tp1_dist = 2.0 * sl_dist    # TP1 (50%): 2× SL dist
+    tp_dist  = 3.0 * sl_dist               # RR 1:3
+    be_dist  = price * BE_BUFFER_PCT / 100  # Break-Even: 3% מהכניסה (buffer לנשימה)
+    tp1_dist = 2.0 * sl_dist               # TP1 (50%): 2× SL dist
 
     sl_pct  = round(sl_dist  / price * 100, 2)
     tp_pct  = round(tp_dist  / price * 100, 2)
@@ -537,7 +562,8 @@ def open_demo_trade(symbol, price, reason, df_1h=None,
         'score':         score,
         'atr':           round(atr, 6),
     }
-    active_trades.append(trade)
+    with trades_lock:
+        active_trades.append(trade)
     save_active_trades()
 
     dir_header = get_direction_header(direction)
@@ -578,7 +604,10 @@ def track_trades():
     global active_trades, daily_stats
 
     if daily_stats['date'] != date.today():
-        daily_stats = {'wins': 0, 'losses': 0, 'total_pnl': 0.0, 'date': date.today()}
+        daily_stats = {
+            'wins': 0, 'losses': 0, 'total_pnl': 0.0, 'date': date.today(),
+            'close_reasons': {'TP': 0, 'TP1+Trail': 0, 'SL': 0, 'BE': 0, 'Manual': 0},
+        }
 
     half = POSITION_SIZE / 2   # $250 — חצי פוזיציה לאחר TP1
 
@@ -651,6 +680,7 @@ def track_trades():
                 if sl_hit(current_price):
                     if trade['be_triggered']:
                         daily_stats['losses'] += 1
+                        daily_stats['close_reasons']['BE'] += 1
                         send_msg(
                             f"🔒 *Break Even — יצאנו ב-{sym}*\n"
                             f"מחיר: `{current_price:.6g}` | כניסה: `{entry:.6g}`\n"
@@ -663,6 +693,7 @@ def track_trades():
                         loss_pct = round(loss / MARGIN * 100, 1)
                         daily_stats['losses']    += 1
                         daily_stats['total_pnl'] -= loss
+                        daily_stats['close_reasons']['SL'] += 1
                         send_msg(
                             f"🛑 *SL נגע — {sym}*\n"
                             f"כניסה: `{entry:.6g}` → SL: `{trade['sl']:.6g}`\n"
@@ -670,7 +701,8 @@ def track_trades():
                             f"💼 {LEVERAGE}x Isolated · בטחון: ${MARGIN}\n"
                             f"📉 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                         )
-                    active_trades.remove(trade)
+                    with trades_lock:
+                        active_trades.remove(trade)
                     save_active_trades()
 
             # ════════════════════════════════════════════
@@ -695,6 +727,7 @@ def track_trades():
                     total    = round(trade['tp1_pnl'] + tp_pnl, 2)
                     daily_stats['wins']      += 1
                     daily_stats['total_pnl'] += tp_pnl
+                    daily_stats['close_reasons']['TP'] += 1
                     send_msg(
                         f"✅ *TP מלא הושג — {sym}!* 🎉\n"
                         f"מחיר: `{current_price:.6g}` | {direction}\n"
@@ -703,7 +736,8 @@ def track_trades():
                         f"💼 {LEVERAGE}x Isolated\n"
                         f"📈 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                     )
-                    active_trades.remove(trade)
+                    with trades_lock:
+                        active_trades.remove(trade)
                     save_active_trades()
 
                 # Trailing Stop נגע
@@ -720,6 +754,7 @@ def track_trades():
                     else:
                         daily_stats['losses'] += 1
                     daily_stats['total_pnl'] += half_pnl
+                    daily_stats['close_reasons']['TP1+Trail'] += 1
                     ref_price = trade['peak_price']
                     send_msg(
                         f"📍 *Trailing Stop נגע — {sym}*\n"
@@ -729,7 +764,8 @@ def track_trades():
                         f"💼 {LEVERAGE}x Isolated\n"
                         f"{icon} סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                     )
-                    active_trades.remove(trade)
+                    with trades_lock:
+                        active_trades.remove(trade)
                     save_active_trades()
 
         except Exception as e:
@@ -764,6 +800,25 @@ def send_daily_report():
     pnl_sign   = "+" if total_pnl >= 0 else ""
     pnl_on_margin = round(total_pnl / MARGIN * 100, 1) if MARGIN else 0
 
+    # ── Close Reason Breakdown ──
+    cr = daily_stats.get('close_reasons', {})
+    cr_total = sum(cr.values())
+    cr_lines = ""
+    reason_map = [
+        ('TP',        '🎯 TP מלא (RR 1:3)'),
+        ('TP1+Trail', '📍 TP1 + Trailing'),
+        ('BE',        '🔒 Break Even'),
+        ('SL',        '🛑 Stop Loss'),
+        ('Manual',    '✋ סגירה ידנית'),
+    ]
+    for key, label in reason_map:
+        count = cr.get(key, 0)
+        if count > 0:
+            pct = round(count / cr_total * 100) if cr_total > 0 else 0
+            cr_lines += f"  {label}: *{count}* ({pct}%)\n"
+    if not cr_lines:
+        cr_lines = "  _אין סגירות עדיין_\n"
+
     msg = f"📊 *דוח יומי — {now}*\n"
     msg += f"{'─' * 28}\n\n"
     msg += f"*📂 עסקאות פתוחות ({len(active_trades)}):*\n"
@@ -774,6 +829,8 @@ def send_daily_report():
     msg += f"  🎯 אחוז הצלחה: {win_rate:.0f}%\n\n"
     msg += f"*💼 P&L כולל (10x Isolated):*\n"
     msg += f"  {pnl_sign}${total_pnl:.2f} ({pnl_sign}{pnl_on_margin}% על מרג'ין)\n\n"
+    msg += f"*🔬 סיבות סגירה ({cr_total} עסקאות):*\n"
+    msg += cr_lines + "\n"
     msg += f"*🔌 חיבור Bitget API:* {api_status}\n"
     msg += f"{'─' * 28}\n"
     msg += f"_הבוט פעיל ומסרוק כל שעה_ 🤖"
@@ -960,12 +1017,14 @@ def handle_close(message):
             pnl     = round(POSITION_SIZE * pct / 100, 2)
             pnl_str = f"P&L: *{'+' if pnl>=0 else ''}${pnl}* ({pct:+.2f}%)"
 
-        active_trades.remove(trade)
+        with trades_lock:
+            active_trades.remove(trade)
         save_active_trades()
         if current_price >= entry:
             daily_stats['wins'] += 1
         else:
             daily_stats['losses'] += 1
+        daily_stats['close_reasons']['Manual'] += 1
 
         send_msg(
             f"🚪 *סגירה ידנית — {symbol}*\n\n"
@@ -1035,12 +1094,21 @@ def trade_monitor_loop():
 
 # --- לולאת סריקת איתותים — Thread נפרד ---
 
-def _scan_batch(candidates, direction):
+def _scan_batch(candidates, direction, btc_regime='NEUTRAL'):
     """
     עוזר לסריקה: מריץ score_symbol על רשימת מועמדים.
     direction: 'LONG' או 'SHORT'
+    btc_regime: 'BULL' / 'BEAR' / 'NEUTRAL' — BTC EMA50 Market Regime Filter
     מחזיר מספר האיתותים שנמצאו.
     """
+    # ── BTC Market Regime Safety Switch ──
+    if direction == 'LONG' and btc_regime == 'BEAR':
+        print(f"BTC REGIME VETO: BEAR market — skipping all {len(candidates)} LONG candidates")
+        return 0
+    if direction == 'SHORT' and btc_regime == 'BULL':
+        print(f"BTC REGIME VETO: BULL market — skipping all {len(candidates)} SHORT candidates")
+        return 0
+
     found = 0
     for candidate in candidates:
         if len(active_trades) >= MAX_TRADES:
@@ -1074,7 +1142,7 @@ def scan_loop():
     """
     רץ בThread נפרד.
     סורק Top 15 Gainers (LONG) + Top 15 Losers (SHORT) פעם בשעה.
-    מפעיל Professional Scoring System — מינימום 75 נקודות לאיתות.
+    מפעיל Professional Scoring System — מינימום 85 נקודות לאיתות.
     """
     print("Scan loop started — scanning every 60 minutes")
     while True:
@@ -1082,27 +1150,37 @@ def scan_loop():
             check_daily_report()
             now_str = datetime.now().strftime('%H:%M:%S')
 
-            # ── שלב 1: שלוף גיינרים ולוזרים ──
+            # ── שלב 1: BTC Market Regime ──
+            btc_regime = get_btc_regime()
+            regime_emoji = "🟢" if btc_regime == 'BULL' else ("🔴" if btc_regime == 'BEAR' else "🟡")
+            regime_note  = (
+                "BULL — LONGs מאושרים, SHORTs חסומים" if btc_regime == 'BULL' else
+                "BEAR — SHORTs מאושרים, LONGs חסומים" if btc_regime == 'BEAR' else
+                "NEUTRAL — כל הכיוונים פתוחים"
+            )
+
+            # ── שלב 2: שלוף גיינרים ולוזרים ──
             gainers, losers = get_hot_candidates()
             total_scanned   = len(gainers) + len(losers) + len(ENERGY_GEO)
 
             send_msg(
                 f"🔍 *Professional Scoring Scan* — {now_str}\n"
                 f"🟢 Gainers (LONG): *{len(gainers)}*  🔴 Losers (SHORT): *{len(losers)}*\n"
-                f"📐 סף מינימום: *{MIN_SCORE}/100 נקודות*"
+                f"📐 סף מינימום: *{MIN_SCORE}/100 נקודות*\n"
+                f"{regime_emoji} *BTC Regime: {regime_note}*"
             )
 
             signals_found = 0
 
-            # ── שלב 2: סריקת גיינרים — LONG ──
-            signals_found += _scan_batch(gainers, 'LONG')
+            # ── שלב 3: סריקת גיינרים — LONG ──
+            signals_found += _scan_batch(gainers, 'LONG', btc_regime)
 
-            # ── שלב 3: סריקת לוזרים — SHORT ──
-            signals_found += _scan_batch(losers, 'SHORT')
+            # ── שלב 4: סריקת לוזרים — SHORT ──
+            signals_found += _scan_batch(losers, 'SHORT', btc_regime)
 
-            # ── שלב 4: רשימה קבועה — ENERGY_GEO (LONG בלבד) ──
+            # ── שלב 5: רשימה קבועה — ENERGY_GEO (LONG בלבד) ──
             energy_candidates = [{'symbol': s} for s in ENERGY_GEO]
-            signals_found += _scan_batch(energy_candidates, 'LONG')
+            signals_found += _scan_batch(energy_candidates, 'LONG', btc_regime)
 
             print(f"Scan done — {signals_found} signal(s) / {total_scanned} scanned")
 
