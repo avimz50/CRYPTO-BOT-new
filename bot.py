@@ -39,7 +39,8 @@ CHAT_ID = os.environ['CHAT_ID']
 ENERGY_GEO = ['PAXG/USDT', 'POWR/USDT', 'HNT/USDT']
 
 # נתיב לקובץ המועמדים החמים (לדאשבורד)
-HOT_CANDIDATES_FILE = 'artifacts/bot-dashboard/public/hot_candidates.json'
+HOT_CANDIDATES_FILE   = 'artifacts/bot-dashboard/public/hot_candidates.json'
+ACTIVE_TRADES_FILE    = 'artifacts/bot-dashboard/public/active_trades.json'
 DASHBOARD_URL       = 'https://95de2b83-78fc-4e84-b223-d602409dd064-00-ri9mebduqgwx.kirk.replit.dev/bot-dashboard'
 
 # --- פרמטרי מינוף (דמו) ---
@@ -277,6 +278,21 @@ def get_hot_candidates():
         print(f"Hot candidates error: {e}")
         return [], []
 
+
+def save_active_trades():
+    """שומר את רשימת העסקאות הפעילות לקובץ JSON לדאשבורד."""
+    try:
+        data = {
+            'updated': datetime.now().strftime('%H:%M:%S'),
+            'count':   len(active_trades),
+            'trades':  active_trades,
+        }
+        os.makedirs(os.path.dirname(ACTIVE_TRADES_FILE), exist_ok=True)
+        with open(ACTIVE_TRADES_FILE, 'w') as f:
+            json.dump(data, f, default=str)
+    except Exception as e:
+        print(f"save_active_trades error: {e}")
+
 # ═══════════════════════════════════════════════════════════════
 # מנוע ניקוד מקצועי — Professional Scoring System
 # ═══════════════════════════════════════════════════════════════
@@ -509,6 +525,7 @@ def open_demo_trade(symbol, price, reason, df_1h=None,
         'atr':           round(atr, 6),
     }
     active_trades.append(trade)
+    save_active_trades()
 
     dir_header = get_direction_header(direction)
     tip        = get_momentum_tip(direction)
@@ -641,6 +658,7 @@ def track_trades():
                             f"📉 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                         )
                     active_trades.remove(trade)
+                    save_active_trades()
 
             # ════════════════════════════════════════════
             # שלב TRAILING — 50% פוזיציה נותרת ($250)
@@ -673,6 +691,7 @@ def track_trades():
                         f"📈 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                     )
                     active_trades.remove(trade)
+                    save_active_trades()
 
                 # Trailing Stop נגע
                 elif sl_hit(current_price) or \
@@ -698,9 +717,12 @@ def track_trades():
                         f"{icon} סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                     )
                     active_trades.remove(trade)
+                    save_active_trades()
 
         except Exception as e:
             print(f"Track error {trade.get('symbol','?')}: {e}")
+
+    save_active_trades()   # שמור גם שינויי BE / Trailing SL
 
 # --- דוח יומי ---
 
@@ -926,6 +948,7 @@ def handle_close(message):
             pnl_str = f"P&L: *{'+' if pnl>=0 else ''}${pnl}* ({pct:+.2f}%)"
 
         active_trades.remove(trade)
+        save_active_trades()
         if current_price >= entry:
             daily_stats['wins'] += 1
         else:
