@@ -64,6 +64,10 @@ daily_stats = {
 # שמירת תאריך הדוח האחרון שנשלח
 last_daily_report_date = None
 
+# Heartbeat — זמן הדוח האחרון (timestamp)
+last_heartbeat_time   = None
+HEARTBEAT_INTERVAL    = 1800   # 30 דקות בשניות
+
 def send_msg(text):
     try:
         bot.send_message(CHAT_ID, text, parse_mode='Markdown')
@@ -838,6 +842,90 @@ def send_daily_report():
     send_msg(msg)
     print(f"Daily report sent at {now}")
 
+def send_heartbeat():
+    """
+    שולח עדכון קצר לכל עסקה פעילה:
+    מחיר נוכחי, P&L ב-% ו-$, מרחק ל-SL הבא וה-TP הבא.
+    """
+    with trades_lock:
+        trades_snapshot = list(active_trades)
+    if not trades_snapshot:
+        return
+
+    now_str   = datetime.now().strftime('%H:%M')
+    pnl_today = round(daily_stats.get('total_pnl', 0), 2)
+    pnl_icon  = "📈" if pnl_today >= 0 else "📉"
+
+    msg = f"💓 *Heartbeat — {now_str}*\n{'─' * 24}\n"
+
+    for t in trades_snapshot:
+        sym       = t['symbol']
+        entry     = t['entry']
+        direction = t.get('direction', 'LONG')
+        phase     = t.get('phase', 'initial')
+
+        try:
+            price = exchange.fetch_ticker(sym)['last']
+        except Exception as e:
+            print(f"Heartbeat fetch error {sym}: {e}")
+            continue
+
+        # ── P&L ──
+        raw_pct = (price - entry) / entry * 100
+        pnl_pct = raw_pct if direction == 'LONG' else -raw_pct
+        if t.get('tp1_triggered'):
+            half_pnl = round(POSITION_SIZE / 2 * pnl_pct / 100, 2)
+            pnl_usd  = round(t.get('tp1_pnl', 0) + half_pnl, 2)
+        else:
+            pnl_usd = round(POSITION_SIZE * pnl_pct / 100, 2)
+
+        pnl_arrow = "📈" if pnl_usd >= 0 else "📉"
+
+        # ── מרחק ל-SL ול-TP הבא ──
+        if phase == 'trailing':
+            tsl      = t.get('trailing_sl')
+            tp       = t['tp']
+            dist_tp  = abs(tp - price) / price * 100
+            dist_sl  = abs(tsl - price) / price * 100 if tsl else 0
+            sl_lbl   = f"📍 Trailing SL: `{tsl:.6g}`  ({dist_sl:.1f}% רחוק)" if tsl else "📍 Trailing SL: N/A"
+            tp_lbl   = f"🎯 TP: `{tp:.6g}`  ({dist_tp:.1f}% רחוק)"
+        else:
+            sl       = t['sl']
+            next_tp  = t['tp1'] if not t.get('tp1_triggered') else t['tp']
+            tp_label = "TP1" if not t.get('tp1_triggered') else "TP"
+            dist_sl  = abs(sl - price) / price * 100
+            dist_tp  = abs(next_tp - price) / price * 100
+            sl_lbl   = f"🛑 SL: `{sl:.6g}`  ({dist_sl:.1f}% רחוק)"
+            tp_lbl   = f"🎯 {tp_label}: `{next_tp:.6g}`  ({dist_tp:.1f}% רחוק)"
+
+        dir_emoji   = "🟢" if direction == 'LONG' else "🔴"
+        phase_label = "🔄 Trailing" if phase == 'trailing' else "📊 Initial"
+        be_label    = " · 🔒 BE" if t.get('be_triggered') else ""
+
+        msg += (
+            f"\n{dir_emoji} *{sym}*  {phase_label}{be_label}\n"
+            f"   כניסה: `{entry:.6g}` → עכשיו: `{price:.6g}`\n"
+            f"   {pnl_arrow} P&L: *{pnl_usd:+.2f}$*  ({pnl_pct:+.2f}%)\n"
+            f"   {sl_lbl}\n"
+            f"   {tp_lbl}\n"
+        )
+
+    msg += f"\n{'─' * 24}\n{pnl_icon} P&L היום: *${pnl_today:+}*  ·  {len(trades_snapshot)} עסקה פעילה"
+    send_msg(msg)
+    print(f"Heartbeat sent at {now_str} — {len(trades_snapshot)} trade(s)")
+
+
+def check_heartbeat():
+    """מפעיל Heartbeat כל 30 דקות אם יש עסקאות פעילות."""
+    global last_heartbeat_time
+    if not active_trades:
+        return
+    now = time.time()
+    if last_heartbeat_time is None or (now - last_heartbeat_time) >= HEARTBEAT_INTERVAL:
+        send_heartbeat()
+        last_heartbeat_time = now
+
+
 def check_daily_report():
     global last_daily_report_date
     now = datetime.now()
@@ -1081,6 +1169,7 @@ def trade_monitor_loop():
     """
     רץ בThread נפרד.
     בודק SL / TP / BE / Trailing כל 60 שניות — ללא תלות בסריקה.
+    שולח Heartbeat כל 30 דקות כשיש עסקאות פעילות.
     """
     print("Trade monitor started — checking every 60s")
     while True:
@@ -1088,6 +1177,7 @@ def trade_monitor_loop():
             if active_trades:
                 track_trades()
                 check_daily_report()
+                check_heartbeat()
         except Exception as e:
             print(f"Trade monitor error: {e}")
         time.sleep(60)
