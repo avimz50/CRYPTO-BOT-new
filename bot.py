@@ -8,7 +8,7 @@ import threading
 import pandas as pd
 import pandas_ta as ta
 from datetime import datetime, date, timedelta
-from flask import Flask
+from keep_alive import keep_alive
 
 # ── אזור זמן ישראל (UTC+2/+3 לפי שעון קיץ) ──
 os.environ['TZ'] = 'Asia/Jerusalem'
@@ -1304,20 +1304,6 @@ def scan_loop():
         time.sleep(3600)
 
 # --- הלולאה הראשית ---
-
-_flask_app = Flask('')
-
-@_flask_app.route('/')
-def home():
-    return "I am alive!"
-
-def _run_flask():
-    _flask_app.run(host='0.0.0.0', port=8090)
-
-def keep_alive():
-    t = threading.Thread(target=_run_flask)
-    t.start()
-
 
 def main():
     keep_alive()
