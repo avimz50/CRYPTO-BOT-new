@@ -218,13 +218,16 @@ def send_chart_alert(chart_buf, symbol, caption):
 # --- שלב 1+2: משפך — מועמדים חמים ---
 
 def get_hot_candidates():
-    """שלב 1: שליפת כל זוגות USDT מ-Bitget
-       שלב 2: סינון Top 15 Gainers עם ווליום $1M+ ב-24 שעות"""
+    """
+    שלב 1: שליפת כל זוגות USDT מ-Bitget (ווליום $1M+)
+    שלב 2: Top 15 Gainers (LONG) + Top 15 Losers (SHORT)
+    מחזיר: (gainers_list, losers_list)
+    """
     try:
         print("Fetching all tickers for hot candidates...")
         tickers = exchange.fetch_tickers()
 
-        candidates = []
+        gainers, losers = [], []
         for symbol, ticker in tickers.items():
             if not symbol.endswith('/USDT'):
                 continue
@@ -232,235 +235,263 @@ def get_hot_candidates():
             volume_usd = ticker.get('quoteVolume', 0) or 0
             last_price = ticker.get('last', 0) or 0
 
-            # סינון: שינוי חיובי + ווליום $1M+ + מחיר קיים
-            if change_pct is None or change_pct <= 0:
-                continue
-            if volume_usd < 1_000_000:
-                continue
-            if last_price <= 0:
+            if change_pct is None or volume_usd < 1_000_000 or last_price <= 0:
                 continue
 
-            candidates.append({
-                'symbol': symbol,
+            row = {
+                'symbol':     symbol,
                 'change_pct': round(change_pct, 2),
                 'volume_usd': round(volume_usd),
-                'price': last_price
-            })
+                'price':      last_price
+            }
+            if change_pct > 0:
+                gainers.append(row)
+            elif change_pct < 0:
+                losers.append(row)
 
-        # מיון לפי שינוי % יורד, לקיחת Top 15
-        candidates.sort(key=lambda x: x['change_pct'], reverse=True)
-        top_15 = candidates[:15]
+        gainers.sort(key=lambda x: x['change_pct'], reverse=True)
+        losers.sort(key=lambda x: x['change_pct'])   # שלילי ביותר קודם
 
-        # שמירה לדאשבורד
+        top_gainers = gainers[:15]
+        top_losers  = losers[:15]
+
+        # שמירה לדאשבורד (גיינרים)
         data = {
-            'updated': datetime.now().strftime('%H:%M:%S'),
-            'count': len(top_15),
-            'candidates': top_15
+            'updated':    datetime.now().strftime('%H:%M:%S'),
+            'count':      len(top_gainers),
+            'candidates': top_gainers
         }
         os.makedirs(os.path.dirname(HOT_CANDIDATES_FILE), exist_ok=True)
         with open(HOT_CANDIDATES_FILE, 'w') as f:
             json.dump(data, f)
 
-        print(f"Hot candidates found: {[c['symbol'] for c in top_15]}")
-        return top_15
+        print(f"Gainers: {[c['symbol'] for c in top_gainers]}")
+        print(f"Losers:  {[c['symbol'] for c in top_losers]}")
+        return top_gainers, top_losers
 
     except Exception as e:
         print(f"Hot candidates error: {e}")
-        return []
+        return [], []
 
-# --- אסטרטגיות ---
+# ═══════════════════════════════════════════════════════════════
+# מנוע ניקוד מקצועי — Professional Scoring System
+# ═══════════════════════════════════════════════════════════════
 
-def check_rsi_momentum(df, symbol=""):
+MIN_SCORE = 75   # סף מינימום לפתיחת עסקה
+
+def score_symbol(df_1h, df_15m, symbol, direction='LONG'):
     """
-    RSI Trend Active: RSI ב-55-75 ועולה בנר הנוכחי (אין צורך ב-cross)
-    + מחיר מעל EMA20 + ווליום ×1.2
-    מתאים ל-Top Gainers שנמצאים כבר בטרנד עולה
+    מערכת ניקוד מקצועית 0–100 נקודות.
+
+    direction='LONG'  → גיינרים, מחפש עלייה
+    direction='SHORT' → לוזרים,  מחפש ירידה
+
+    ניקוד:
+      Trend     (30): EMA200 ב-1H (+20) + ב-15m (+10)
+      Momentum  (25): MACD מעל/מתחת Signal (+15) + Histogram מתחזק (+10)
+      RSI       (20): Sweet-spot (+20), Acceptable (+10)
+      BB+Volume (25): מחיר מעל/מתחת MidBB (+15) + Volume ×1.2 (+10)
+
+    מחזיר: (score: int, breakdown: str, atr: float)
     """
-    rsi_series   = ta.rsi(df['close'], length=14)
-    ema20_series = ta.ema(df['close'], length=20)
-    if rsi_series is None or ema20_series is None:
-        return False, ""
+    score = 0
+    parts = []
 
-    rsi_curr  = rsi_series.iloc[-1]
-    rsi_prev1 = rsi_series.iloc[-2]
-    ema20     = ema20_series.iloc[-1]
-    price     = df['close'].iloc[-1]
+    try:
+        close_1h = df_1h['close']
 
-    if any(pd.isna(v) for v in [rsi_curr, rsi_prev1, ema20]):
-        return False, ""
+        # ── אינדיקטורים 1H ──
+        ema200_1h = ta.ema(close_1h, length=200)
+        macd_df   = ta.macd(close_1h, fast=12, slow=26, signal=9)
+        rsi_s     = ta.rsi(close_1h, length=14)
+        bb_df     = ta.bbands(close_1h, length=20, std=2)
+        atr_s     = ta.atr(df_1h['high'], df_1h['low'], close_1h, length=14)
 
-    # RSI ב-zone מומנטום ועולה (לא נדרשת חציה ספציפית)
-    in_momentum_zone = 55 <= rsi_curr <= 75
-    rsi_rising       = rsi_curr > rsi_prev1 + 0.5   # עלייה של לפחות 0.5 נקודות
+        # ── EMA200 על 15m ──
+        ema200_15 = ta.ema(df_15m['close'], length=200)
 
-    if not in_momentum_zone:
-        print(f"  [{symbol}] RSI={rsi_curr:.1f} — outside momentum zone (55-75)")
-        return False, ""
-    if not rsi_rising:
-        print(f"  [{symbol}] RSI={rsi_curr:.1f} (prev={rsi_prev1:.1f}) — RSI not rising")
-        return False, ""
-    if price <= ema20:
-        print(f"  [{symbol}] RSI OK but price {price:.4f} < EMA20 {ema20:.4f}")
-        return False, ""
+        if any(v is None for v in [ema200_1h, macd_df, rsi_s, bb_df, atr_s, ema200_15]):
+            print(f"  [{symbol}] indicator calc failed")
+            return 0, "indicator error", 0
 
-    current_vol = df['volume'].iloc[-1]
-    avg_vol     = df['volume'].iloc[-11:-1].mean()
-    if avg_vol == 0:
-        return False, ""
-    vol_ratio = current_vol / avg_vol
-    if vol_ratio < 1.2:
-        print(f"  [{symbol}] RSI+EMA20 OK but Vol ×{vol_ratio:.2f} < 1.2")
-        return False, ""
+        price      = close_1h.iloc[-1]
+        ema200_v   = ema200_1h.iloc[-1]
+        ema200_15v = ema200_15.iloc[-1]
 
-    return True, f"RSI Momentum ({rsi_prev1:.1f}→{rsi_curr:.1f}) + EMA20 + Vol ×{vol_ratio:.1f}"
+        # MACD — איתור עמודות (pandas_ta משתנה בשמות לפי פרמטרים)
+        macd_col = next(c for c in macd_df.columns if c.startswith('MACD_'))
+        sig_col  = next(c for c in macd_df.columns if c.startswith('MACDs_'))
+        hist_col = next(c for c in macd_df.columns if c.startswith('MACDh_'))
+        macd_v   = macd_df[macd_col].iloc[-1]
+        sig_v    = macd_df[sig_col].iloc[-1]
+        hist_v   = macd_df[hist_col].iloc[-1]
+        hist_p   = macd_df[hist_col].iloc[-2]
 
+        rsi_v    = rsi_s.iloc[-1]
 
-def check_breakout(df, symbol=""):
-    """
-    Local Breakout: מחיר שובר שיא 6 נרות (6H) — פריצה טריה ורלוונטית
-    + ווליום ×1.3. סף הורד ל-0.2% (מ-0.5% המקורי).
-    """
-    if len(df) < 10:
-        return False, ""
-    current_price = df['close'].iloc[-1]
-    # שיא של 6 הנרות הקודמים (לא כולל הנוכחי)
-    high_6h      = df['high'].iloc[-7:-1].max()
-    breakout_pct = (current_price - high_6h) / high_6h * 100
-    current_vol  = df['volume'].iloc[-1]
-    avg_vol      = df['volume'].iloc[-11:-1].mean()
-    vol_ratio    = current_vol / avg_vol if avg_vol > 0 else 0
+        # Bollinger Middle
+        bb_mid_col = next(c for c in bb_df.columns if 'BBM_' in c)
+        bb_mid     = bb_df[bb_mid_col].iloc[-1]
 
-    if breakout_pct < 0.2:
-        print(f"  [{symbol}] 6H-Breakout {breakout_pct:.2f}% < 0.2%")
-        return False, ""
-    if vol_ratio < 1.3:
-        print(f"  [{symbol}] 6H-Breakout +{breakout_pct:.2f}% but Vol ×{vol_ratio:.2f} < 1.3")
-        return False, ""
+        atr_v    = atr_s.iloc[-1]
 
-    return True, f"6H Breakout +{breakout_pct:.1f}% + Volume ×{vol_ratio:.1f}"
+        vol_curr = df_1h['volume'].iloc[-1]
+        vol_avg  = df_1h['volume'].iloc[-11:-1].mean()
+        vol_rat  = vol_curr / vol_avg if vol_avg > 0 else 0
 
+        if any(pd.isna(v) for v in [ema200_v, ema200_15v, macd_v, sig_v,
+                                      hist_v, hist_p, rsi_v, bb_mid, atr_v]):
+            print(f"  [{symbol}] NaN in indicators")
+            return 0, "NaN values", 0
 
-def check_bull_candle(df, symbol=""):
-    """
-    Bull Candle: נר ירוק חזק (close > open ב-0.5%+) עם ווליום ×1.5
-    + close ב-80%+ של טווח הנר (דחייה נמוכה)
-    אסטרטגיה נוספת לתפוס מומנטום בנר הנוכחי
-    """
-    close  = df['close'].iloc[-1]
-    open_  = df['open'].iloc[-1]
-    high   = df['high'].iloc[-1]
-    low    = df['low'].iloc[-1]
-    candle_range = high - low
-    if candle_range == 0:
-        return False, ""
+        # ════════════════════════════════
+        # 1. TREND — 30 נקודות
+        # ════════════════════════════════
+        if direction == 'LONG':
+            t1h  = price > ema200_v
+            t15m = price > ema200_15v
+        else:
+            t1h  = price < ema200_v
+            t15m = price < ema200_15v
 
-    # נר ירוק של לפחות 0.5%
-    body_pct = (close - open_) / open_ * 100
-    if body_pct < 0.5:
-        print(f"  [{symbol}] Bull candle body {body_pct:.2f}% < 0.5%")
-        return False, ""
+        t_pts = 0
+        if t1h:
+            t_pts += 20
+        if t1h and t15m:
+            t_pts += 10
+        score += t_pts
+        parts.append(f"Trend={t_pts}/30")
+        print(f"  [{symbol}] {direction} | Trend={t_pts} "
+              f"(1H={'✓' if t1h else '✗'} 15m={'✓' if t15m else '✗'})")
 
-    # close ב-70%+ של טווח הנר (לא כמעט בשפל)
-    close_position = (close - low) / candle_range
-    if close_position < 0.70:
-        print(f"  [{symbol}] Bull candle position {close_position:.2f} < 0.70")
-        return False, ""
+        # ════════════════════════════════
+        # 2. MOMENTUM (MACD) — 25 נקודות
+        # ════════════════════════════════
+        if direction == 'LONG':
+            macd_ok = macd_v > sig_v        # MACD מעל Signal
+            hist_ok = hist_v > hist_p       # Histogram מתחזק (פחות שלילי / יותר חיובי)
+        else:
+            macd_ok = macd_v < sig_v
+            hist_ok = hist_v < hist_p       # Histogram מתחזק לכיוון שלילי
 
-    # ווליום ×1.5
-    current_vol = df['volume'].iloc[-1]
-    avg_vol     = df['volume'].iloc[-11:-1].mean()
-    if avg_vol == 0:
-        return False, ""
-    vol_ratio = current_vol / avg_vol
-    if vol_ratio < 1.5:
-        print(f"  [{symbol}] Bull candle OK (+{body_pct:.2f}%) but Vol ×{vol_ratio:.2f} < 1.5")
-        return False, ""
+        m_pts = 0
+        if macd_ok:
+            m_pts += 15
+        if hist_ok:
+            m_pts += 10
+        score += m_pts
+        parts.append(f"MACD={m_pts}/25")
+        print(f"  [{symbol}] {direction} | MACD={m_pts} "
+              f"(aligned={'✓' if macd_ok else '✗'} hist={'✓' if hist_ok else '✗'})")
 
-    return True, f"Bull Candle +{body_pct:.1f}% + Vol ×{vol_ratio:.1f}"
+        # ════════════════════════════════
+        # 3. RSI STRENGTH — 20 נקודות
+        # ════════════════════════════════
+        if direction == 'LONG':
+            rsi_ideal = 50 <= rsi_v <= 65   # Sweet spot: מומנטום בלי overbought
+            rsi_ok    = 45 <= rsi_v <= 70   # Acceptable
+        else:
+            rsi_ideal = 35 <= rsi_v <= 50   # Momentum short: לא oversold עדיין
+            rsi_ok    = 30 <= rsi_v <= 55
 
+        r_pts = 0
+        if rsi_ideal:
+            r_pts = 20
+        elif rsi_ok:
+            r_pts = 10
+        score += r_pts
+        parts.append(f"RSI={r_pts}/20(={rsi_v:.0f})")
+        print(f"  [{symbol}] {direction} | RSI={r_pts} (rsi={rsi_v:.1f})")
 
-def check_energy_trend(df, symbol=""):
-    """EMA 9 חוצה מעל EMA 21 + ווליום ×1.2 (הורד מ-×1.3)"""
-    ema9  = ta.ema(df['close'], length=9)
-    ema21 = ta.ema(df['close'], length=21)
-    if ema9 is None or ema21 is None:
-        return False, ""
-    if any(pd.isna(v) for v in [ema9.iloc[-2], ema9.iloc[-1],
-                                 ema21.iloc[-2], ema21.iloc[-1]]):
-        return False, ""
+        # ════════════════════════════════
+        # 4. BOLLINGER + VOLUME — 25 נקודות
+        # ════════════════════════════════
+        if direction == 'LONG':
+            bb_ok = price > bb_mid
+        else:
+            bb_ok = price < bb_mid
 
-    cross = ema9.iloc[-2] < ema21.iloc[-2] and ema9.iloc[-1] > ema21.iloc[-1]
-    if not cross:
-        print(f"  [{symbol}] EMA9={ema9.iloc[-1]:.4f} EMA21={ema21.iloc[-1]:.4f} — no cross")
-        return False, ""
+        vol_ok = vol_rat >= 1.2
 
-    current_vol = df['volume'].iloc[-1]
-    avg_vol     = df['volume'].iloc[-21:-1].mean()
-    if avg_vol == 0:
-        return False, ""
-    vol_ratio = current_vol / avg_vol
-    if vol_ratio < 1.2:
-        print(f"  [{symbol}] EMA cross OK but Vol ×{vol_ratio:.2f} < 1.2")
-        return False, ""
+        b_pts = 0
+        if bb_ok:
+            b_pts += 15
+        if vol_ok:
+            b_pts += 10
+        score += b_pts
+        parts.append(f"BB+Vol={b_pts}/25")
+        print(f"  [{symbol}] {direction} | BB={b_pts} "
+              f"(bb={'✓' if bb_ok else '✗'} vol×{vol_rat:.1f}={'✓' if vol_ok else '✗'})")
 
-    return True, f"EMA Cross (9/21) + Volume ×{vol_ratio:.1f}"
+        breakdown = " | ".join(parts) + f"  →  TOTAL={score}/100"
+        print(f"  [{symbol}] {direction} SCORE={score}/100 {'🟢 SIGNAL!' if score >= MIN_SCORE else '🔴 skip'}")
+        return score, breakdown, atr_v
+
+    except Exception as e:
+        print(f"  [{symbol}] score error: {e}")
+        return 0, str(e), 0
 
 # --- ניהול עסקאות דמו ---
 
-def get_strategy_label(reason):
-    """מחזיר שם אסטרטגיה קריא לפי תוכן הסיבה"""
-    if 'RSI Momentum' in reason:
-        return "RSI Momentum Surge"
-    elif 'RSI Turnaround' in reason:
-        return "RSI Turnaround Recovery"
-    elif 'Breakout' in reason:
-        return "High Volume Breakout"
-    elif 'Bull Candle' in reason:
-        return "Bull Candle Surge"
-    elif 'EMA Cross' in reason:
-        return "EMA Trend Cross"
-    return "Signal"
-
 def get_direction_header(direction):
-    """מחזיר כותרת Bull/Bear ויזואלית לפי כיוון"""
     if direction == 'SHORT':
-        return (
-            "🐻 *BEARISH SHORT (מכירה)*\n"
-            "🔴🔴 _הדוב מוחץ למטה!_ 🔴🔴"
-        )
-    return (
-        "🐂 *BULLISH LONG (קנייה)*\n"
-        "🟢🟢 _השור נוגח למעלה!_ 🟢🟢"
-    )
+        return "🐻 *BEARISH SHORT (מכירה)*\n🔴🔴 _הדוב מוחץ למטה!_ 🔴🔴"
+    return "🐂 *BULLISH LONG (קנייה)*\n🟢🟢 _השור נוגח למעלה!_ 🟢🟢"
 
 def get_momentum_tip(direction):
-    """מחזיר טיפ מומנטום בסוף ההודעה"""
     if direction == 'SHORT':
         return "📉 _השוק נחלש — מנצלים את הירידה._"
     return "🌊 _המומנטום חיובי — רוכבים על הגל._"
 
-def open_demo_trade(symbol, price, candle_low, reason, df=None, direction='LONG'):
-    # ── מחירי כניסה / יציאה ──
-    sl      = max(candle_low * 0.999, price * 0.97)   # SL: תחתית נר, תקרה 3%
-    tp_full = price * 1.09                             # TP מלא: 9%
-    tp1     = price * 1.05                             # TP1 (50%): 5%
-    be_lvl  = price * 1.03                             # הפעלת Break Even: 3%
+def _pnl_on_half(dist_pct):
+    """P&L ($) על חצי פוזיציה ($250) לפי % מרחק מהכניסה."""
+    return round(POSITION_SIZE / 2 * dist_pct / 100, 2)
 
-    sl_pct  = round((price - sl)      / price * 100, 2)
-    tp_pct  = round((tp_full - price) / price * 100, 2)
+def open_demo_trade(symbol, price, reason, df_1h=None,
+                    direction='LONG', score=0, atr=0):
+    """
+    פותח עסקת דמו עם ניהול סיכון ATR דינמי (1:3 RR).
+    אם ATR=0 → fallback לפרמטרים קבועים.
+    """
+    # ── SL/TP דינמי מבוסס ATR ──
+    if atr and atr > 0:
+        sl_dist = min(1.5 * atr, price * 0.04)   # מקסימום 4% מהמחיר
+    else:
+        sl_dist = price * 0.03                    # fallback: 3%
 
-    # ── P&L אפשרי עם מינוף ──
-    half        = POSITION_SIZE / 2
-    tp1_pnl     = round(half * 0.05, 2)
-    tp_full_pnl = round(half * 0.09, 2)
-    max_profit  = round(tp1_pnl + tp_full_pnl, 2)
-    sl_loss     = round(POSITION_SIZE * sl_pct / 100, 2)
+    tp_dist  = 3.0 * sl_dist    # RR 1:3
+    be_dist  = 1.5 * sl_dist    # Break-Even: 1.5× SL dist
+    tp1_dist = 2.0 * sl_dist    # TP1 (50%): 2× SL dist
+
+    sl_pct  = round(sl_dist  / price * 100, 2)
+    tp_pct  = round(tp_dist  / price * 100, 2)
+    be_pct  = round(be_dist  / price * 100, 2)
+    tp1_pct = round(tp1_dist / price * 100, 2)
+
+    if direction == 'LONG':
+        sl_price  = price - sl_dist
+        tp_price  = price + tp_dist
+        be_price  = price + be_dist
+        tp1_price = price + tp1_dist
+    else:   # SHORT
+        sl_price  = price + sl_dist
+        tp_price  = price - tp_dist
+        be_price  = price - be_dist
+        tp1_price = price - tp1_dist
+
+    # ── P&L ──
+    tp1_pnl    = _pnl_on_half(tp1_pct)
+    tp2_pnl    = _pnl_on_half(tp_pct)
+    max_profit = round(tp1_pnl + tp2_pnl, 2)
+    sl_loss    = round(POSITION_SIZE * sl_pct / 100, 2)
 
     trade = {
         'symbol':        symbol,
         'entry':         price,
-        'sl':            sl,
-        'tp':            tp_full,
+        'sl':            sl_price,
+        'tp':            tp_price,
+        'tp1':           tp1_price,
+        'be_lvl':        be_price,
         'sl_pct':        sl_pct,
         'tp_pct':        tp_pct,
         'direction':     direction,
@@ -468,44 +499,54 @@ def open_demo_trade(symbol, price, candle_low, reason, df=None, direction='LONG'
         'be_triggered':  False,
         'tp1_triggered': False,
         'tp1_pnl':       0.0,
-        'peak_price':    price,
+        'peak_price':    price,   # LONG: max; SHORT: min
         'trailing_sl':   None,
+        'score':         score,
+        'atr':           round(atr, 6),
     }
     active_trades.append(trade)
 
-    strategy_label  = get_strategy_label(reason)
-    dir_header      = get_direction_header(direction)
-    momentum_tip    = get_momentum_tip(direction)
-    bull_bear_emoji = "🟢" if direction == 'LONG' else "🔴"
+    dir_header = get_direction_header(direction)
+    tip        = get_momentum_tip(direction)
+    emoji      = "🟢" if direction == 'LONG' else "🔴"
+    score_bar  = "█" * (score // 10) + "░" * (10 - score // 10)
 
     msg  = f"{dir_header}\n\n"
     msg += f"{'─' * 26}\n"
-    msg += f"{bull_bear_emoji} *{strategy_label}*\n"
+    msg += f"{emoji} *Professional Scoring System*\n"
     msg += f"מטבע: `{symbol}`\n"
-    msg += f"פירוט: {reason}\n\n"
-    msg += f"מחיר כניסה: `{price:.4f}`\n"
-    msg += f"🛑 SL (-{sl_pct}%):  `{sl:.4f}`\n"
-    msg += f"🔒 BE (+3%):    `{be_lvl:.4f}` ← SL → כניסה\n"
-    msg += f"🎯 TP1 (+5%):  `{tp1:.4f}` ← סגירת 50%\n"
-    msg += f"🎯 TP  (+9%):  `{tp_full:.4f}` ← שאר 50% + Trailing\n\n"
+    msg += f"פירוט: _{reason}_\n\n"
+    msg += f"*ניקוד איתות: {score}/100*\n"
+    msg += f"`{score_bar}` {'🟢 STRONG' if score>=85 else '🟡 GOOD'}\n\n"
+    msg += f"מחיר כניסה: `{price:.6g}`\n"
+    msg += f"🛑 SL ({'-' if direction=='LONG' else '+'}{sl_pct}%):  `{sl_price:.6g}` ← ATR×1.5\n"
+    msg += f"🔒 BE ({'+' if direction=='LONG' else '-'}{be_pct}%):  `{be_price:.6g}` ← SL→כניסה\n"
+    msg += f"🎯 TP1 ({'+' if direction=='LONG' else '-'}{tp1_pct}%): `{tp1_price:.6g}` ← סגירת 50%\n"
+    msg += f"🎯 TP  ({'+' if direction=='LONG' else '-'}{tp_pct}%): `{tp_price:.6g}` ← RR 1:3\n\n"
     msg += f"{'─' * 26}\n"
     msg += f"💼 *Leverage: {LEVERAGE}x (Isolated)*\n"
     msg += f"💰 בטחון: ${MARGIN} · נשלט: ${POSITION_SIZE}\n"
     msg += f"📈 מקסימום רווח: *+${max_profit}*\n"
     msg += f"📉 מקסימום הפסד: *-${sl_loss}*\n\n"
-    msg += f"{momentum_tip}"
+    msg += tip
 
-    # ── גרף: שלח תמונה + טקסט ──
-    chart_buf = generate_chart(df, symbol, price, sl, tp_full, direction) if df is not None else None
+    chart_buf = generate_chart(df_1h, symbol, price, sl_price, tp_price, direction) \
+                if df_1h is not None else None
     send_chart_alert(chart_buf, symbol, msg)
+    print(f"Trade opened: {symbol} {direction} @ {price:.6g} | SL={sl_price:.6g} TP={tp_price:.6g} | Score={score}")
+
 
 def track_trades():
+    """
+    בודק כל עסקה פעילה כל 60 שניות.
+    תומך ב-LONG וב-SHORT.
+    """
     global active_trades, daily_stats
 
     if daily_stats['date'] != date.today():
         daily_stats = {'wins': 0, 'losses': 0, 'total_pnl': 0.0, 'date': date.today()}
 
-    half = POSITION_SIZE / 2   # $250 — חצי פוזיציה אחרי TP1
+    half = POSITION_SIZE / 2   # $250 — חצי פוזיציה לאחר TP1
 
     for trade in active_trades[:]:
         try:
@@ -513,90 +554,116 @@ def track_trades():
             current_price = ticker['last']
             entry         = trade['entry']
             sym           = trade['symbol']
+            direction     = trade.get('direction', 'LONG')
 
-            # ════════════════════════════════════════
-            # שלב: INITIAL — פוזיציה מלאה $500
-            # ════════════════════════════════════════
+            # helpers: "profit direction" — True כאשר המחיר זזה לכיוון הרצוי
+            def profit_dir(p):
+                return p >= entry if direction == 'LONG' else p <= entry
+
+            def sl_hit(p):
+                return p <= trade['sl'] if direction == 'LONG' else p >= trade['sl']
+
+            def tp_full_hit(p):
+                return p >= trade['tp'] if direction == 'LONG' else p <= trade['tp']
+
+            def tp1_hit(p):
+                return p >= trade['tp1'] if direction == 'LONG' else p <= trade['tp1']
+
+            def be_hit(p):
+                return p >= trade['be_lvl'] if direction == 'LONG' else p <= trade['be_lvl']
+
+            # ════════════════════════════════════════════
+            # שלב INITIAL — פוזיציה מלאה $500
+            # ════════════════════════════════════════════
             if trade['phase'] == 'initial':
 
-                # 1. Break Even: מחיר עלה 3% → SL לכניסה
-                if not trade['be_triggered'] and current_price >= entry * 1.03:
+                # 1. Break Even
+                if not trade['be_triggered'] and be_hit(current_price):
                     trade['sl']           = entry
                     trade['be_triggered'] = True
+                    be_pct = trade['sl_pct']
                     send_msg(
                         f"🔒 *Break Even מופעל — {sym}*\n"
-                        f"מחיר: `{current_price:.4f}` (+3%)\n"
-                        f"SL הועבר לכניסה: `{entry:.4f}`\n"
+                        f"מחיר: `{current_price:.6g}` ({'+' if direction=='LONG' else '-'}{be_pct}%)\n"
+                        f"SL הועבר לכניסה: `{entry:.6g}`\n"
                         f"💼 {LEVERAGE}x Isolated · ההון מוגן!"
                     )
 
-                # 2. TP1: מחיר עלה 5% → סגור 50%, הפעל Trailing
-                if current_price >= entry * 1.05:
-                    tp1_pnl = round(half * 0.05, 2)
-                    tp1_pct = round(tp1_pnl / MARGIN * 100, 1)
+                # 2. TP1 — סגור 50%, הפעל Trailing
+                if tp1_hit(current_price):
+                    dist_pct  = abs(current_price - entry) / entry * 100
+                    tp1_pnl   = _pnl_on_half(dist_pct)
+                    tp1_pct_r = round(tp1_pnl / MARGIN * 100, 1)
                     trade['tp1_triggered'] = True
                     trade['tp1_pnl']       = tp1_pnl
                     trade['phase']         = 'trailing'
                     trade['peak_price']    = current_price
-                    trade['trailing_sl']   = current_price * 0.98
+                    if direction == 'LONG':
+                        trade['trailing_sl'] = current_price * 0.98
+                    else:
+                        trade['trailing_sl'] = current_price * 1.02
                     daily_stats['total_pnl'] += tp1_pnl
                     send_msg(
                         f"🎯 *TP1 הושג — {sym}!*\n"
-                        f"מחיר: `{current_price:.4f}` (+5%)\n"
-                        f"50% נסגרו · 📈 רווח נעול: *+${tp1_pnl} (+{tp1_pct}%)*\n"
+                        f"מחיר: `{current_price:.6g}` | {direction}\n"
+                        f"50% נסגרו · 📈 רווח נעול: *+${tp1_pnl} (+{tp1_pct_r}%)*\n"
                         f"💼 {LEVERAGE}x · שאר 50% ($250) בטריילינג 2%\n"
-                        f"📍 Trailing SL: `{trade['trailing_sl']:.4f}`\n"
+                        f"📍 Trailing SL: `{trade['trailing_sl']:.6g}`\n"
                         f"📈 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                     )
                     continue
 
                 # 3. SL נגע
-                if current_price <= trade['sl']:
+                if sl_hit(current_price):
                     if trade['be_triggered']:
-                        daily_stats['losses']    += 1
+                        daily_stats['losses'] += 1
                         send_msg(
                             f"🔒 *Break Even — יצאנו ב-{sym}*\n"
-                            f"מחיר: `{current_price:.4f}` | כניסה: `{entry:.4f}`\n"
+                            f"מחיר: `{current_price:.6g}` | כניסה: `{entry:.6g}`\n"
                             f"*ללא הפסד · ההון נשמר*\n"
                             f"💼 {LEVERAGE}x Isolated\n"
                             f"📊 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                         )
                     else:
-                        sl_pct   = trade['sl_pct']
-                        loss     = round(POSITION_SIZE * sl_pct / 100, 2)
+                        loss     = round(POSITION_SIZE * trade['sl_pct'] / 100, 2)
                         loss_pct = round(loss / MARGIN * 100, 1)
                         daily_stats['losses']    += 1
                         daily_stats['total_pnl'] -= loss
                         send_msg(
                             f"🛑 *SL נגע — {sym}*\n"
-                            f"כניסה: `{entry:.4f}` → SL: `{trade['sl']:.4f}`\n"
+                            f"כניסה: `{entry:.6g}` → SL: `{trade['sl']:.6g}`\n"
                             f"📉 *הפסד: -${loss} (-{loss_pct}% על מרג'ין)*\n"
                             f"💼 {LEVERAGE}x Isolated · בטחון: ${MARGIN}\n"
                             f"📉 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                         )
                     active_trades.remove(trade)
 
-            # ════════════════════════════════════════
-            # שלב: TRAILING — 50% פוזיציה נותרת ($250)
-            # ════════════════════════════════════════
+            # ════════════════════════════════════════════
+            # שלב TRAILING — 50% פוזיציה נותרת ($250)
+            # ════════════════════════════════════════════
             elif trade['phase'] == 'trailing':
 
-                # עדכן שיא ו-Trailing SL
-                if current_price > trade['peak_price']:
-                    trade['peak_price']  = current_price
-                    trade['trailing_sl'] = round(current_price * 0.98, 6)
+                # עדכן שיא/שפל ו-Trailing SL
+                if direction == 'LONG':
+                    if current_price > trade['peak_price']:
+                        trade['peak_price']  = current_price
+                        trade['trailing_sl'] = round(current_price * 0.98, 8)
+                else:
+                    if current_price < trade['peak_price']:
+                        trade['peak_price']  = current_price
+                        trade['trailing_sl'] = round(current_price * 1.02, 8)
 
-                # TP מלא (9%) — סגור את השאר
-                if current_price >= entry * 1.09:
-                    tp_pnl  = round(half * 0.09, 2)
-                    tp_pct  = round(tp_pnl / MARGIN * 100, 1)
-                    total   = round(trade['tp1_pnl'] + tp_pnl, 2)
+                # TP מלא — סגור שאר 50%
+                if tp_full_hit(current_price):
+                    dist_pct = abs(current_price - entry) / entry * 100
+                    tp_pnl   = _pnl_on_half(dist_pct)
+                    total    = round(trade['tp1_pnl'] + tp_pnl, 2)
                     daily_stats['wins']      += 1
                     daily_stats['total_pnl'] += tp_pnl
                     send_msg(
                         f"✅ *TP מלא הושג — {sym}!* 🎉\n"
-                        f"מחיר: `{current_price:.4f}` (+9%)\n"
-                        f"שאר 50% נסגרו: 📈 *+${tp_pnl} (+{tp_pct}%)*\n"
+                        f"מחיר: `{current_price:.6g}` | {direction}\n"
+                        f"שאר 50% נסגרו: 📈 *+${tp_pnl}*\n"
                         f"TP1 + TP סה\"כ: 📈 *+${total}*\n"
                         f"💼 {LEVERAGE}x Isolated\n"
                         f"📈 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
@@ -604,23 +671,27 @@ def track_trades():
                     active_trades.remove(trade)
 
                 # Trailing Stop נגע
-                elif current_price <= trade['trailing_sl']:
-                    exit_pct = (current_price - entry) / entry * 100
-                    half_pnl = round(half * exit_pct / 100, 2)
+                elif sl_hit(current_price) or \
+                     (direction == 'LONG' and trade['trailing_sl'] and current_price <= trade['trailing_sl']) or \
+                     (direction == 'SHORT' and trade['trailing_sl'] and current_price >= trade['trailing_sl']):
+                    dist_pct = abs(current_price - entry) / entry * 100
+                    sign     = 1 if profit_dir(current_price) else -1
+                    half_pnl = round(sign * _pnl_on_half(dist_pct), 2)
                     total    = round(trade['tp1_pnl'] + half_pnl, 2)
-                    pnl_icon = "📈" if half_pnl >= 0 else "📉"
+                    icon     = "📈" if half_pnl >= 0 else "📉"
                     if half_pnl >= 0:
                         daily_stats['wins'] += 1
                     else:
                         daily_stats['losses'] += 1
                     daily_stats['total_pnl'] += half_pnl
+                    ref_price = trade['peak_price']
                     send_msg(
                         f"📍 *Trailing Stop נגע — {sym}*\n"
-                        f"שיא: `{trade['peak_price']:.4f}` → יציאה: `{current_price:.4f}`\n"
-                        f"50% נסגרו: {pnl_icon} *{'+' if half_pnl>=0 else ''}${half_pnl}*\n"
-                        f"TP1 + Trailing סה\"כ: {pnl_icon} *{'+' if total>=0 else ''}${total}*\n"
+                        f"{'שיא' if direction=='LONG' else 'שפל'}: `{ref_price:.6g}` → יציאה: `{current_price:.6g}`\n"
+                        f"50% נסגרו: {icon} *{half_pnl:+}$*\n"
+                        f"TP1 + Trailing סה\"כ: {icon} *{total:+}$*\n"
                         f"💼 {LEVERAGE}x Isolated\n"
-                        f"{pnl_icon} סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
+                        f"{icon} סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                     )
                     active_trades.remove(trade)
 
@@ -687,11 +758,15 @@ def check_daily_report():
 def handle_test(message):
     try:
         send_msg("🧪 *מריץ איתות טסט ל-BTC/USDT...*")
-        df_test = get_data('BTC/USDT')
-        price = df_test['close'].iloc[-1]
-        candle_low = df_test['low'].iloc[-1]
-        open_demo_trade('BTC/USDT', price, candle_low,
-                        'RSI Turnaround (33.1→36.2) + EMA200 + Vol ×1.8 [TEST]', df_test)
+        df_1h  = get_data('BTC/USDT', timeframe='1h',  limit=250)
+        df_15m = get_data('BTC/USDT', timeframe='15m', limit=250)
+        price  = df_1h['close'].iloc[-1]
+        atr    = ta.atr(df_1h['high'], df_1h['low'], df_1h['close'], length=14).iloc[-1]
+        open_demo_trade(
+            'BTC/USDT', price,
+            'Trend=20/30 | MACD=25/25 | RSI=20/20 | BB+Vol=15/25 → TOTAL=80/100 [TEST]',
+            df_1h, direction='LONG', score=80, atr=atr
+        )
         print(f"Test signal sent for BTC/USDT at {price}")
     except Exception as e:
         send_msg(f"❌ שגיאה בטסט: {e}")
@@ -706,13 +781,18 @@ def handle_status(message):
         phase_label = "🔄 Trailing" if t.get('phase') == 'trailing' else "📊 Initial"
         be_label    = " · 🔒 BE" if t.get('be_triggered') else ""
         tp1_label   = " · TP1✅" if t.get('tp1_triggered') else ""
+        dirlab      = "🟢 LONG" if t.get('direction', 'LONG') == 'LONG' else "🔴 SHORT"
+        score       = t.get('score', 0)
         msg += (
-            f"*{i}. {t['symbol']}* {phase_label}{be_label}{tp1_label}\n"
-            f"   כניסה: `{t['entry']:.4f}`\n"
-            f"   🛑 SL: `{t['sl']:.4f}` | 🎯 TP: `{t['tp']:.4f}`\n"
+            f"*{i}. {t['symbol']}* {dirlab} · {phase_label}{be_label}{tp1_label}\n"
+            f"   ניקוד: *{score}/100* | ATR: `{t.get('atr', 0):.6g}`\n"
+            f"   כניסה: `{t['entry']:.6g}`\n"
+            f"   🛑 SL: `{t['sl']:.6g}` | 🎯 TP: `{t['tp']:.6g}`\n"
+            f"   🔒 BE: `{t['be_lvl']:.6g}` | 🎯 TP1: `{t['tp1']:.6g}`\n"
         )
         if t.get('phase') == 'trailing' and t.get('trailing_sl'):
-            msg += f"   📍 Trailing SL: `{t['trailing_sl']:.4f}` | שיא: `{t['peak_price']:.4f}`\n"
+            ref = "שיא" if t.get('direction', 'LONG') == 'LONG' else "שפל"
+            msg += f"   📍 Trailing SL: `{t['trailing_sl']:.6g}` | {ref}: `{t['peak_price']:.6g}`\n"
         msg += "\n"
     msg += f"_לעדכון SL/TP: /update SYMBOL SL TP_\n"
     msg += f"_לסגירה ידנית: /close SYMBOL_"
@@ -915,10 +995,43 @@ def trade_monitor_loop():
 
 # --- לולאת סריקת איתותים — Thread נפרד ---
 
+def _scan_batch(candidates, direction):
+    """
+    עוזר לסריקה: מריץ score_symbol על רשימת מועמדים.
+    direction: 'LONG' או 'SHORT'
+    מחזיר מספר האיתותים שנמצאו.
+    """
+    found = 0
+    for candidate in candidates:
+        symbol = candidate['symbol']
+        if any(t['symbol'] == symbol for t in active_trades):
+            continue
+        try:
+            df_1h  = get_data(symbol, timeframe='1h',  limit=250)
+            df_15m = get_data(symbol, timeframe='15m', limit=250)
+            price  = df_1h['close'].iloc[-1]
+
+            print(f"Scoring {symbol} [{direction}] @ {price:.6g}")
+            score, breakdown, atr = score_symbol(df_1h, df_15m, symbol, direction)
+
+            if score >= MIN_SCORE:
+                open_demo_trade(
+                    symbol, price, breakdown,
+                    df_1h, direction=direction,
+                    score=score, atr=atr
+                )
+                found += 1
+
+        except Exception as e:
+            print(f"Error scanning {symbol}: {e}")
+    return found
+
+
 def scan_loop():
     """
     רץ בThread נפרד.
-    מחפש איתותים חדשים פעם בשעה בלבד (נרות 1H נסגרים פעם בשעה).
+    סורק Top 15 Gainers (LONG) + Top 15 Losers (SHORT) פעם בשעה.
+    מפעיל Professional Scoring System — מינימום 75 נקודות לאיתות.
     """
     print("Scan loop started — scanning every 60 minutes")
     while True:
@@ -926,86 +1039,46 @@ def scan_loop():
             check_daily_report()
             now_str = datetime.now().strftime('%H:%M:%S')
 
-            # ═══════════════════════════════════════
-            # שלב 1+2: שליפת מועמדים חמים (Funnel)
-            # ═══════════════════════════════════════
-            hot_candidates = get_hot_candidates()
-            hot_symbols    = [c['symbol'] for c in hot_candidates]
+            # ── שלב 1: שלוף גיינרים ולוזרים ──
+            gainers, losers = get_hot_candidates()
+            total_scanned   = len(gainers) + len(losers) + len(ENERGY_GEO)
 
             send_msg(
-                f"🔍 *סריקה שעתית* — {now_str}\n"
-                f"🌡️ מועמדים חמים: {len(hot_symbols)} מטבעות\n"
-                f"⚡ EMA גיאו: {len(ENERGY_GEO)} מטבעות קבועים"
+                f"🔍 *Professional Scoring Scan* — {now_str}\n"
+                f"🟢 Gainers (LONG): *{len(gainers)}*  🔴 Losers (SHORT): *{len(losers)}*\n"
+                f"📐 סף מינימום: *{MIN_SCORE}/100 נקודות*"
             )
 
-            # ═══════════════════════════════════════
-            # שלב 3: סריקה עמוקה — RSI + Breakout
-            # ═══════════════════════════════════════
             signals_found = 0
-            for candidate in hot_candidates:
-                symbol = candidate['symbol']
-                if any(t['symbol'] == symbol for t in active_trades):
-                    continue
-                try:
-                    df         = get_data(symbol)
-                    price      = df['close'].iloc[-1]
-                    candle_low = df['low'].iloc[-1]
-                    rsi_now    = ta.rsi(df['close'], length=14).iloc[-1]
-                    print(f"Scanning {symbol}: price={price:.4f} RSI={rsi_now:.1f}")
 
-                    signal, reason = check_rsi_momentum(df, symbol)
-                    if signal:
-                        open_demo_trade(symbol, price, candle_low, reason, df)
-                        signals_found += 1
-                        continue
+            # ── שלב 2: סריקת גיינרים — LONG ──
+            signals_found += _scan_batch(gainers, 'LONG')
 
-                    signal, reason = check_breakout(df, symbol)
-                    if signal:
-                        open_demo_trade(symbol, price, candle_low, reason, df)
-                        signals_found += 1
-                        continue
+            # ── שלב 3: סריקת לוזרים — SHORT ──
+            signals_found += _scan_batch(losers, 'SHORT')
 
-                    signal, reason = check_bull_candle(df, symbol)
-                    if signal:
-                        open_demo_trade(symbol, price, candle_low, reason, df)
-                        signals_found += 1
+            # ── שלב 4: רשימה קבועה — ENERGY_GEO (LONG בלבד) ──
+            energy_candidates = [{'symbol': s} for s in ENERGY_GEO]
+            signals_found += _scan_batch(energy_candidates, 'LONG')
 
-                except Exception as e:
-                    print(f"Error scanning {symbol}: {e}")
-
-            # ═══════════════════════════════════════
-            # אסטרטגיית EMA — רשימה קבועה בלבד
-            # ═══════════════════════════════════════
-            for symbol in ENERGY_GEO:
-                if any(t['symbol'] == symbol for t in active_trades):
-                    continue
-                try:
-                    df         = get_data(symbol)
-                    price      = df['close'].iloc[-1]
-                    candle_low = df['low'].iloc[-1]
-                    print(f"Scanning EMA {symbol}: price={price:.4f}")
-                    signal, reason = check_energy_trend(df, symbol)
-                    if signal:
-                        open_demo_trade(symbol, price, candle_low, reason, df)
-                        signals_found += 1
-                except Exception as e:
-                    print(f"Error scanning {symbol}: {e}")
-
-            print(f"Scan done — {signals_found} signal(s) found out of {len(hot_candidates)+len(ENERGY_GEO)} scanned")
+            print(f"Scan done — {signals_found} signal(s) / {total_scanned} scanned")
 
             # ── סיכום סריקה ──
-            now        = datetime.now().strftime('%H:%M')
-            next_scan  = (datetime.now() + timedelta(hours=1)).strftime('%H:%M')
-            pnl_today  = round(daily_stats.get('total_pnl', 0), 2)
-            pnl_icon   = "📈" if pnl_today >= 0 else "📉"
+            now       = datetime.now().strftime('%H:%M')
+            next_scan = (datetime.now() + timedelta(hours=1)).strftime('%H:%M')
+            pnl_today = round(daily_stats.get('total_pnl', 0), 2)
+            pnl_icon  = "📈" if pnl_today >= 0 else "📉"
 
             summary  = f"✅ *סריקה הושלמה — {now}*\n\n"
-            summary += f"🔍 מועמדים שנסרקו: *15 Top Gainers*\n"
+            summary += f"🔍 נסרקו: *{total_scanned}* מטבעות\n"
+            summary += f"📊 איתותים שנמצאו: *{signals_found}*\n"
             summary += f"📊 עסקאות פעילות: *{len(active_trades)}*\n"
             if active_trades:
                 for t in active_trades:
-                    phase = "🔄 Trailing" if t.get('phase') == 'trailing' else "📊 Initial"
-                    summary += f"   • `{t['symbol']}` {phase}\n"
+                    phase  = "🔄 Trailing" if t.get('phase') == 'trailing' else "📊 Initial"
+                    dirlab = "🟢" if t.get('direction') == 'LONG' else "🔴"
+                    score  = t.get('score', 0)
+                    summary += f"   {dirlab} `{t['symbol']}` {phase} · Score {score}/100\n"
             summary += f"\n{pnl_icon} P&L היום: *${pnl_today:+}*\n"
             summary += f"⏰ סריקה הבאה: `{next_scan}`\n"
             summary += f"_📍 מעקב עסקאות פעיל כל 60 שניות_"
@@ -1016,7 +1089,7 @@ def scan_loop():
         except Exception as e:
             print(f"Scan loop error: {e}")
 
-        time.sleep(3600)   # שינה שעה בין סריקות
+        time.sleep(3600)
 
 # --- הלולאה הראשית ---
 
