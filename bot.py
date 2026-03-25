@@ -297,7 +297,10 @@ def save_active_trades():
 # מנוע ניקוד מקצועי — Professional Scoring System
 # ═══════════════════════════════════════════════════════════════
 
-MIN_SCORE = 75   # סף מינימום לפתיחת עסקה
+MIN_SCORE  = 75   # סף מינימום לפתיחת עסקה
+MAX_TRADES = 5    # מקסימום עסקאות פתוחות במקביל
+RSI_VETO_LONG  = 72   # RSI מעל זה = לא קונים (overbought)
+RSI_VETO_SHORT = 28   # RSI מתחת זה = לא מוכרים (oversold)
 
 def score_symbol(df_1h, df_15m, symbol, direction='LONG'):
     """
@@ -407,6 +410,15 @@ def score_symbol(df_1h, df_15m, symbol, direction='LONG'):
         # ════════════════════════════════
         # 3. RSI STRENGTH — 20 נקודות
         # ════════════════════════════════
+
+        # וטו קשה — RSI קיצוני = פסילה מוחלטת
+        if direction == 'LONG' and rsi_v > RSI_VETO_LONG:
+            print(f"  [{symbol}] 🚫 RSI VETO: {rsi_v:.1f} > {RSI_VETO_LONG} (overbought) — skip")
+            return 0, f"RSI veto ({rsi_v:.1f} overbought)", atr_v
+        if direction == 'SHORT' and rsi_v < RSI_VETO_SHORT:
+            print(f"  [{symbol}] 🚫 RSI VETO: {rsi_v:.1f} < {RSI_VETO_SHORT} (oversold) — skip")
+            return 0, f"RSI veto ({rsi_v:.1f} oversold)", atr_v
+
         if direction == 'LONG':
             rsi_ideal = 50 <= rsi_v <= 65   # Sweet spot: מומנטום בלי overbought
             rsi_ok    = 45 <= rsi_v <= 70   # Acceptable
@@ -1030,6 +1042,9 @@ def _scan_batch(candidates, direction):
     """
     found = 0
     for candidate in candidates:
+        if len(active_trades) >= MAX_TRADES:
+            print(f"Max trades ({MAX_TRADES}) reached — skipping rest of batch")
+            break
         symbol = candidate['symbol']
         if any(t['symbol'] == symbol for t in active_trades):
             continue
