@@ -8,6 +8,7 @@ import threading
 import pandas as pd
 import pandas_ta as ta
 from datetime import datetime, date, timedelta
+from flask import Flask
 
 # ── אזור זמן ישראל (UTC+2/+3 לפי שעון קיץ) ──
 os.environ['TZ'] = 'Asia/Jerusalem'
@@ -1304,7 +1305,23 @@ def scan_loop():
 
 # --- הלולאה הראשית ---
 
+_flask_app = Flask('')
+
+@_flask_app.route('/')
+def home():
+    return "I am alive!"
+
+def _run_flask():
+    _flask_app.run(host='0.0.0.0', port=8090)
+
+def keep_alive():
+    t = threading.Thread(target=_run_flask)
+    t.start()
+
+
 def main():
+    keep_alive()
+
     # Thread 1 — Telegram polling
     polling_thread = threading.Thread(target=start_telegram_polling, daemon=True)
     polling_thread.start()
