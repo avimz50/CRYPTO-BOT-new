@@ -358,8 +358,9 @@ def score_symbol(df_1h, df_15m, symbol, direction='LONG'):
 
         atr_v    = atr_s.iloc[-1]
 
-        vol_curr = df_1h['volume'].iloc[-1]
-        vol_avg  = df_1h['volume'].iloc[-11:-1].mean()
+        # השתמש בנר הסגור האחרון (iloc[-2]) — לא בנר הנוכחי שעדיין פתוח
+        vol_curr = df_1h['volume'].iloc[-2]
+        vol_avg  = df_1h['volume'].iloc[-12:-2].mean()
         vol_rat  = vol_curr / vol_avg if vol_avg > 0 else 0
 
         if any(pd.isna(v) for v in [ema200_v, ema200_15v, macd_v, sig_v,
