@@ -65,6 +65,9 @@ daily_stats = {
 # שמירת תאריך הדוח האחרון שנשלח
 last_daily_report_date = None
 
+# מניעת שתי סריקות במקביל
+_scan_running = False
+
 # Heartbeat — זמן הדוח האחרון (timestamp)
 last_heartbeat_time   = None
 HEARTBEAT_INTERVAL    = 1800   # 30 דקות בשניות
@@ -1155,6 +1158,64 @@ def handle_dashboard(message):
         f"_תראה שם: Top 15 מועמדים חמים, גיינרים, ווליום ועוד_"
     )
 
+@bot.message_handler(commands=['scan'])
+def handle_scan(message):
+    """סריקה מיידית — מופעלת ב-Thread נפרד כדי לא לחסום את ה-polling."""
+    global _scan_running
+    if _scan_running:
+        send_msg("⏳ *סריקה כבר רצה ברקע* — המתן לסיומה.")
+        return
+
+    send_msg(
+        f"🔍 *מפעיל סריקה ידנית עכשיו...*\n"
+        f"📐 סף: *{MIN_SCORE}/100* · מקסימום {MAX_TRADES} עסקאות\n"
+        f"_תקבל עדכון בסיום הסריקה_"
+    )
+
+    def run_manual_scan():
+        global _scan_running
+        _scan_running = True
+        try:
+            now_str    = datetime.now().strftime('%H:%M:%S')
+            btc_regime = get_btc_regime()
+            regime_emoji = "🟢" if btc_regime == 'BULL' else ("🔴" if btc_regime == 'BEAR' else "🟡")
+            regime_note  = (
+                "BULL — LONGs מאושרים" if btc_regime == 'BULL' else
+                "BEAR — SHORTs מאושרים" if btc_regime == 'BEAR' else
+                "NEUTRAL — כל הכיוונים"
+            )
+
+            gainers, losers = get_hot_candidates()
+            total_scanned   = len(gainers) + len(losers) + len(ENERGY_GEO)
+
+            send_msg(
+                f"🔍 *Manual Scan* — {now_str}\n"
+                f"🟢 Gainers: *{len(gainers)}*  🔴 Losers: *{len(losers)}*\n"
+                f"{regime_emoji} BTC Regime: *{regime_note}*"
+            )
+
+            signals_found  = 0
+            signals_found += _scan_batch(gainers, 'LONG', btc_regime)
+            signals_found += _scan_batch(losers, 'SHORT', btc_regime)
+            energy_candidates = [{'symbol': s} for s in ENERGY_GEO]
+            signals_found += _scan_batch(energy_candidates, 'LONG', btc_regime)
+
+            pnl_today = round(daily_stats.get('total_pnl', 0), 2)
+            send_msg(
+                f"✅ *סריקה ידנית הושלמה*\n\n"
+                f"🔍 נסרקו: *{total_scanned}* מטבעות\n"
+                f"📊 איתותים: *{signals_found}*\n"
+                f"📊 עסקאות פעילות: *{len(active_trades)}*\n"
+                f"💰 P&L היום: *${pnl_today:+}*"
+            )
+        except Exception as e:
+            send_msg(f"❌ שגיאה בסריקה: {e}")
+        finally:
+            _scan_running = False
+
+    threading.Thread(target=run_manual_scan, daemon=True).start()
+
+
 def start_telegram_polling():
     print("Telegram polling started...")
     while True:
@@ -1326,13 +1387,14 @@ def main():
         "🔍 סריקת איתותים: כל *60 דקות*\n"
         "📍 מעקב SL/TP:    כל *60 שניות*\n\n"
         "*פקודות:*\n"
-        "/ping — מצב הבוט\n"
-        "/dashboard — קישור לדאשבורד\n"
-        "/test — איתות BTC מזויף\n"
+        "/scan — סריקה ידנית עכשיו 🔍\n"
         "/status — עסקאות פעילות\n"
-        "/update BTC 84000 95000 — עדכון SL/TP\n"
+        "/ping — מצב הבוט\n"
+        "/report — דוח יומי\n"
         "/close BTC — סגירה ידנית\n"
-        "/report — דוח יומי\n\n"
+        "/update BTC 84000 95000 — עדכון SL/TP\n"
+        "/dashboard — קישור לדאשבורד\n"
+        "/test — איתות BTC מזויף\n\n"
         f"🖥 [פתח דאשבורד]({DASHBOARD_URL})"
     )
 
