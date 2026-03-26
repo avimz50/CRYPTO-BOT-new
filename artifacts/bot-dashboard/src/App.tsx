@@ -264,10 +264,11 @@ export default function App() {
   const longTrades  = trades.filter((t) => t.direction === "LONG");
   const shortTrades = trades.filter((t) => t.direction === "SHORT");
 
-  const balance  = walletData?.balance ?? 200;
   const starting = walletData?.starting ?? 200;
   const realized = walletData?.total_pnl ?? 0;
   const history  = walletData?.equity_history ?? [];
+
+  const MARGIN = 50;
 
   // Floating P&L — calculated from live current_price stored per trade
   const floating = trades.reduce((sum, t) => {
@@ -281,6 +282,8 @@ export default function App() {
   }, 0);
 
   const totalBalance = starting + realized + floating;
+  // Free cash = everything not locked in open trades (computed, never from stale file balance)
+  const freeCash = Math.max(0, starting - (trades.length * MARGIN) + realized + Math.min(0, floating));
   const totalPct     = starting > 0 ? ((totalBalance - starting) / starting * 100) : 0;
   const floatPos     = floating >= 0;
   const realizedPos  = realized >= 0;
@@ -347,7 +350,7 @@ export default function App() {
               <p className="text-xs text-gray-500 mt-1">Floating P&L</p>
             </div>
             <div className="p-4">
-              <p className="text-xl font-bold text-blue-400">${balance.toFixed(2)}</p>
+              <p className="text-xl font-bold text-blue-400">${freeCash.toFixed(2)}</p>
               <p className="text-xs text-gray-500 mt-1">יתרה פנויה</p>
             </div>
           </div>
