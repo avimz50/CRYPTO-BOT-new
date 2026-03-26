@@ -1,8 +1,14 @@
 import os
-from flask import Flask
+from flask import Flask, jsonify
 from threading import Thread
 
 app = Flask('')
+
+@app.after_request
+def add_cors(response):
+    response.headers['Access-Control-Allow-Origin']  = '*'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    return response
 
 @app.route('/')
 def home():

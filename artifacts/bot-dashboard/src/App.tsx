@@ -239,11 +239,14 @@ function TradeCard({ trade }: { trade: Trade }) {
   );
 }
 
+// Deployed bot Flask API — single source of truth for live data
+const BOT_API = "https://python-script-bymzrkhy.replit.app";
+
 export default function App() {
   const now        = useClock();
-  const hotData    = useJson<HotData>("/hot_candidates.json", 60_000);
-  const tradesData = useJson<TradesData>("/active_trades.json", 15_000);
-  const walletData = useJson<WalletData>("/wallet.json", 20_000);
+  const hotData    = useJson<HotData>(`${BOT_API}/api/hot`, 60_000);
+  const tradesData = useJson<TradesData>(`${BOT_API}/api/trades`, 30_000);
+  const walletData = useJson<WalletData>(`${BOT_API}/api/wallet`, 30_000);
 
   const nextScan = new Date(Math.ceil(now.getTime() / (60 * 60 * 1000)) * (60 * 60 * 1000));
   const diff  = Math.max(0, Math.floor((nextScan.getTime() - now.getTime()) / 1000));

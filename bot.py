@@ -8,7 +8,8 @@ import threading
 import pandas as pd
 import pandas_ta as ta
 from datetime import datetime, date, timedelta
-from keep_alive import keep_alive
+from keep_alive import keep_alive, app as flask_app
+from flask import jsonify as flask_jsonify
 
 # ── אזור זמן ישראל (UTC+2/+3 לפי שעון קיץ) ──
 os.environ['TZ'] = 'Asia/Jerusalem'
@@ -75,6 +76,34 @@ _scan_running = False
 # Heartbeat — זמן הדוח האחרון (timestamp)
 last_heartbeat_time   = None
 HEARTBEAT_INTERVAL    = 1800   # 30 דקות בשניות
+
+# ═══════════════════════════════════════════════════════════════
+# Flask API — live endpoints (CORS enabled via keep_alive)
+# ═══════════════════════════════════════════════════════════════
+
+@flask_app.route('/api/trades')
+def api_trades():
+    with trades_lock:
+        snapshot = list(active_trades)
+    return flask_jsonify({
+        'updated': datetime.now().strftime('%H:%M:%S'),
+        'count':   len(snapshot),
+        'trades':  snapshot,
+    })
+
+@flask_app.route('/api/wallet')
+def api_wallet():
+    data = dict(wallet)
+    data['equity'] = _get_equity()
+    return flask_jsonify(data)
+
+@flask_app.route('/api/hot')
+def api_hot():
+    try:
+        with open(HOT_CANDIDATES_FILE, 'r') as f:
+            return flask_jsonify(json.load(f))
+    except Exception:
+        return flask_jsonify({'updated': '—', 'count': 0, 'candidates': []})
 
 def send_msg(text):
     try:
