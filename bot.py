@@ -10,6 +10,7 @@ import pandas_ta as ta
 from datetime import datetime, date, timedelta
 from keep_alive import keep_alive, app as flask_app
 from flask import jsonify as flask_jsonify
+import gdrive_reporter
 
 # ── אזור זמן ישראל (UTC+2/+3 לפי שעון קיץ) ──
 os.environ['TZ'] = 'Asia/Jerusalem'
@@ -55,8 +56,15 @@ MARGIN         = 50          # בטחון ($) לכל עסקה
 POSITION_SIZE  = MARGIN * LEVERAGE   # $500 נשלט
 
 # רשימה למעקב אחרי עסקאות דמו פתוחות
-active_trades = []
-trades_lock   = threading.RLock()   # מגן מ-race conditions בין Threads
+active_trades      = []
+trades_lock        = threading.RLock()   # מגן מ-race conditions בין Threads
+
+# לוג עסקאות סגורות (48 שעות אחרונות) לדוח ה-Drive
+closed_trades_log  = []
+
+# Audit report — שעות שליחה ומעקב שהוגש
+AUDIT_HOURS        = {8, 20}    # 08:00 ו-20:00
+_last_audit_hour   = None       # מונע כפילות באותה שעה
 
 # מעקב אחרי עסקאות שנסגרו היום
 daily_stats = {
@@ -181,6 +189,32 @@ def wallet_credit(pnl_usd: float):
     wallet['total_pnl'] = round(wallet.get('total_pnl', 0.0) + pnl_usd, 2)
     _append_equity_point()
     save_wallet()
+
+def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_price: float = None):
+    """מוסיף עסקה סגורה ל-closed_trades_log לשימוש בדוח Drive."""
+    global closed_trades_log
+    record = {
+        'symbol':       trade['symbol'],
+        'direction':    trade['direction'],
+        'timeframe':    trade.get('timeframe', '4H'),
+        'entry_price':  trade['entry'],
+        'close_price':  close_price or trade.get('current_price', trade['entry']),
+        'score':        trade.get('score', 0),
+        'rsi':          trade.get('rsi'),
+        'ema200':       trade.get('ema200'),
+        'score_breakdown': trade.get('score_breakdown', ''),
+        'close_reason': close_reason,
+        'pnl_usd':      round(pnl_usd, 2),
+        'opened_at':    trade.get('opened_at', ''),
+        'closed_at':    datetime.now().isoformat(timespec='seconds'),
+    }
+    closed_trades_log.append(record)
+    # שמור רק 48 שעות אחרונות
+    cutoff = datetime.now().timestamp() - 48 * 3600
+    closed_trades_log = [
+        t for t in closed_trades_log
+        if datetime.fromisoformat(t['closed_at']).timestamp() >= cutoff
+    ]
 
 def wallet_status_text() -> str:
     """מחזיר מחרוזת סטטוס ארנק לטלגרם."""
@@ -766,7 +800,8 @@ def _pnl_on_half(dist_pct):
     return round(POSITION_SIZE / 2 * dist_pct / 100, 2)
 
 def open_demo_trade(symbol, price, reason, df_3h=None,
-                    direction='LONG', score=0, atr=0, timeframe='4H', tf_reason=''):
+                    direction='LONG', score=0, atr=0, timeframe='4H', tf_reason='',
+                    rsi=None, ema200=None):
     """
     פותח עסקת דמו עם SL/TP קבועים.
     SL=3.5% | TP1=5% (סגירת 50%) | TP=10.5% (RR 1:3) | BE=2%
@@ -806,24 +841,28 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     sl_loss    = round(POSITION_SIZE * sl_pct / 100, 2)
 
     trade = {
-        'symbol':        symbol,
-        'entry':         price,
-        'sl':            sl_price,
-        'tp':            tp_price,
-        'tp1':           tp1_price,
-        'be_lvl':        be_price,
-        'sl_pct':        sl_pct,
-        'tp_pct':        tp_pct,
-        'direction':     direction,
-        'phase':         'initial',
-        'be_triggered':  False,
-        'tp1_triggered': False,
-        'tp1_pnl':       0.0,
-        'peak_price':    price,
-        'trailing_sl':   None,
-        'score':         score,
-        'atr':           round(atr, 6),
-        'timeframe':     timeframe,
+        'symbol':          symbol,
+        'entry':           price,
+        'sl':              sl_price,
+        'tp':              tp_price,
+        'tp1':             tp1_price,
+        'be_lvl':          be_price,
+        'sl_pct':          sl_pct,
+        'tp_pct':          tp_pct,
+        'direction':       direction,
+        'phase':           'initial',
+        'be_triggered':    False,
+        'tp1_triggered':   False,
+        'tp1_pnl':         0.0,
+        'peak_price':      price,
+        'trailing_sl':     None,
+        'score':           score,
+        'atr':             round(atr, 6),
+        'timeframe':       timeframe,
+        'rsi':             round(rsi, 2) if rsi is not None else None,
+        'ema200':          round(ema200, 6) if ema200 is not None else None,
+        'score_breakdown': reason,
+        'opened_at':       datetime.now().isoformat(timespec='seconds'),
     }
     with trades_lock:
         active_trades.append(trade)
@@ -952,6 +991,7 @@ def track_trades():
                     daily_stats['total_pnl'] += pnl_usd
                     daily_stats['close_reasons']['Trailing'] += 1
                     wallet_credit(pnl_usd)
+                    _log_closed_trade(trade, 'Trailing', pnl_usd, current_price)
                     ref = trade['peak_price']
                     eq  = _get_equity()
                     send_msg(
@@ -1008,6 +1048,7 @@ def track_trades():
                         daily_stats['losses'] += 1
                         daily_stats['close_reasons']['BE'] += 1
                         wallet_credit(0)   # מרג'ין חוזר, ללא P&L
+                        _log_closed_trade(trade, 'BE', 0.0, current_price)
                         eq = _get_equity()
                         send_msg(
                             f"🔒 *Break Even — יצאנו ב-{sym}*\n"
@@ -1024,6 +1065,7 @@ def track_trades():
                         daily_stats['total_pnl'] -= loss
                         daily_stats['close_reasons']['SL'] += 1
                         wallet_credit(-loss)   # מרג'ין חוזר פחות ההפסד
+                        _log_closed_trade(trade, 'SL', -loss, current_price)
                         eq = _get_equity()
                         send_msg(
                             f"🛑 *SL נגע — {sym}*\n"
@@ -1061,6 +1103,7 @@ def track_trades():
                     daily_stats['total_pnl'] += tp_pnl
                     daily_stats['close_reasons']['TP'] += 1
                     wallet_credit(total)
+                    _log_closed_trade(trade, 'TP', total, current_price)
                     eq = _get_equity()
                     send_msg(
                         f"✅ *TP מלא הושג — {sym}!* 🎉\n"
@@ -1091,6 +1134,7 @@ def track_trades():
                     daily_stats['total_pnl'] += half_pnl
                     daily_stats['close_reasons']['TP1+Trail'] += 1
                     wallet_credit(total)
+                    _log_closed_trade(trade, 'TP1+Trail', total, current_price)
                     eq = _get_equity()
                     ref_price = trade['peak_price']
                     send_msg(
@@ -1481,6 +1525,7 @@ def handle_close(message):
         with trades_lock:
             active_trades.remove(trade)
         wallet_credit(net_pnl)
+        _log_closed_trade(trade, 'Manual', net_pnl, current_price)
         eq = _get_equity()
         save_active_trades()
         if current_price >= entry:
@@ -1704,17 +1749,41 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL'):
                         tf_reason = f'Scalp Entry ב-15m (4H={score_4h}, 1H={score_1h} < {MIN_SCORE})'
 
             if score >= MIN_SCORE:
+                # חישוב RSI ו-EMA200 רגע לפני פתיחה לשמירה בדוח
+                try:
+                    _last_rsi   = ta.rsi(chosen_df['close'], length=14).iloc[-1]
+                    _last_ema   = ta.ema(chosen_df['close'], length=200).iloc[-1]
+                except Exception:
+                    _last_rsi = _last_ema = None
                 open_demo_trade(
                     symbol, price, breakdown,
                     chosen_df, direction=direction,
                     score=score, atr=atr,
-                    timeframe=chosen_tf, tf_reason=tf_reason
+                    timeframe=chosen_tf, tf_reason=tf_reason,
+                    rsi=_last_rsi, ema200=_last_ema
                 )
                 found += 1
 
         except Exception as e:
             print(f"Error scanning {symbol}: {e}")
     return found
+
+
+def _maybe_run_drive_audit():
+    """מפעיל דוח Drive ב-08:00 ו-20:00 — פעם אחת בלבד לכל שעה."""
+    global _last_audit_hour
+    now_hour = datetime.now().hour
+    if now_hour in AUDIT_HOURS and now_hour != _last_audit_hour:
+        _last_audit_hour = now_hour
+        try:
+            from gdrive_reporter import run_audit_upload
+            run_audit_upload(active_trades, wallet, closed_trades_log)
+            send_msg(f"📊 *דוח Audit הועלה ל-Drive* ({now_hour:02d}:00)")
+            print(f"Drive audit uploaded at {now_hour:02d}:00")
+        except ImportError:
+            print("gdrive_reporter not available — skipping Drive audit")
+        except Exception as e:
+            print(f"Drive audit error: {e}")
 
 
 def scan_loop():
@@ -1788,6 +1857,9 @@ def scan_loop():
             send_msg(summary)
 
             print(f"Scan complete at {now}. Next scan at {next_scan}.")
+
+            # ── דוח Drive ב-08:00 ו-20:00 ──
+            _maybe_run_drive_audit()
 
         except Exception as e:
             print(f"Scan loop error: {e}")
