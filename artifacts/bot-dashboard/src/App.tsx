@@ -30,12 +30,22 @@ interface Trade {
   atr: number;
   peak_price: number;
   trailing_sl: number | null;
+  timeframe?: string;
 }
 
 interface TradesData {
   updated: string;
   count: number;
   trades: Trade[];
+}
+
+interface EquityPoint { t: string; eq: number; }
+interface WalletData {
+  balance: number;
+  starting: number;
+  total_pnl: number;
+  trades_opened: number;
+  equity_history: EquityPoint[];
 }
 
 function useClock() {
@@ -47,33 +57,18 @@ function useClock() {
   return time;
 }
 
-function useHotCandidates() {
-  const [data, setData] = useState<HotData | null>(null);
+function useJson<T>(url: string, interval = 15_000) {
+  const [data, setData] = useState<T | null>(null);
   useEffect(() => {
     const fetch_ = () =>
-      fetch("/hot_candidates.json?t=" + Date.now())
+      fetch(url + "?t=" + Date.now())
         .then((r) => r.json())
         .then(setData)
         .catch(() => {});
     fetch_();
-    const id = setInterval(fetch_, 60_000);
+    const id = setInterval(fetch_, interval);
     return () => clearInterval(id);
-  }, []);
-  return data;
-}
-
-function useActiveTrades() {
-  const [data, setData] = useState<TradesData | null>(null);
-  useEffect(() => {
-    const fetch_ = () =>
-      fetch("/active_trades.json?t=" + Date.now())
-        .then((r) => r.json())
-        .then(setData)
-        .catch(() => {});
-    fetch_();
-    const id = setInterval(fetch_, 15_000);
-    return () => clearInterval(id);
-  }, []);
+  }, [url, interval]);
   return data;
 }
 
@@ -93,29 +88,72 @@ function formatVolume(v: number) {
 
 function ScoreBar({ score }: { score: number }) {
   const color =
-    score >= 85 ? "bg-green-400" : score >= 75 ? "bg-yellow-400" : "bg-red-400";
+    score >= 90 ? "bg-green-400" : score >= 80 ? "bg-yellow-400" : "bg-red-400";
   return (
     <div className="flex items-center gap-2">
       <div className="w-20 h-1.5 bg-gray-700 rounded-full overflow-hidden">
-        <div
-          className={`h-full rounded-full ${color}`}
-          style={{ width: `${score}%` }}
-        />
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${score}%` }} />
       </div>
       <span className="text-xs font-mono text-gray-300">{score}/100</span>
     </div>
   );
 }
 
+/* ── Equity Sparkline SVG ── */
+function EquitySparkline({ history, starting }: { history: EquityPoint[]; starting: number }) {
+  if (!history || history.length < 2) {
+    return <div className="text-xs text-gray-600 text-center py-4">ממתין לנתוני היסטוריה...</div>;
+  }
+  const vals = history.map((p) => p.eq);
+  const min  = Math.min(...vals, starting * 0.95);
+  const max  = Math.max(...vals, starting * 1.05);
+  const W = 400; const H = 80;
+  const pad = 8;
+  const pts = history.map((p, i) => {
+    const x = pad + (i / (history.length - 1)) * (W - pad * 2);
+    const y = H - pad - ((p.eq - min) / (max - min || 1)) * (H - pad * 2);
+    return `${x},${y}`;
+  }).join(" ");
+
+  // baseline (starting balance)
+  const baselineY = H - pad - ((starting - min) / (max - min || 1)) * (H - pad * 2);
+  const last  = history[history.length - 1].eq;
+  const color = last >= starting ? "#34d399" : "#f87171";
+  const lastX = pad + ((history.length - 1) / (history.length - 1)) * (W - pad * 2);
+  const lastY = H - pad - ((last - min) / (max - min || 1)) * (H - pad * 2);
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 80 }}>
+      {/* baseline */}
+      <line x1={pad} y1={baselineY} x2={W - pad} y2={baselineY}
+        stroke="#374151" strokeWidth={1} strokeDasharray="4 3" />
+      {/* area fill */}
+      <defs>
+        <linearGradient id="eq-grad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.25" />
+          <stop offset="100%" stopColor={color} stopOpacity="0.02" />
+        </linearGradient>
+      </defs>
+      <polygon
+        points={`${pad},${H - pad} ${pts} ${W - pad},${H - pad}`}
+        fill="url(#eq-grad)"
+      />
+      {/* line */}
+      <polyline points={pts} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" />
+      {/* last dot */}
+      <circle cx={lastX} cy={lastY} r={4} fill={color} />
+    </svg>
+  );
+}
+
 function TradeCard({ trade }: { trade: Trade }) {
-  const isLong = trade.direction === "LONG";
+  const isLong  = trade.direction === "LONG";
   const dirColor = isLong ? "text-green-400" : "text-red-400";
-  const dirBg = isLong
-    ? "bg-green-500/10 border-green-500/25"
-    : "bg-red-500/10 border-red-500/25";
-  const phase = trade.phase === "trailing" ? "🔄 Trailing" : "📊 Initial";
+  const dirBg   = isLong ? "bg-green-500/10 border-green-500/25" : "bg-red-500/10 border-red-500/25";
+  const phase   = trade.phase === "trailing" ? "🔄 Trailing" : "📊 Initial";
   const beLabel = trade.be_triggered ? " · 🔒 BE" : "";
   const tp1Label = trade.tp1_triggered ? " · TP1 ✅" : "";
+  const tf      = trade.timeframe ?? "4H";
 
   return (
     <div className={`border rounded-xl p-4 ${dirBg}`}>
@@ -128,10 +166,11 @@ function TradeCard({ trade }: { trade: Trade }) {
             <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${dirBg} ${dirColor}`}>
               {isLong ? "▲ LONG" : "▼ SHORT"}
             </span>
+            <span className="text-xs bg-gray-800 text-gray-400 px-1.5 py-0.5 rounded font-mono">
+              {tf}
+            </span>
           </div>
-          <p className="text-xs text-gray-500 mt-0.5">
-            {phase}{beLabel}{tp1Label}
-          </p>
+          <p className="text-xs text-gray-500 mt-0.5">{phase}{beLabel}{tp1Label}</p>
         </div>
         <ScoreBar score={trade.score} />
       </div>
@@ -165,7 +204,7 @@ function TradeCard({ trade }: { trade: Trade }) {
           <span className="text-gray-500">🎯 TP</span>
           <span className="font-mono text-green-400">{fmt(trade.tp)}</span>
         </div>
-        {trade.phase === "trailing" && trade.trailing_sl !== null && (
+        {trade.trailing_sl !== null && (
           <div className="col-span-2 flex justify-between border-t border-gray-700/50 pt-1.5 mt-0.5">
             <span className="text-gray-500">📍 Trailing SL</span>
             <span className="font-mono text-yellow-400">{fmt(trade.trailing_sl)}</span>
@@ -177,22 +216,29 @@ function TradeCard({ trade }: { trade: Trade }) {
 }
 
 export default function App() {
-  const now = useClock();
-  const hotData = useHotCandidates();
-  const tradesData = useActiveTrades();
+  const now        = useClock();
+  const hotData    = useJson<HotData>("/hot_candidates.json", 60_000);
+  const tradesData = useJson<TradesData>("/active_trades.json", 15_000);
+  const walletData = useJson<WalletData>("/wallet.json", 20_000);
 
-  const nextScan = new Date(
-    Math.ceil(now.getTime() / (60 * 60 * 1000)) * (60 * 60 * 1000)
-  );
-  const diff = Math.max(0, Math.floor((nextScan.getTime() - now.getTime()) / 1000));
-  const hh = String(Math.floor(diff / 3600)).padStart(2, "0");
-  const mm = String(Math.floor((diff % 3600) / 60)).padStart(2, "0");
-  const ss = String(diff % 60).padStart(2, "0");
+  const nextScan = new Date(Math.ceil(now.getTime() / (60 * 60 * 1000)) * (60 * 60 * 1000));
+  const diff  = Math.max(0, Math.floor((nextScan.getTime() - now.getTime()) / 1000));
+  const hh    = String(Math.floor(diff / 3600)).padStart(2, "0");
+  const mm    = String(Math.floor((diff % 3600) / 60)).padStart(2, "0");
+  const ss    = String(diff % 60).padStart(2, "0");
 
-  const candidates = hotData?.candidates ?? [];
-  const trades = tradesData?.trades ?? [];
-  const longTrades = trades.filter((t) => t.direction === "LONG");
+  const candidates  = hotData?.candidates ?? [];
+  const trades      = tradesData?.trades ?? [];
+  const longTrades  = trades.filter((t) => t.direction === "LONG");
   const shortTrades = trades.filter((t) => t.direction === "SHORT");
+
+  const balance  = walletData?.balance ?? 200;
+  const starting = walletData?.starting ?? 200;
+  const totalPnl = walletData?.total_pnl ?? 0;
+  const equity   = balance + trades.length * 50;
+  const pnlPct   = starting > 0 ? ((equity - starting) / starting * 100) : 0;
+  const pnlPos   = totalPnl >= 0;
+  const history  = walletData?.equity_history ?? [];
 
   return (
     <div className="min-h-screen bg-gray-950 text-white" dir="rtl">
@@ -203,7 +249,7 @@ export default function App() {
             <span className="text-2xl">🤖</span>
             <div>
               <h1 className="font-bold text-lg leading-none">Crypto Trading Bot</h1>
-              <p className="text-xs text-gray-400 mt-0.5">Professional Scoring · Bitget Demo</p>
+              <p className="text-xs text-gray-400 mt-0.5">Professional Scoring · Bitget Demo · 4H/1H</p>
             </div>
           </div>
           <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/30 rounded-full px-3 py-1.5">
@@ -215,10 +261,51 @@ export default function App() {
 
       <div className="max-w-4xl mx-auto px-6 py-6 space-y-6">
 
+        {/* ── Wallet Panel ── */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">💼</span>
+              <h2 className="font-semibold text-gray-200">ארנק וירטואלי</h2>
+              <span className="text-xs text-gray-500">התחיל ב-${starting}</span>
+            </div>
+            <span className={`text-sm font-bold ${pnlPos ? "text-emerald-400" : "text-red-400"}`}>
+              {pnlPos ? "+" : ""}{totalPnl.toFixed(2)}$ ({pnlPct.toFixed(1)}%)
+            </span>
+          </div>
+
+          <div className="grid grid-cols-3 divide-x divide-gray-800 text-center">
+            <div className="p-4">
+              <p className="text-2xl font-bold text-white">${equity.toFixed(2)}</p>
+              <p className="text-xs text-gray-500 mt-1">Total Equity</p>
+            </div>
+            <div className="p-4">
+              <p className="text-2xl font-bold text-blue-400">${balance.toFixed(2)}</p>
+              <p className="text-xs text-gray-500 mt-1">יתרה פנויה</p>
+            </div>
+            <div className="p-4">
+              <p className={`text-2xl font-bold ${pnlPos ? "text-emerald-400" : "text-red-400"}`}>
+                {pnlPos ? "+" : ""}{totalPnl.toFixed(2)}$
+              </p>
+              <p className="text-xs text-gray-500 mt-1">P&L כולל</p>
+            </div>
+          </div>
+
+          {/* Equity Curve */}
+          <div className="px-4 pb-4">
+            <EquitySparkline history={history} starting={starting} />
+            <div className="flex justify-between text-xs text-gray-600 mt-1 font-mono">
+              <span>{history[0]?.t ?? ""}</span>
+              <span className="text-gray-500">עקומת Equity</span>
+              <span>{history[history.length - 1]?.t ?? ""}</span>
+            </div>
+          </div>
+        </div>
+
         {/* Stats Row */}
         <div className="grid grid-cols-3 gap-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
-            <p className="text-3xl font-bold text-emerald-400">{trades.length}</p>
+            <p className="text-3xl font-bold text-emerald-400">{trades.length}<span className="text-lg text-gray-600">/3</span></p>
             <p className="text-gray-400 text-sm mt-1">עסקאות פעילות</p>
           </div>
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
@@ -226,8 +313,8 @@ export default function App() {
             <p className="text-gray-400 text-sm mt-1">עד סריקה הבאה</p>
           </div>
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
-            <p className="text-3xl font-bold text-violet-400">1:3</p>
-            <p className="text-gray-400 text-sm mt-1">יחס סיכון/תשואה</p>
+            <p className="text-3xl font-bold text-violet-400">90+</p>
+            <p className="text-gray-400 text-sm mt-1">סף כניסה</p>
           </div>
         </div>
 
@@ -251,7 +338,7 @@ export default function App() {
           {trades.length === 0 ? (
             <div className="px-5 py-10 text-center">
               <p className="text-gray-500 text-sm">אין עסקאות פעילות כרגע</p>
-              <p className="text-gray-600 text-xs mt-1">הבוט יפתח עסקאות בסריקה הבאה כשניקוד ≥ 75/100</p>
+              <p className="text-gray-600 text-xs mt-1">הבוט יפתח עסקאות כשניקוד ≥ 90/100</p>
             </div>
           ) : (
             <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -262,32 +349,25 @@ export default function App() {
           )}
         </div>
 
-        {/* Hot Candidates — compact */}
+        {/* Hot Candidates */}
         <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
           <div className="px-5 py-3 border-b border-gray-800 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span>🌡️</span>
               <h2 className="font-semibold text-gray-300 text-sm">Hot Scan Candidates</h2>
-              <span className="text-xs text-gray-600 bg-gray-800 px-2 py-0.5 rounded-full">
-                Top 15 Gainers
-              </span>
+              <span className="text-xs text-gray-600 bg-gray-800 px-2 py-0.5 rounded-full">Top 15 Gainers</span>
             </div>
             {hotData?.updated && (
               <span className="text-xs text-gray-600">עודכן {hotData.updated}</span>
             )}
           </div>
-
           {candidates.length === 0 ? (
-            <div className="px-5 py-4 text-center text-gray-600 text-xs">
-              ממתין לסריקה הראשונה...
-            </div>
+            <div className="px-5 py-4 text-center text-gray-600 text-xs">ממתין לסריקה הראשונה...</div>
           ) : (
             <div className="px-4 py-3 flex flex-wrap gap-2">
               {candidates.map((c, i) => (
-                <span
-                  key={c.symbol}
-                  className="flex items-center gap-1.5 text-xs font-mono bg-gray-800/80 border border-gray-700/50 text-gray-300 px-2.5 py-1.5 rounded-lg"
-                >
+                <span key={c.symbol}
+                  className="flex items-center gap-1.5 text-xs font-mono bg-gray-800/80 border border-gray-700/50 text-gray-300 px-2.5 py-1.5 rounded-lg">
                   <span className="text-gray-600">{i + 1}.</span>
                   <span className="font-semibold">{c.symbol.replace("/USDT", "")}</span>
                   <span className="text-green-400">+{c.change_pct.toFixed(1)}%</span>
@@ -304,7 +384,7 @@ export default function App() {
           <div>
             <p className="font-medium text-blue-300">עדכונים בטלגרם</p>
             <p className="text-blue-400/80 text-sm mt-1">
-              כל האיתותים, TP/SL, BE והדוח היומי נשלחים בזמן אמת.
+              כל האיתותים, TP/SL, BE, Trailing והדוח היומי נשלחים בזמן אמת.
               פקודות:{" "}
               <span className="font-mono">/status</span> ·{" "}
               <span className="font-mono">/report</span> ·{" "}
@@ -314,7 +394,7 @@ export default function App() {
         </div>
 
         <p className="text-center text-gray-700 text-xs pb-4">
-          {now.toLocaleTimeString("he-IL")} · Trading Bot v3.0 · Professional Scoring ≥75
+          {now.toLocaleTimeString("he-IL")} · Trading Bot v4.0 · Score ≥90 · Max 3 Trades · 4H/1H Adaptive
         </p>
       </div>
     </div>

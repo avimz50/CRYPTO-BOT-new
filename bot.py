@@ -42,6 +42,10 @@ ENERGY_GEO = ['PAXG/USDT', 'POWR/USDT', 'HNT/USDT']
 # נתיב לקובץ המועמדים החמים (לדאשבורד)
 HOT_CANDIDATES_FILE   = 'artifacts/bot-dashboard/public/hot_candidates.json'
 ACTIVE_TRADES_FILE    = 'artifacts/bot-dashboard/public/active_trades.json'
+WALLET_FILE           = 'artifacts/bot-dashboard/public/wallet.json'
+
+# --- ארנק וירטואלי ---
+STARTING_BALANCE = 200.0   # יתרת פתיחה $200
 DASHBOARD_URL       = 'https://95de2b83-78fc-4e84-b223-d602409dd064-00-ri9mebduqgwx.kirk.replit.dev/bot-dashboard'
 
 # --- פרמטרי מינוף (דמו) ---
@@ -77,6 +81,79 @@ def send_msg(text):
         bot.send_message(CHAT_ID, text, parse_mode='Markdown')
     except Exception as e:
         print(f"Telegram Error: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════
+# ארנק וירטואלי — Virtual Wallet ($200 starting)
+# ═══════════════════════════════════════════════════════════════
+
+wallet: dict = {}
+
+def _get_equity():
+    """Total equity = cash balance + margin locked in open trades."""
+    return round(wallet.get('balance', STARTING_BALANCE) + len(active_trades) * MARGIN, 2)
+
+def _append_equity_point():
+    hist = wallet.setdefault('equity_history', [])
+    hist.append({'t': datetime.now().strftime('%m/%d %H:%M'), 'eq': _get_equity()})
+    if len(hist) > 120:          # שמירת 120 נקודות (≈10 ימים בסריקה שעתית)
+        wallet['equity_history'] = hist[-120:]
+
+def load_wallet():
+    global wallet
+    try:
+        with open(WALLET_FILE, 'r') as f:
+            wallet = json.load(f)
+        print(f"Wallet loaded: balance=${wallet.get('balance', 0):.2f} equity=${_get_equity():.2f}")
+    except Exception:
+        wallet = {
+            'balance':        STARTING_BALANCE,
+            'starting':       STARTING_BALANCE,
+            'total_pnl':      0.0,
+            'trades_opened':  0,
+            'equity_history': [{'t': datetime.now().strftime('%m/%d %H:%M'), 'eq': STARTING_BALANCE}],
+        }
+        save_wallet()
+        print(f"Wallet created fresh: ${STARTING_BALANCE}")
+
+def save_wallet():
+    try:
+        with open(WALLET_FILE, 'w') as f:
+            json.dump(wallet, f)
+    except Exception as e:
+        print(f"Wallet save error: {e}")
+
+def wallet_deduct():
+    """קיזוז מרג'ין ($50) בפתיחת עסקה."""
+    wallet['balance']       = round(wallet.get('balance', STARTING_BALANCE) - MARGIN, 2)
+    wallet['trades_opened'] = wallet.get('trades_opened', 0) + 1
+    _append_equity_point()
+    save_wallet()
+
+def wallet_credit(pnl_usd: float):
+    """זיכוי מרג'ין + P&L בסגירת עסקה."""
+    wallet['balance']   = round(wallet.get('balance', STARTING_BALANCE) + MARGIN + pnl_usd, 2)
+    wallet['total_pnl'] = round(wallet.get('total_pnl', 0.0) + pnl_usd, 2)
+    _append_equity_point()
+    save_wallet()
+
+def wallet_status_text() -> str:
+    """מחזיר מחרוזת סטטוס ארנק לטלגרם."""
+    bal     = wallet.get('balance', STARTING_BALANCE)
+    start   = wallet.get('starting', STARTING_BALANCE)
+    pnl     = wallet.get('total_pnl', 0.0)
+    equity  = _get_equity()
+    pnl_pct = round((equity - start) / start * 100, 1)
+    locked  = len(active_trades) * MARGIN
+    icon    = "📈" if pnl >= 0 else "📉"
+    return (
+        f"💼 *ארנק וירטואלי*\n"
+        f"יתרה פנויה:   `${bal:.2f}`\n"
+        f"נעול בעסקאות: `${locked}`\n"
+        f"Total Equity:  `${equity:.2f}`\n"
+        f"{icon} P&L כולל: `${pnl:+.2f}` ({pnl_pct:+.1f}% מ-${start:.0f})"
+    )
+
 
 def get_data(symbol, timeframe='1h', limit=250):
     bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
@@ -329,8 +406,8 @@ def get_btc_regime():
 # מנוע ניקוד מקצועי — Professional Scoring System
 # ═══════════════════════════════════════════════════════════════
 
-MIN_SCORE  = 85   # סף מינימום לפתיחת עסקה (85 = alignment מושלם)
-MAX_TRADES = 5    # מקסימום עסקאות פתוחות במקביל
+MIN_SCORE  = 90   # סף מינימום לפתיחת עסקה (90 = alignment כמעט מושלם)
+MAX_TRADES = 3    # מקסימום עסקאות פתוחות במקביל
 RSI_VETO_LONG  = 72   # RSI מעל זה = לא קונים (overbought)
 RSI_VETO_SHORT = 28   # RSI מתחת זה = לא מוכרים (oversold)
 BE_BUFFER_PCT  = 2.0  # % עלייה/ירידה לפני הזזת SL ל-Break Even (50% מ-TP1=5%)
@@ -618,11 +695,17 @@ def _pnl_on_half(dist_pct):
     return round(POSITION_SIZE / 2 * dist_pct / 100, 2)
 
 def open_demo_trade(symbol, price, reason, df_3h=None,
-                    direction='LONG', score=0, atr=0):
+                    direction='LONG', score=0, atr=0, timeframe='4H', tf_reason=''):
     """
-    פותח עסקת דמו עם SL/TP קבועים (גרף 4H).
+    פותח עסקת דמו עם SL/TP קבועים.
     SL=3.5% | TP1=5% (סגירת 50%) | TP=10.5% (RR 1:3) | BE=2%
+    timeframe: '4H' / '1H' — גרף הכניסה שנבחר אדפטיבית
     """
+    # בדיקת יתרה — אין לפתוח עסקה אם אין מספיק כסף
+    if wallet.get('balance', STARTING_BALANCE) < MARGIN:
+        print(f"WALLET: insufficient balance (${wallet.get('balance', 0):.2f}) — skipping {symbol}")
+        send_msg(f"⚠️ *יתרה נמוכה* — אין מספיק להפקדת מרג'ין\nנדרש: ${MARGIN} | יש: ${wallet.get('balance', 0):.2f}")
+        return
     # ── SL/TP קבועים לגרף 4H ──
     sl_pct  = SL_PCT_FIXED    # 3.5%
     tp_pct  = TP_PCT_FIXED    # 10.5%
@@ -665,13 +748,15 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         'be_triggered':  False,
         'tp1_triggered': False,
         'tp1_pnl':       0.0,
-        'peak_price':    price,   # LONG: max; SHORT: min
+        'peak_price':    price,
         'trailing_sl':   None,
         'score':         score,
         'atr':           round(atr, 6),
+        'timeframe':     timeframe,
     }
     with trades_lock:
         active_trades.append(trade)
+    wallet_deduct()        # ← נועל $50 מרג'ין בארנק
     save_active_trades()
 
     dir_header = get_direction_header(direction)
@@ -679,13 +764,21 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     emoji      = "🟢" if direction == 'LONG' else "🔴"
     score_bar  = "█" * (score // 10) + "░" * (10 - score // 10)
 
+    # הסבר על הטיים-פריים שנבחר
+    if not tf_reason:
+        tf_reason = f"טרנד חזק ב-{timeframe}" if timeframe == '4H' else f"פריצה ב-{timeframe} (4H חלש)"
+    tf_icon = "📊" if timeframe == '4H' else "⏱️"
+
+    equity_after = _get_equity()
+
     msg  = f"{dir_header}\n\n"
     msg += f"{'─' * 26}\n"
     msg += f"{emoji} *Professional Scoring System*\n"
     msg += f"מטבע: `{symbol}`\n"
+    msg += f"{tf_icon} גרף: *{timeframe}* — _{tf_reason}_\n"
     msg += f"פירוט: _{reason}_\n\n"
     msg += f"*ניקוד איתות: {score}/100*\n"
-    msg += f"`{score_bar}` {'🟢 STRONG' if score>=85 else '🟡 GOOD'}\n\n"
+    msg += f"`{score_bar}` {'🟢 STRONG' if score >= 95 else '🟡 GOOD'}\n\n"
     msg += f"מחיר כניסה: `{price:.6g}`\n"
     msg += f"🛑 SL  ({'-' if direction=='LONG' else '+'}{sl_pct}%): `{sl_price:.6g}` ← 3.5% קבוע\n"
     msg += f"🔒 BE  ({'+' if direction=='LONG' else '-'}{be_pct}%): `{be_price:.6g}` ← SL→כניסה\n"
@@ -696,7 +789,9 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     msg += f"💼 *Leverage: {LEVERAGE}x (Isolated)*\n"
     msg += f"💰 בטחון: ${MARGIN} · נשלט: ${POSITION_SIZE}\n"
     msg += f"📈 מקסימום רווח: *+${max_profit}*\n"
-    msg += f"📉 מקסימום הפסד: *-${sl_loss}*\n\n"
+    msg += f"📉 מקסימום הפסד: *-${sl_loss}*\n"
+    msg += f"{'─' * 26}\n"
+    msg += f"💼 Equity: `${equity_after:.2f}` | יתרה: `${wallet.get('balance', 0):.2f}`\n\n"
     msg += tip
 
     chart_buf = generate_chart(df_3h, symbol, price, sl_price, tp_price, direction) \
@@ -784,12 +879,15 @@ def track_trades():
                         daily_stats['losses'] += 1
                     daily_stats['total_pnl'] += pnl_usd
                     daily_stats['close_reasons']['Trailing'] += 1
+                    wallet_credit(pnl_usd)
                     ref = trade['peak_price']
+                    eq  = _get_equity()
                     send_msg(
                         f"📍 *Trailing Stop נגע — {sym}*\n"
                         f"{'שיא' if direction=='LONG' else 'שפל'}: `{ref:.6g}` → יציאה: `{current_price:.6g}`\n"
                         f"{icon} *P&L: {pnl_usd:+.2f}$ ({pnl_pct_r:+.1f}% על מרג'ין)*\n"
                         f"💼 {LEVERAGE}x Isolated · Trailing {TRAIL_PCT}%\n"
+                        f"💼 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance',0):.2f}`\n"
                         f"{icon} סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                     )
                     with trades_lock:
@@ -837,11 +935,14 @@ def track_trades():
                     if trade['be_triggered']:
                         daily_stats['losses'] += 1
                         daily_stats['close_reasons']['BE'] += 1
+                        wallet_credit(0)   # מרג'ין חוזר, ללא P&L
+                        eq = _get_equity()
                         send_msg(
                             f"🔒 *Break Even — יצאנו ב-{sym}*\n"
                             f"מחיר: `{current_price:.6g}` | כניסה: `{entry:.6g}`\n"
                             f"*ללא הפסד · ההון נשמר*\n"
                             f"💼 {LEVERAGE}x Isolated\n"
+                            f"💼 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance',0):.2f}`\n"
                             f"📊 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                         )
                     else:
@@ -850,11 +951,14 @@ def track_trades():
                         daily_stats['losses']    += 1
                         daily_stats['total_pnl'] -= loss
                         daily_stats['close_reasons']['SL'] += 1
+                        wallet_credit(-loss)   # מרג'ין חוזר פחות ההפסד
+                        eq = _get_equity()
                         send_msg(
                             f"🛑 *SL נגע — {sym}*\n"
                             f"כניסה: `{entry:.6g}` → SL: `{trade['sl']:.6g}`\n"
                             f"📉 *הפסד: -${loss} (-{loss_pct}% על מרג'ין)*\n"
                             f"💼 {LEVERAGE}x Isolated · בטחון: ${MARGIN}\n"
+                            f"💼 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance',0):.2f}`\n"
                             f"📉 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                         )
                     with trades_lock:
@@ -884,12 +988,15 @@ def track_trades():
                     daily_stats['wins']      += 1
                     daily_stats['total_pnl'] += tp_pnl
                     daily_stats['close_reasons']['TP'] += 1
+                    wallet_credit(total)
+                    eq = _get_equity()
                     send_msg(
                         f"✅ *TP מלא הושג — {sym}!* 🎉\n"
                         f"מחיר: `{current_price:.6g}` | {direction}\n"
                         f"שאר 50% נסגרו: 📈 *+${tp_pnl}*\n"
                         f"TP1 + TP סה\"כ: 📈 *+${total}*\n"
                         f"💼 {LEVERAGE}x Isolated\n"
+                        f"💼 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance',0):.2f}`\n"
                         f"📈 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                     )
                     with trades_lock:
@@ -911,6 +1018,8 @@ def track_trades():
                         daily_stats['losses'] += 1
                     daily_stats['total_pnl'] += half_pnl
                     daily_stats['close_reasons']['TP1+Trail'] += 1
+                    wallet_credit(total)
+                    eq = _get_equity()
                     ref_price = trade['peak_price']
                     send_msg(
                         f"📍 *Trailing Stop נגע — {sym}*\n"
@@ -918,6 +1027,7 @@ def track_trades():
                         f"50% נסגרו: {icon} *{half_pnl:+}$*\n"
                         f"TP1 + Trailing סה\"כ: {icon} *{total:+}$*\n"
                         f"💼 {LEVERAGE}x Isolated\n"
+                        f"💼 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance',0):.2f}`\n"
                         f"{icon} סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                     )
                     with trades_lock:
@@ -1095,14 +1205,15 @@ def check_daily_report():
 def handle_test(message):
     try:
         send_msg("🧪 *מריץ איתות טסט ל-BTC/USDT (4H)...*")
-        df_3h  = get_data('BTC/USDT', timeframe='4h', limit=250)
+        df_4h  = get_data('BTC/USDT', timeframe='4h', limit=250)
         df_1h  = get_data('BTC/USDT', timeframe='1h', limit=250)
-        price  = df_3h['close'].iloc[-1]
-        atr    = ta.atr(df_3h['high'], df_3h['low'], df_3h['close'], length=14).iloc[-1]
+        price  = df_4h['close'].iloc[-1]
+        atr    = ta.atr(df_4h['high'], df_4h['low'], df_4h['close'], length=14).iloc[-1]
         open_demo_trade(
             'BTC/USDT', price,
-            'Trend=30/30 | MACD=25/25 | RSI=20/20 | BB+Vol=10/15 | Candles=0/10 → TOTAL=85/100 [TEST]',
-            df_3h, direction='LONG', score=85, atr=atr
+            'Trend=30/30 | MACD=25/25 | RSI=20/20 | BB+Vol=15/15 | Candles=0/10 → TOTAL=90/100 [TEST]',
+            df_4h, direction='LONG', score=90, atr=atr,
+            timeframe='4H', tf_reason='TEST SIGNAL — טרנד חזק בגרף 4H'
         )
         print(f"Test signal sent for BTC/USDT at {price}")
     except Exception as e:
@@ -1110,24 +1221,28 @@ def handle_test(message):
 
 @bot.message_handler(commands=['status'])
 def handle_status(message):
+    msg = wallet_status_text() + "\n\n"
     if not active_trades:
-        send_msg("📭 *אין עסקאות פעילות כרגע.*")
+        msg += "📭 *אין עסקאות פעילות כרגע.*\n"
+        msg += f"_סף כניסה: {MIN_SCORE}/100 | מקס עסקאות: {MAX_TRADES}_"
+        send_msg(msg)
         return
-    msg = f"📋 *עסקאות פעילות ({len(active_trades)}):*\n\n"
+    msg += f"📋 *עסקאות פעילות ({len(active_trades)}/{MAX_TRADES}):*\n\n"
     for i, t in enumerate(active_trades, 1):
         phase_label = "🔄 Trailing" if t.get('phase') == 'trailing' else "📊 Initial"
         be_label    = " · 🔒 BE" if t.get('be_triggered') else ""
         tp1_label   = " · TP1✅" if t.get('tp1_triggered') else ""
         dirlab      = "🟢 LONG" if t.get('direction', 'LONG') == 'LONG' else "🔴 SHORT"
         score       = t.get('score', 0)
+        tf          = t.get('timeframe', '4H')
         msg += (
-            f"*{i}. {t['symbol']}* {dirlab} · {phase_label}{be_label}{tp1_label}\n"
+            f"*{i}. {t['symbol']}* {dirlab} [{tf}] · {phase_label}{be_label}{tp1_label}\n"
             f"   ניקוד: *{score}/100* | ATR: `{t.get('atr', 0):.6g}`\n"
             f"   כניסה: `{t['entry']:.6g}`\n"
             f"   🛑 SL: `{t['sl']:.6g}` | 🎯 TP: `{t['tp']:.6g}`\n"
             f"   🔒 BE: `{t['be_lvl']:.6g}` | 🎯 TP1: `{t['tp1']:.6g}`\n"
         )
-        if t.get('phase') == 'trailing' and t.get('trailing_sl'):
+        if t.get('trailing_sl'):
             ref = "שיא" if t.get('direction', 'LONG') == 'LONG' else "שפל"
             msg += f"   📍 Trailing SL: `{t['trailing_sl']:.6g}` | {ref}: `{t['peak_price']:.6g}`\n"
         msg += "\n"
@@ -1258,8 +1373,19 @@ def handle_close(message):
             pnl     = round(POSITION_SIZE * pct / 100, 2)
             pnl_str = f"P&L: *{'+' if pnl>=0 else ''}${pnl}* ({pct:+.2f}%)"
 
+        # חישוב P&L נטו לארנק
+        if trade.get('tp1_triggered'):
+            net_pnl = round(trade.get('tp1_pnl', 0) + round(POSITION_SIZE / 2 * (current_price - entry) / entry, 2), 2)
+        else:
+            direction_m = trade.get('direction', 'LONG')
+            raw_pct     = (current_price - entry) / entry * 100
+            pnl_pct_m   = raw_pct if direction_m == 'LONG' else -raw_pct
+            net_pnl     = round(POSITION_SIZE * pnl_pct_m / 100, 2)
+
         with trades_lock:
             active_trades.remove(trade)
+        wallet_credit(net_pnl)
+        eq = _get_equity()
         save_active_trades()
         if current_price >= entry:
             daily_stats['wins'] += 1
@@ -1272,6 +1398,7 @@ def handle_close(message):
             f"כניסה: `{entry:.4f}` → יציאה: `{current_price:.4f}`\n"
             f"{pnl_str}\n"
             f"💼 {LEVERAGE}x Isolated\n"
+            f"💼 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance',0):.2f}`\n"
             f"סה\"כ היום: ${round(daily_stats.get('total_pnl', 0), 2):+}"
         )
         print(f"Manual close: {symbol} at {current_price}")
@@ -1441,18 +1568,37 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL'):
         if any(t['symbol'] == symbol for t in active_trades):
             continue
         try:
-            df_3h  = get_data(symbol, timeframe='4h', limit=250)
+            # ── שלב 1: ניסיון על 4H (גרף ראשי) ──
+            df_4h  = get_data(symbol, timeframe='4h', limit=250)
             df_1h  = get_data(symbol, timeframe='1h', limit=250)
-            price  = df_3h['close'].iloc[-1]
+            price  = df_4h['close'].iloc[-1]
 
-            print(f"Scoring {symbol} [{direction}] @ {price:.6g}")
-            score, breakdown, atr = score_symbol(df_3h, df_1h, symbol, direction)
+            print(f"Scoring {symbol} [{direction}] @ {price:.6g} [4H]")
+            score, breakdown, atr = score_symbol(df_4h, df_1h, symbol, direction)
+            chosen_tf  = '4H'
+            chosen_df  = df_4h
+            tf_reason  = 'טרנד חזק בגרף 4H'
+
+            # ── שלב 2: אם 4H לא מספיק — נסה 1H+15m ──
+            if score < MIN_SCORE:
+                df_15m = get_data(symbol, timeframe='15m', limit=250)
+                score_1h, breakdown_1h, atr_1h = score_symbol(df_1h, df_15m, symbol, direction)
+                print(f"  4H={score} < {MIN_SCORE} → try 1H: {score_1h}")
+                if score_1h >= MIN_SCORE and score_1h > score:
+                    score     = score_1h
+                    breakdown = breakdown_1h
+                    atr       = atr_1h
+                    chosen_tf = '1H'
+                    chosen_df = df_1h
+                    price     = df_1h['close'].iloc[-1]
+                    tf_reason = f'פריצה ב-1H (4H={score} < {MIN_SCORE})'
 
             if score >= MIN_SCORE:
                 open_demo_trade(
                     symbol, price, breakdown,
-                    df_3h, direction=direction,
-                    score=score, atr=atr
+                    chosen_df, direction=direction,
+                    score=score, atr=atr,
+                    timeframe=chosen_tf, tf_reason=tf_reason
                 )
                 found += 1
 
@@ -1516,14 +1662,16 @@ def scan_loop():
             summary  = f"✅ *סריקה הושלמה — {now}*\n\n"
             summary += f"🔍 נסרקו: *{total_scanned}* מטבעות\n"
             summary += f"📊 איתותים שנמצאו: *{signals_found}*\n"
-            summary += f"📊 עסקאות פעילות: *{len(active_trades)}*\n"
+            summary += f"📊 עסקאות פעילות: *{len(active_trades)}/{MAX_TRADES}*\n"
             if active_trades:
                 for t in active_trades:
                     phase  = "🔄 Trailing" if t.get('phase') == 'trailing' else "📊 Initial"
                     dirlab = "🟢" if t.get('direction') == 'LONG' else "🔴"
                     score  = t.get('score', 0)
-                    summary += f"   {dirlab} `{t['symbol']}` {phase} · Score {score}/100\n"
+                    tf     = t.get('timeframe', '4H')
+                    summary += f"   {dirlab} `{t['symbol']}` [{tf}] {phase} · {score}/100\n"
             summary += f"\n{pnl_icon} P&L היום: *${pnl_today:+}*\n"
+            summary += wallet_status_text().replace('💼 *ארנק וירטואלי*\n', '') + "\n"
             summary += f"⏰ סריקה הבאה: `{next_scan}`\n"
             summary += f"_📍 מעקב עסקאות פעיל כל 60 שניות_"
             send_msg(summary)
@@ -1539,6 +1687,7 @@ def scan_loop():
 
 def main():
     keep_alive()
+    load_wallet()   # ← טעינת ארנק וירטואלי
 
     # Thread 1 — Telegram polling
     polling_thread = threading.Thread(target=start_telegram_polling, daemon=True)
