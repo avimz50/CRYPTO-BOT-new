@@ -253,11 +253,12 @@ export default function App() {
   const tradesData = useJson<TradesData>(`${BOT_API}/api/trades`, "/active_trades.json", 30_000);
   const walletData = useJson<WalletData>(`${BOT_API}/api/wallet`, "/wallet.json",        30_000);
 
-  const nextScan = new Date(Math.ceil(now.getTime() / (60 * 60 * 1000)) * (60 * 60 * 1000));
+  const SCAN_INTERVAL = 3600; // seconds
+  const nextScan = new Date(Math.ceil(now.getTime() / (SCAN_INTERVAL * 1000)) * (SCAN_INTERVAL * 1000));
   const diff  = Math.max(0, Math.floor((nextScan.getTime() - now.getTime()) / 1000));
-  const hh    = String(Math.floor(diff / 3600)).padStart(2, "0");
-  const mm    = String(Math.floor((diff % 3600) / 60)).padStart(2, "0");
+  const mm    = String(Math.floor(diff / 60)).padStart(2, "0");
   const ss    = String(diff % 60).padStart(2, "0");
+  const scanPct = Math.round(((SCAN_INTERVAL - diff) / SCAN_INTERVAL) * 100);
 
   const candidates  = hotData?.candidates ?? [];
   const trades      = tradesData?.trades ?? [];
@@ -384,9 +385,27 @@ export default function App() {
             <p className="text-3xl font-bold text-emerald-400">{trades.length}<span className="text-lg text-gray-600">/3</span></p>
             <p className="text-gray-400 text-sm mt-1">עסקאות פעילות</p>
           </div>
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
-            <p className="text-3xl font-bold text-blue-400">{hh}:{mm}:{ss}</p>
-            <p className="text-gray-400 text-sm mt-1">עד סריקה הבאה</p>
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center flex flex-col items-center gap-1">
+            {/* Circular progress ring */}
+            <div className="relative w-16 h-16">
+              <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
+                <circle cx="18" cy="18" r="15.9" fill="none" stroke="#1f2937" strokeWidth="3" />
+                <circle
+                  cx="18" cy="18" r="15.9" fill="none"
+                  stroke="#60a5fa" strokeWidth="3"
+                  strokeDasharray={`${scanPct} ${100 - scanPct}`}
+                  strokeLinecap="round"
+                  style={{ transition: "stroke-dasharray 1s linear" }}
+                />
+              </svg>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span className="text-blue-400 text-[10px] font-bold font-mono">{scanPct}%</span>
+              </div>
+            </div>
+            <p dir="ltr" className="text-2xl font-bold text-blue-400 font-mono tracking-widest">
+              {mm}:{ss}
+            </p>
+            <p className="text-gray-400 text-xs">עד סריקה הבאה</p>
           </div>
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
             <p className="text-3xl font-bold text-violet-400">90+</p>
