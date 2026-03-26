@@ -59,18 +59,23 @@ function useClock() {
   return time;
 }
 
-function useJson<T>(url: string, interval = 15_000) {
+function useJson<T>(primaryUrl: string, fallbackUrl: string, interval = 30_000) {
   const [data, setData] = useState<T | null>(null);
   useEffect(() => {
     const fetch_ = () =>
-      fetch(url + "?t=" + Date.now())
-        .then((r) => r.json())
+      fetch(primaryUrl + "?t=" + Date.now())
+        .then((r) => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); })
         .then(setData)
-        .catch(() => {});
+        .catch(() =>
+          fetch(fallbackUrl + "?t=" + Date.now())
+            .then((r) => r.json())
+            .then(setData)
+            .catch(() => {})
+        );
     fetch_();
     const id = setInterval(fetch_, interval);
     return () => clearInterval(id);
-  }, [url, interval]);
+  }, [primaryUrl, fallbackUrl, interval]);
   return data;
 }
 
@@ -244,9 +249,9 @@ const BOT_API = "https://python-script-bymzrkhy.replit.app";
 
 export default function App() {
   const now        = useClock();
-  const hotData    = useJson<HotData>(`${BOT_API}/api/hot`, 60_000);
-  const tradesData = useJson<TradesData>(`${BOT_API}/api/trades`, 30_000);
-  const walletData = useJson<WalletData>(`${BOT_API}/api/wallet`, 30_000);
+  const hotData    = useJson<HotData>(`${BOT_API}/api/hot`,    "/hot_candidates.json", 60_000);
+  const tradesData = useJson<TradesData>(`${BOT_API}/api/trades`, "/active_trades.json", 30_000);
+  const walletData = useJson<WalletData>(`${BOT_API}/api/wallet`, "/wallet.json",        30_000);
 
   const nextScan = new Date(Math.ceil(now.getTime() / (60 * 60 * 1000)) * (60 * 60 * 1000));
   const diff  = Math.max(0, Math.floor((nextScan.getTime() - now.getTime()) / 1000));
