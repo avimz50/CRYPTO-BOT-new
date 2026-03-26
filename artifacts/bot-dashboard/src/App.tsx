@@ -17,13 +17,13 @@ const SEG_MAP: Record<string, boolean[]> = {
   '8': [true,  true,  true,  true,  true,  true,  true ],
   '9': [true,  true,  true,  true,  false, true,  true ],
 };
-const ON  = '#22d3ee';   // cyan-400
-const DIM = '#0e2030';   // barely visible "off" segment
-const GLW = '0 0 6px #22d3ee99';
+const ON  = '#facc15';   // yellow-400
+const DIM = '#1c1600';   // barely visible "off" segment
+const GLW = '0 0 8px #facc15cc';
 
 function SevenSegDigit({ digit }: { digit: string }) {
   const s = SEG_MAP[digit] ?? Array(7).fill(false);
-  const W = 22, H = 38, T = 3, G = 1.5, R = 1.5, H2 = H / 2;
+  const W = 15, H = 26, T = 2, G = 1, R = 1, H2 = H / 2;
   const seg = (on: boolean, x: number, y: number, w: number, h: number) => (
     <rect x={x} y={y} width={w} height={h} rx={R} ry={R}
       fill={on ? ON : DIM}
@@ -44,11 +44,11 @@ function SevenSegDigit({ digit }: { digit: string }) {
 
 function SevenSegColon() {
   return (
-    <div style={{ width: 10, height: 38, display: 'flex', flexDirection: 'column',
-                  alignItems: 'center', justifyContent: 'space-evenly', paddingBottom: 2 }}>
+    <div style={{ width: 7, height: 26, display: 'flex', flexDirection: 'column',
+                  alignItems: 'center', justifyContent: 'space-evenly', paddingBottom: 1 }}>
       {[0, 1].map(i => (
         <div key={i} style={{
-          width: 5, height: 5, borderRadius: '50%',
+          width: 4, height: 4, borderRadius: '50%',
           background: ON, boxShadow: GLW,
         }} />
       ))}
