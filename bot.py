@@ -1366,13 +1366,35 @@ def handle_scan(message):
 
 
 def start_telegram_polling():
-    print("Telegram polling started...")
+    """
+    Polling עם טיפול חכם ב-409:
+    - אם מגיע 409 → יש instance אחר כבר פועל (Autoscale).
+      ממתינים 5 דקות לפני ניסיון נוסף.
+    - שאר השגיאות → ניסיון חוזר אחרי 5 שניות.
+    - ה-send_msg() ממשיך לעבוד גם ב-send-only mode.
+    """
+    import os
+    is_deployed = os.environ.get('REPLIT_DEPLOYMENT', '') == '1'
+    print(f"Telegram polling started... [{'PROD/Autoscale' if is_deployed else 'DEV'}]")
+    consecutive_409 = 0
     while True:
         try:
-            bot.polling(non_stop=True, timeout=30, long_polling_timeout=30)
+            bot.polling(non_stop=False, timeout=30, long_polling_timeout=30)
+            consecutive_409 = 0
         except Exception as e:
-            print(f"Polling error: {e}")
-            time.sleep(5)
+            err_str = str(e)
+            if '409' in err_str:
+                consecutive_409 += 1
+                wait = min(300, 30 * consecutive_409)   # עד 5 דקות
+                print(
+                    f"⚠️  Telegram 409 — instance אחר פועל (Autoscale?). "
+                    f"send_msg עדיין פעיל. ממתין {wait}s לפני retry #{consecutive_409}..."
+                )
+                time.sleep(wait)
+            else:
+                consecutive_409 = 0
+                print(f"Polling error: {e}")
+                time.sleep(5)
 
 # --- לולאת מעקב עסקאות — Thread נפרד ---
 
