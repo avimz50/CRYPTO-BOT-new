@@ -48,7 +48,7 @@ WALLET_FILE           = 'artifacts/bot-dashboard/public/wallet.json'
 
 # --- ארנק וירטואלי ---
 STARTING_BALANCE = 200.0   # יתרת פתיחה $200
-DASHBOARD_URL       = 'https://95de2b83-78fc-4e84-b223-d602409dd064-00-ri9mebduqgwx.kirk.replit.dev/bot-dashboard'
+DASHBOARD_URL       = 'https://python-script-bymzrkhy.replit.app/bot-dashboard'
 
 # --- פרמטרי מינוף (דמו) ---
 LEVERAGE       = 10          # מינוף 10x
