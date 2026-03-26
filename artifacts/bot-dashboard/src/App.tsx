@@ -1,5 +1,71 @@
 import { useEffect, useState } from "react";
 
+/* ══════════════════════════════════════════════
+   7-SEGMENT DISPLAY
+   W=22 H=38 per digit — classic LED look
+══════════════════════════════════════════════ */
+const SEG_MAP: Record<string, boolean[]> = {
+  //        a      b      c      d      e      f      g
+  '0': [true,  true,  true,  true,  true,  true,  false],
+  '1': [false, true,  true,  false, false, false, false],
+  '2': [true,  true,  false, true,  true,  false, true ],
+  '3': [true,  true,  true,  true,  false, false, true ],
+  '4': [false, true,  true,  false, false, true,  true ],
+  '5': [true,  false, true,  true,  false, true,  true ],
+  '6': [true,  false, true,  true,  true,  true,  true ],
+  '7': [true,  true,  true,  false, false, false, false],
+  '8': [true,  true,  true,  true,  true,  true,  true ],
+  '9': [true,  true,  true,  true,  false, true,  true ],
+};
+const ON  = '#22d3ee';   // cyan-400
+const DIM = '#0e2030';   // barely visible "off" segment
+const GLW = '0 0 6px #22d3ee99';
+
+function SevenSegDigit({ digit }: { digit: string }) {
+  const s = SEG_MAP[digit] ?? Array(7).fill(false);
+  const W = 22, H = 38, T = 3, G = 1.5, R = 1.5, H2 = H / 2;
+  const seg = (on: boolean, x: number, y: number, w: number, h: number) => (
+    <rect x={x} y={y} width={w} height={h} rx={R} ry={R}
+      fill={on ? ON : DIM}
+      style={on ? { filter: `drop-shadow(${GLW})` } : undefined} />
+  );
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{ display: 'block' }}>
+      {/* a – top */}       {seg(s[0], T+G,   0,       W-2*T-2*G, T)}
+      {/* b – top-right */} {seg(s[1], W-T,   T+G,     T, H2-T-2*G)}
+      {/* c – bot-right */} {seg(s[2], W-T,   H2+G,    T, H2-T-2*G)}
+      {/* d – bottom */}    {seg(s[3], T+G,   H-T,     W-2*T-2*G, T)}
+      {/* e – bot-left */}  {seg(s[4], 0,     H2+G,    T, H2-T-2*G)}
+      {/* f – top-left */}  {seg(s[5], 0,     T+G,     T, H2-T-2*G)}
+      {/* g – middle */}    {seg(s[6], T+G,   H2-T/2,  W-2*T-2*G, T)}
+    </svg>
+  );
+}
+
+function SevenSegColon() {
+  return (
+    <div style={{ width: 10, height: 38, display: 'flex', flexDirection: 'column',
+                  alignItems: 'center', justifyContent: 'space-evenly', paddingBottom: 2 }}>
+      {[0, 1].map(i => (
+        <div key={i} style={{
+          width: 5, height: 5, borderRadius: '50%',
+          background: ON, boxShadow: GLW,
+        }} />
+      ))}
+    </div>
+  );
+}
+
+function SevenSegDisplay({ value }: { value: string }) {
+  return (
+    <div dir="ltr" style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+      {value.split('').map((ch, i) =>
+        ch === ':' ? <SevenSegColon key={i} /> : <SevenSegDigit key={i} digit={ch} />
+      )}
+    </div>
+  );
+}
+
 interface Candidate {
   symbol: string;
   change_pct: number;
@@ -385,27 +451,10 @@ export default function App() {
             <p className="text-3xl font-bold text-emerald-400">{trades.length}<span className="text-lg text-gray-600">/3</span></p>
             <p className="text-gray-400 text-sm mt-1">עסקאות פעילות</p>
           </div>
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center flex flex-col items-center gap-1">
-            {/* Circular progress ring */}
-            <div className="relative w-16 h-16">
-              <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
-                <circle cx="18" cy="18" r="15.9" fill="none" stroke="#1f2937" strokeWidth="3" />
-                <circle
-                  cx="18" cy="18" r="15.9" fill="none"
-                  stroke="#60a5fa" strokeWidth="3"
-                  strokeDasharray={`${scanPct} ${100 - scanPct}`}
-                  strokeLinecap="round"
-                  style={{ transition: "stroke-dasharray 1s linear" }}
-                />
-              </svg>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <span className="text-blue-400 text-[10px] font-bold font-mono">{scanPct}%</span>
-              </div>
-            </div>
-            <p dir="ltr" className="text-2xl font-bold text-blue-400 font-mono tracking-widest">
-              {mm}:{ss}
-            </p>
-            <p className="text-gray-400 text-xs">עד סריקה הבאה</p>
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center flex flex-col items-center gap-2"
+               style={{ background: 'linear-gradient(135deg, #0a1628 0%, #0d1f3c 100%)' }}>
+            <SevenSegDisplay value={`${mm}:${ss}`} />
+            <p className="text-gray-500 text-xs tracking-wide">עד סריקה הבאה</p>
           </div>
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
             <p className="text-3xl font-bold text-violet-400">90+</p>
