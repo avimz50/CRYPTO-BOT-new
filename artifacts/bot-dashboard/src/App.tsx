@@ -300,9 +300,21 @@ export default function App() {
               <p className="text-xs text-gray-400 mt-0.5">Professional Scoring · Bitget Demo · 4H/1H</p>
             </div>
           </div>
-          <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/30 rounded-full px-3 py-1.5">
-            <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-            <span className="text-green-400 text-sm font-medium">פעיל</span>
+          <div className="flex items-center gap-3">
+            <a
+              href={`${BOT_API}/api/audit`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/30 rounded-full px-3 py-1.5 hover:bg-blue-500/20 transition-colors"
+              title="הורד דוח Audit"
+            >
+              <span className="text-base">📥</span>
+              <span className="text-blue-400 text-sm font-medium">דוח Audit</span>
+            </a>
+            <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/30 rounded-full px-3 py-1.5">
+              <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+              <span className="text-green-400 text-sm font-medium">פעיל</span>
+            </div>
           </div>
         </div>
       </div>

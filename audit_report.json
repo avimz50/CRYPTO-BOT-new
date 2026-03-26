@@ -1,0 +1,55 @@
+{
+  "generated_at": "2026-03-26T14:46:20",
+  "wallet": {
+    "starting_balance": 200.0,
+    "realized_pnl": 25.5,
+    "floating_pnl": 4.17,
+    "free_cash": 100.0,
+    "margin_used": 50.0,
+    "total_balance": 229.67
+  },
+  "summary": {
+    "active_count": 1,
+    "closed_count": 1,
+    "wins_12h": 1,
+    "losses_12h": 0,
+    "pnl_12h": 18.5
+  },
+  "active_trades": [
+    {
+      "symbol": "ETH/USDT",
+      "direction": "SHORT",
+      "timeframe": "1H",
+      "entry_price": 1800,
+      "current_price": 1785,
+      "unrealized_pct": 0.83,
+      "unrealized_usd": 4.17,
+      "score": 93,
+      "rsi": 68.1,
+      "ema200": 1850.0,
+      "score_breakdown": "Trend=20 MACD=25 RSI=20 BB=15 Candles=10 → 93",
+      "phase": "initial",
+      "be_triggered": false,
+      "tp1_triggered": false,
+      "sl": 1863,
+      "tp": 1611,
+      "opened_at": "2026-03-26T12:00:00"
+    }
+  ],
+  "closed_trades": [
+    {
+      "symbol": "BTC/USDT",
+      "direction": "LONG",
+      "pnl_usd": 18.5,
+      "close_reason": "TP",
+      "closed_at": "2026-03-26T10:30:00",
+      "opened_at": "2026-03-26T07:00:00",
+      "entry_price": 69000,
+      "close_price": 76245,
+      "score": 91,
+      "rsi": 55.0,
+      "ema200": 68500.0,
+      "score_breakdown": "Trend=30 MACD=25 RSI=20 BB=15 Candles=0 → 91"
+    }
+  ]
+}

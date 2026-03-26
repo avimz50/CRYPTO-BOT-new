@@ -1777,13 +1777,15 @@ def _maybe_run_drive_audit():
         _last_audit_hour = now_hour
         try:
             from gdrive_reporter import run_audit_upload
-            run_audit_upload(active_trades, wallet, closed_trades_log)
-            send_msg(f"📊 *דוח Audit הועלה ל-Drive* ({now_hour:02d}:00)")
-            print(f"Drive audit uploaded at {now_hour:02d}:00")
+            run_audit_upload(
+                active_trades, wallet, closed_trades_log,
+                send_telegram=send_msg
+            )
+            print(f"Audit report saved at {now_hour:02d}:00")
         except ImportError:
-            print("gdrive_reporter not available — skipping Drive audit")
+            print("gdrive_reporter not available — skipping audit")
         except Exception as e:
-            print(f"Drive audit error: {e}")
+            print(f"Audit error: {e}")
 
 
 def scan_loop():
