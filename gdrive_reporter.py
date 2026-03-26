@@ -119,11 +119,21 @@ FILE_NAME   = 'trading_audit_report.json'
 def upload_to_drive(report_data):
     """
     Uploads the audit report JSON to Google Drive.
-    Returns (success: bool, error: str|None).
+    Requires GDRIVE_FOLDER_ID env var — the ID of a Drive folder shared
+    with the service account (Editor permission).
+    Returns (success: bool, error_str|None).
     """
     sa_json = os.environ.get('GDRIVE_SERVICE_ACCOUNT_JSON', '')
     if not sa_json.strip():
         return False, 'GDRIVE_SERVICE_ACCOUNT_JSON secret not set'
+
+    folder_id = os.environ.get('GDRIVE_FOLDER_ID', '').strip()
+    if not folder_id:
+        return False, (
+            'GDRIVE_FOLDER_ID not set. '
+            'Create a folder in your Google Drive, share it (Editor) with the '
+            'service-account email, then save the folder ID as GDRIVE_FOLDER_ID.'
+        )
 
     try:
         from google.oauth2 import service_account
@@ -137,27 +147,13 @@ def upload_to_drive(report_data):
         )
         service = build('drive', 'v3', credentials=credentials, cache_discovery=False)
 
-        # ── Find or create folder ──────────────────────────────
-        q_folder = (
-            f"name='{FOLDER_NAME}' "
-            f"and mimeType='application/vnd.google-apps.folder' "
-            f"and trashed=false"
-        )
-        res     = service.files().list(q=q_folder, spaces='drive', fields='files(id)').execute()
-        folders = res.get('files', [])
-        if folders:
-            folder_id = folders[0]['id']
-        else:
-            folder_meta = {'name': FOLDER_NAME,
-                           'mimeType': 'application/vnd.google-apps.folder'}
-            folder_id = service.files().create(
-                body=folder_meta, fields='id'
-            ).execute().get('id')
-
-        # ── Check if file already exists (overwrite) ──────────
+        # ── Check if file already exists in the shared folder (overwrite) ──
         q_file   = f"name='{FILE_NAME}' and '{folder_id}' in parents and trashed=false"
-        res2     = service.files().list(q=q_file, spaces='drive', fields='files(id)').execute()
-        existing = res2.get('files', [])
+        res      = service.files().list(
+            q=q_file, spaces='drive', fields='files(id)',
+            supportsAllDrives=True, includeItemsFromAllDrives=True
+        ).execute()
+        existing = res.get('files', [])
 
         content = json.dumps(report_data, indent=2, ensure_ascii=False)
         media   = MediaIoBaseUpload(
@@ -169,13 +165,15 @@ def upload_to_drive(report_data):
         if existing:
             service.files().update(
                 fileId=existing[0]['id'],
-                media_body=media
+                media_body=media,
+                supportsAllDrives=True
             ).execute()
         else:
             service.files().create(
                 body={'name': FILE_NAME, 'parents': [folder_id]},
                 media_body=media,
-                fields='id'
+                fields='id',
+                supportsAllDrives=True
             ).execute()
 
         return True, None
