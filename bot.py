@@ -50,6 +50,25 @@ WALLET_FILE           = 'artifacts/bot-dashboard/public/wallet.json'
 STARTING_BALANCE = 200.0   # יתרת פתיחה $200
 DASHBOARD_URL       = 'https://python-script-bymzrkhy.replit.app/'
 
+# ─── Fear & Greed Index — cache גלובלי (מתרענן כל שעה) ───────────────────────
+_fng_cache = {'value': 50, 'label': 'Neutral', 'ts': 0}
+
+def get_fear_greed():
+    """מחזיר (value:int, label:str) — Alternative.me API עם cache של שעה."""
+    import time as _time
+    now = _time.time()
+    if now - _fng_cache['ts'] < 3600:
+        return _fng_cache['value'], _fng_cache['label']
+    try:
+        import requests as _req
+        r = _req.get('https://api.alternative.me/fng/?limit=1', timeout=5)
+        d = r.json()['data'][0]
+        _fng_cache.update({'value': int(d['value']), 'label': d['value_classification'], 'ts': now})
+        print(f"  [FNG] עודכן: {_fng_cache['value']} – {_fng_cache['label']}")
+    except Exception as e:
+        print(f"  [FNG] שגיאה בטעינה: {e} (משתמש ב-cache אחרון)")
+    return _fng_cache['value'], _fng_cache['label']
+
 # --- פרמטרי מינוף (דמו) ---
 LEVERAGE       = 10          # מינוף 10x
 MARGIN         = 50          # בטחון ($) לכל עסקה
@@ -774,6 +793,27 @@ def score_symbol(df_3h, df_1h, symbol, direction='LONG'):
         parts.append(f"Candles={c_pts}/10({pattern_name})")
         print(f"  [{symbol}] {direction} | Candles={c_pts} "
               f"({candle_icon} {pattern_name})")
+
+        # ════════════════════════════════════
+        # 6. FEAR & GREED INDEX — ±5 נקודות
+        # ════════════════════════════════════
+        fng_v, fng_lbl = get_fear_greed()
+        if direction == 'LONG':
+            if   fng_v < 25: fng_adj = +5    # פחד קיצוני  → קנייה בבאונס
+            elif fng_v < 45: fng_adj = +2    # פחד          → רוח גבית
+            elif fng_v > 75: fng_adj = -5    # חמדנות קיצונית → סיכון LONG
+            elif fng_v > 55: fng_adj = -2    # חמדנות         → זהירות קלה
+            else:            fng_adj =  0    # נייטרלי
+        else:  # SHORT
+            if   fng_v > 75: fng_adj = +5    # חמדנות קיצונית → שורט בשיא
+            elif fng_v > 55: fng_adj = +2    # חמדנות          → רוח גבית
+            elif fng_v < 25: fng_adj = -5    # פחד קיצוני  → סיכון SHORT
+            elif fng_v < 45: fng_adj = -2    # פחד           → זהירות קלה
+            else:            fng_adj =  0    # נייטרלי
+        score = max(0, min(100, score + fng_adj))
+        sign  = f"+{fng_adj}" if fng_adj >= 0 else str(fng_adj)
+        parts.append(f"FNG={fng_v}({sign})[{fng_lbl}]")
+        print(f"  [{symbol}] {direction} | FNG={fng_v} ({fng_lbl}) adj={sign}")
 
         breakdown = " | ".join(parts) + f"  →  TOTAL={score}/100"
         print(f"  [{symbol}] {direction} SCORE={score}/100 {'🟢 SIGNAL!' if score >= MIN_SCORE else '🔴 skip'}")

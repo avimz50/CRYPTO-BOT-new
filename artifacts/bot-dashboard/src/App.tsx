@@ -66,6 +66,128 @@ function SevenSegDisplay({ value }: { value: string }) {
   );
 }
 
+/* ══════════════════════════════════════════════
+   FEAR & GREED SPEEDOMETER GAUGE
+══════════════════════════════════════════════ */
+const FNG_ZONES = [
+  { from: 0,  to: 20,  color: '#ef4444' },
+  { from: 20, to: 40,  color: '#f97316' },
+  { from: 40, to: 60,  color: '#facc15' },
+  { from: 60, to: 80,  color: '#84cc16' },
+  { from: 80, to: 100, color: '#22c55e' },
+];
+
+function fngColor(v: number) {
+  if (v < 20) return '#ef4444';
+  if (v < 40) return '#f97316';
+  if (v < 60) return '#facc15';
+  if (v < 80) return '#84cc16';
+  return '#22c55e';
+}
+function fngLabel(v: number) {
+  if (v < 25) return 'פחד קיצוני';
+  if (v < 45) return 'פחד';
+  if (v < 55) return 'נייטרלי';
+  if (v < 75) return 'חמדנות';
+  return 'חמדנות קיצונית';
+}
+
+function FearGreedGauge({ value, label }: { value: number | null; label: string | null }) {
+  const cx = 100, cy = 102, R = 78;
+  const v = value ?? 50;
+
+  const pt = (r: number, val: number) => {
+    const θ = (180 - (val / 100) * 180) * Math.PI / 180;
+    return { x: cx + r * Math.cos(θ), y: cy - r * Math.sin(θ) };
+  };
+
+  const arc = (from: number, to: number, r: number) => {
+    const p1 = pt(r, from), p2 = pt(r, to);
+    return `M ${p1.x.toFixed(1)} ${p1.y.toFixed(1)} A ${r} ${r} 0 0 1 ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+  };
+
+  const needle = pt(68, v);
+  const color  = fngColor(v);
+
+  return (
+    <svg viewBox="0 0 200 118" width="100%" style={{ display: 'block', margin: '0 auto', maxWidth: 260 }}>
+      <defs>
+        <filter id="fg-glow" x="-40%" y="-40%" width="180%" height="180%">
+          <feGaussianBlur stdDeviation="2.5" result="b"/>
+          <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <radialGradient id="hub-grad" cx="40%" cy="35%">
+          <stop offset="0%" stopColor="#4b5563"/>
+          <stop offset="100%" stopColor="#111827"/>
+        </radialGradient>
+      </defs>
+
+      {/* Dim background tracks */}
+      {FNG_ZONES.map((z, i) => (
+        <path key={`bg${i}`} d={arc(z.from, z.to, R)}
+          fill="none" stroke={z.color} strokeWidth={15}
+          strokeLinecap={i === 0 || i === 4 ? 'round' : 'butt'}
+          opacity={0.18} />
+      ))}
+
+      {/* Filled arcs */}
+      {FNG_ZONES.map((z, i) => {
+        const end = Math.min(v, z.to);
+        if (end <= z.from) return null;
+        const isLast = end < z.to;
+        return (
+          <path key={`fill${i}`} d={arc(z.from, end, R)}
+            fill="none" stroke={z.color} strokeWidth={15}
+            strokeLinecap={i === 0 || isLast ? 'round' : 'butt'}
+            filter="url(#fg-glow)" />
+        );
+      })}
+
+      {/* Tick marks */}
+      {[0, 25, 50, 75, 100].map(tv => {
+        const inn = pt(R - 10, tv), out = pt(R + 4, tv);
+        return <line key={tv} x1={inn.x} y1={inn.y} x2={out.x} y2={out.y}
+          stroke="white" strokeWidth={1.5} opacity={0.3} />;
+      })}
+
+      {/* Needle shadow */}
+      <line x1={cx} y1={cy} x2={needle.x} y2={needle.y}
+        stroke="#000" strokeWidth={4.5} strokeLinecap="round" opacity={0.45} />
+
+      {/* Needle */}
+      <line x1={cx} y1={cy} x2={needle.x} y2={needle.y}
+        stroke={color} strokeWidth={2.8} strokeLinecap="round"
+        filter="url(#fg-glow)"
+        style={{ transition: 'all 1.4s cubic-bezier(0.34,1.56,0.64,1)' }} />
+
+      {/* Hub */}
+      <circle cx={cx} cy={cy} r={8} fill="url(#hub-grad)" stroke={color} strokeWidth={2.2} />
+
+      {/* Value */}
+      <text x={cx} y={cy - 22} textAnchor="middle"
+        fill={color} fontSize={24} fontWeight="bold" fontFamily="monospace"
+        filter="url(#fg-glow)">{value ?? '?'}</text>
+
+      {/* Zone label */}
+      <text x={cx} y={cy - 8} textAnchor="middle"
+        fill="#d1d5db" fontSize={8} fontFamily="sans-serif">
+        {value !== null ? fngLabel(v) : label ?? 'טוען...'}
+      </text>
+
+      {/* Side labels */}
+      <text x={8}   y={cy + 18} textAnchor="middle" fontSize={13}>😱</text>
+      <text x={192} y={cy + 18} textAnchor="middle" fontSize={13}>🤑</text>
+
+      {/* Numeric scale */}
+      {[0, 50, 100].map(tv => {
+        const p = pt(R + 12, tv);
+        return <text key={tv} x={p.x} y={p.y + 3.5} textAnchor="middle"
+          fill="#6b7280" fontSize={7} fontFamily="monospace">{tv}</text>;
+      })}
+    </svg>
+  );
+}
+
 interface Candidate {
   symbol: string;
   change_pct: number;
@@ -313,11 +435,14 @@ function TradeCard({ trade }: { trade: Trade }) {
 // Deployed bot Flask API — single source of truth for live data
 const BOT_API = "https://python-script-bymzrkhy.replit.app";
 
+interface FngData { value: number; label: string; }
+
 export default function App() {
   const now        = useClock();
   const hotData    = useJson<HotData>(`${BOT_API}/api/hot`,    "/hot_candidates.json", 60_000);
   const tradesData = useJson<TradesData>(`${BOT_API}/api/trades`, "/active_trades.json", 30_000);
   const walletData = useJson<WalletData>(`${BOT_API}/api/wallet`, "/wallet.json",        30_000);
+  const fngData    = useJson<FngData>(`${BOT_API}/api/fng`,    "/fng.json",             300_000);
 
   const SCAN_INTERVAL = 3600; // seconds
   const nextScan = new Date(Math.ceil(now.getTime() / (SCAN_INTERVAL * 1000)) * (SCAN_INTERVAL * 1000));
@@ -460,6 +585,28 @@ export default function App() {
             <p className="text-3xl font-bold text-violet-400">90+</p>
             <p className="text-gray-400 text-sm mt-1">סף כניסה</p>
           </div>
+        </div>
+
+        {/* Fear & Greed Gauge */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4"
+             style={{ background: 'linear-gradient(135deg, #0d1117 0%, #0f1b2d 100%)' }}>
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-2">
+              <span className="text-base">📊</span>
+              <h2 className="font-semibold text-gray-300 text-sm">מדד הפחד והחמדנות</h2>
+            </div>
+            <span className="text-xs text-gray-600">מתעדכן כל שעה · Alternative.me</span>
+          </div>
+          <FearGreedGauge value={fngData?.value ?? null} label={fngData?.label ?? null} />
+          {fngData && (
+            <p className="text-center text-xs mt-1" style={{ color: fngColor(fngData.value) }}>
+              {fngData.value < 25 || fngData.value > 75
+                ? `השפעה על ניקוד: ${fngData.value < 25 ? 'LONG +5 / SHORT -5' : 'SHORT +5 / LONG -5'}`
+                : fngData.value < 45 || fngData.value > 55
+                ? `השפעה על ניקוד: ${fngData.value < 45 ? 'LONG +2 / SHORT -2' : 'SHORT +2 / LONG -2'}`
+                : 'השפעה על ניקוד: נייטרלי (0)'}
+            </p>
+          )}
         </div>
 
         {/* Active Trades */}

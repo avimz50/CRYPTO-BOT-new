@@ -1,9 +1,12 @@
 import os
 import json
+import time as _time
 from flask import Flask, jsonify, send_file, Response
 from threading import Thread
+import requests as _req
 
 AUDIT_FILE = 'audit_report.json'
+_fng_ka    = {'value': None, 'label': None, 'ts': 0}
 
 app = Flask('')
 
@@ -34,6 +37,20 @@ def api_audit():
         return jsonify({'error': 'Audit report not yet generated. Runs at 08:00 and 20:00.'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/fng')
+def api_fng():
+    """Fear & Greed Index — cached 1h from Alternative.me"""
+    now = _time.time()
+    if _fng_ka['value'] is None or now - _fng_ka['ts'] > 3600:
+        try:
+            r = _req.get('https://api.alternative.me/fng/?limit=1', timeout=5)
+            d = r.json()['data'][0]
+            _fng_ka.update({'value': int(d['value']), 'label': d['value_classification'], 'ts': now})
+        except Exception as e:
+            if _fng_ka['value'] is None:
+                return jsonify({'error': str(e)}), 500
+    return jsonify({'value': _fng_ka['value'], 'label': _fng_ka['label']})
 
 def run():
     port = int(os.environ.get('PORT', 8090))
