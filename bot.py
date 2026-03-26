@@ -1575,6 +1575,48 @@ def handle_dashboard(message):
         f"_תראה שם: Top 15 מועמדים חמים, גיינרים, ווליום ועוד_"
     )
 
+@bot.message_handler(commands=['home', 'start', 'help', 'menu'])
+def handle_home(message):
+    """מסך ראשי — כל הפקודות של הבוט."""
+    with trades_lock:
+        n_trades = len(active_trades)
+    eq        = _get_equity()
+    bal       = wallet.get('balance', STARTING_BALANCE)
+    free      = max(0, bal - n_trades * MARGIN)
+    pnl_today = round(daily_stats.get('total_pnl', 0), 2)
+    pnl_icon  = "📈" if pnl_today >= 0 else "📉"
+    regime    = get_btc_regime()
+    regime_emoji = "🟢" if regime == 'BULL' else ("🔴" if regime == 'BEAR' else "🟡")
+
+    send_msg(
+        f"🤖 *Crypto Trading Bot — תפריט ראשי*\n"
+        f"{'─' * 30}\n\n"
+        f"📊 *מצב נוכחי*\n"
+        f"  {regime_emoji} BTC Regime: *{regime}*\n"
+        f"  💼 עסקאות פעילות: *{n_trades}/{MAX_TRADES}*\n"
+        f"  💰 Equity: *${eq:.2f}*  |  פנוי: *${free:.2f}*\n"
+        f"  {pnl_icon} P&L היום: *${pnl_today:+}*\n\n"
+        f"{'─' * 30}\n"
+        f"📋 *פקודות מידע*\n"
+        f"  /status — עסקאות פעילות + SL/TP\n"
+        f"  /report — דוח יומי מלא\n"
+        f"  /ping   — בדיקת חיות הבוט\n\n"
+        f"🔍 *פקודות פעולה*\n"
+        f"  /scan              — סריקה ידנית עכשיו\n"
+        f"  /close BTC         — סגירת עסקה ידנית\n"
+        f"  /update BTC 84000 95000 — עדכון SL/TP\n\n"
+        f"🖥 *דאשבורד*\n"
+        f"  /dashboard — קבל קישור לדאשבורד\n"
+        f"  [👉 פתח דאשבורד]({DASHBOARD_URL})\n\n"
+        f"{'─' * 30}\n"
+        f"⚙️ *פרמטרים*\n"
+        f"  📐 סף איתות: *{MIN_SCORE}/100*\n"
+        f"  💵 מרג'ין לעסקה: *${MARGIN}*  ·  מינוף: *{LEVERAGE}x*\n"
+        f"  🛡️ SL: *{SL_PCT_FIXED}%*  ·  TP1: *{TP1_PCT_FIXED}%*  ·  TP: *{TP_PCT_FIXED}%*\n"
+        f"  ⏰ סריקה כל שעה  ·  מעקב כל 60 שניות"
+    )
+
+
 @bot.message_handler(commands=['scan'])
 def handle_scan(message):
     """סריקה מיידית — מופעלת ב-Thread נפרד כדי לא לחסום את ה-polling."""
@@ -1892,15 +1934,7 @@ def main():
         "⚙️ *מצב הלולאות:*\n"
         "🔍 סריקת איתותים: כל *60 דקות*\n"
         "📍 מעקב SL/TP:    כל *60 שניות*\n\n"
-        "*פקודות:*\n"
-        "/scan — סריקה ידנית עכשיו 🔍\n"
-        "/status — עסקאות פעילות\n"
-        "/ping — מצב הבוט\n"
-        "/report — דוח יומי\n"
-        "/close BTC — סגירה ידנית\n"
-        "/update BTC 84000 95000 — עדכון SL/TP\n"
-        "/dashboard — קישור לדאשבורד\n"
-        "/test — איתות BTC מזויף\n\n"
+        f"📋 /home — תפריט ראשי עם כל הפקודות\n"
         f"🖥 [פתח דאשבורד]({DASHBOARD_URL})"
     )
 
