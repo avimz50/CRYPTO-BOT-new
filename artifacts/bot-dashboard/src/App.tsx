@@ -394,7 +394,7 @@ export default function App() {
         </div>
 
         <p className="text-center text-gray-700 text-xs pb-4">
-          {now.toLocaleTimeString("he-IL")} · Trading Bot v4.0 · Score ≥90 · Max 3 Trades · 4H/1H Adaptive
+          {now.toLocaleTimeString("he-IL")} · Trading Bot v4.1 · Score ≥90 · Max 3 Trades · 4H→1H→15m · Anti-FOMO
         </p>
       </div>
     </div>

@@ -408,8 +408,9 @@ def get_btc_regime():
 
 MIN_SCORE  = 90   # סף מינימום לפתיחת עסקה (90 = alignment כמעט מושלם)
 MAX_TRADES = 3    # מקסימום עסקאות פתוחות במקביל
-RSI_VETO_LONG  = 72   # RSI מעל זה = לא קונים (overbought)
+RSI_VETO_LONG  = 65   # Anti-FOMO: RSI מעל 65 = לא קונים (overbought ceiling)
 RSI_VETO_SHORT = 28   # RSI מתחת זה = לא מוכרים (oversold)
+EMA_PROXIMITY_PCT = 2.5  # מחיר חייב להיות תוך 2.5% מ-EMA200 (Anti-Chase)
 BE_BUFFER_PCT  = 2.0  # % עלייה/ירידה לפני הזזת SL ל-Break Even (50% מ-TP1=5%)
 TRAIL_PCT      = 1.5  # % Trailing Stop מהשיא
 SL_PCT_FIXED   = 3.5  # % SL קבוע (3h chart)
@@ -572,6 +573,31 @@ def score_symbol(df_3h, df_1h, symbol, direction='LONG'):
             print(f"  [{symbol}] NaN in indicators")
             return 0, "NaN values", 0
 
+        # ════════════════════════════════════════════════
+        # ANTI-FOMO HARD VETOES (לפני כל ניקוד)
+        # ════════════════════════════════════════════════
+
+        # ── וטו 1: EMA200 Proximity — Anti-Chase ──
+        ema_gap_pct = (price - ema200_v) / ema200_v * 100  # + = מעל EMA200
+        if direction == 'LONG' and ema_gap_pct > EMA_PROXIMITY_PCT:
+            print(f"  [{symbol}] 🚫 EMA200 CHASE VETO: {ema_gap_pct:.1f}% מעל EMA200 (מקסימום {EMA_PROXIMITY_PCT}%) — המתן לפולבק")
+            return 0, f"EMA200 chase veto ({ema_gap_pct:.1f}% above EMA200)", atr_v
+        if direction == 'SHORT' and ema_gap_pct < -EMA_PROXIMITY_PCT:
+            print(f"  [{symbol}] 🚫 EMA200 CHASE VETO: {abs(ema_gap_pct):.1f}% מתחת EMA200 (מקסימום {EMA_PROXIMITY_PCT}%) — המתן לבאונס")
+            return 0, f"EMA200 chase veto ({abs(ema_gap_pct):.1f}% below EMA200)", atr_v
+
+        # ── וטו 2: Wick Rejection — Anti-False Breakout ──
+        last_c     = df_3h.iloc[-2]   # נר סגור אחרון (מאושר)
+        c_body     = abs(last_c['close'] - last_c['open'])
+        c_upper    = last_c['high'] - max(last_c['close'], last_c['open'])
+        c_lower    = min(last_c['close'], last_c['open']) - last_c['low']
+        if direction == 'LONG' and c_upper > c_body and c_body > 0:
+            print(f"  [{symbol}] 🚫 WICK REJECTION: פתיל עליון ({c_upper:.6g}) > גוף ({c_body:.6g}) — Shooting Star, מבטל LONG")
+            return 0, f"Wick rejection LONG (upper wick {c_upper:.4g} > body {c_body:.4g})", atr_v
+        if direction == 'SHORT' and c_lower > c_body and c_body > 0:
+            print(f"  [{symbol}] 🚫 WICK REJECTION: פתיל תחתון ({c_lower:.6g}) > גוף ({c_body:.6g}) — Hammer, מבטל SHORT")
+            return 0, f"Wick rejection SHORT (lower wick {c_lower:.4g} > body {c_body:.4g})", atr_v
+
         # ════════════════════════════════
         # 1. TREND — 30 נקודות
         # ════════════════════════════════
@@ -618,8 +644,8 @@ def score_symbol(df_3h, df_1h, symbol, direction='LONG'):
 
         # וטו קשה — RSI קיצוני = פסילה מוחלטת
         if direction == 'LONG' and rsi_v > RSI_VETO_LONG:
-            print(f"  [{symbol}] 🚫 RSI VETO: {rsi_v:.1f} > {RSI_VETO_LONG} (overbought) — skip")
-            return 0, f"RSI veto ({rsi_v:.1f} overbought)", atr_v
+            print(f"  [{symbol}] 🚫 ANTI-FOMO RSI VETO: {rsi_v:.1f} > {RSI_VETO_LONG} (ceiling) — skip")
+            return 0, f"Anti-FOMO RSI veto ({rsi_v:.1f} > {RSI_VETO_LONG} ceiling)", atr_v
         if direction == 'SHORT' and rsi_v < RSI_VETO_SHORT:
             print(f"  [{symbol}] 🚫 RSI VETO: {rsi_v:.1f} < {RSI_VETO_SHORT} (oversold) — skip")
             return 0, f"RSI veto ({rsi_v:.1f} oversold)", atr_v
@@ -767,7 +793,7 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     # הסבר על הטיים-פריים שנבחר
     if not tf_reason:
         tf_reason = f"טרנד חזק ב-{timeframe}" if timeframe == '4H' else f"פריצה ב-{timeframe} (4H חלש)"
-    tf_icon = "📊" if timeframe == '4H' else "⏱️"
+    tf_icon = "📊" if timeframe == '4H' else ("⏱️" if timeframe == '1H' else "⚡")
 
     equity_after = _get_equity()
 
@@ -1224,7 +1250,7 @@ def handle_status(message):
     msg = wallet_status_text() + "\n\n"
     if not active_trades:
         msg += "📭 *אין עסקאות פעילות כרגע.*\n"
-        msg += f"_סף כניסה: {MIN_SCORE}/100 | מקס עסקאות: {MAX_TRADES}_"
+        msg += f"_סף: {MIN_SCORE}/100 · מקס {MAX_TRADES} עסקאות · Anti-FOMO: RSI≤{RSI_VETO_LONG} · EMA±{EMA_PROXIMITY_PCT}% · Wick Filter_"
         send_msg(msg)
         return
     msg += f"📋 *עסקאות פעילות ({len(active_trades)}/{MAX_TRADES}):*\n\n"
@@ -1568,30 +1594,44 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL'):
         if any(t['symbol'] == symbol for t in active_trades):
             continue
         try:
-            # ── שלב 1: ניסיון על 4H (גרף ראשי) ──
+            # ── שלב 1: ניסיון על 4H — טרנד ראשי ──
             df_4h  = get_data(symbol, timeframe='4h', limit=250)
             df_1h  = get_data(symbol, timeframe='1h', limit=250)
             price  = df_4h['close'].iloc[-1]
 
             print(f"Scoring {symbol} [{direction}] @ {price:.6g} [4H]")
             score, breakdown, atr = score_symbol(df_4h, df_1h, symbol, direction)
-            chosen_tf  = '4H'
-            chosen_df  = df_4h
-            tf_reason  = 'טרנד חזק בגרף 4H'
+            score_4h  = score        # שמור לדיווח
+            chosen_tf = '4H'
+            chosen_df = df_4h
+            tf_reason = 'טרנד חזק בגרף 4H'
 
-            # ── שלב 2: אם 4H לא מספיק — נסה 1H+15m ──
+            # ── שלב 2: אם 4H לא מספיק — נסה 1H ──
             if score < MIN_SCORE:
                 df_15m = get_data(symbol, timeframe='15m', limit=250)
                 score_1h, breakdown_1h, atr_1h = score_symbol(df_1h, df_15m, symbol, direction)
-                print(f"  4H={score} < {MIN_SCORE} → try 1H: {score_1h}")
-                if score_1h >= MIN_SCORE and score_1h > score:
+                print(f"  4H={score_4h} < {MIN_SCORE} → try 1H: {score_1h}")
+                if score_1h >= MIN_SCORE:
                     score     = score_1h
                     breakdown = breakdown_1h
                     atr       = atr_1h
                     chosen_tf = '1H'
                     chosen_df = df_1h
                     price     = df_1h['close'].iloc[-1]
-                    tf_reason = f'פריצה ב-1H (4H={score} < {MIN_SCORE})'
+                    tf_reason = f'High Volatility Entry ב-1H (4H={score_4h} < {MIN_SCORE})'
+
+                # ── שלב 3: אם גם 1H לא מספיק — נסה 15m (Scalp) ──
+                else:
+                    score_15m, breakdown_15m, atr_15m = score_symbol(df_15m, df_1h, symbol, direction)
+                    print(f"  1H={score_1h} < {MIN_SCORE} → try 15m: {score_15m}")
+                    if score_15m >= MIN_SCORE:
+                        score     = score_15m
+                        breakdown = breakdown_15m
+                        atr       = atr_15m
+                        chosen_tf = '15m'
+                        chosen_df = df_15m
+                        price     = df_15m['close'].iloc[-1]
+                        tf_reason = f'Scalp Entry ב-15m (4H={score_4h}, 1H={score_1h} < {MIN_SCORE})'
 
             if score >= MIN_SCORE:
                 open_demo_trade(
@@ -1635,7 +1675,8 @@ def scan_loop():
             send_msg(
                 f"🔍 *Professional Scoring Scan* — {now_str}\n"
                 f"🟢 Gainers (LONG): *{len(gainers)}*  🔴 Losers (SHORT): *{len(losers)}*\n"
-                f"📐 סף מינימום: *{MIN_SCORE}/100 נקודות*\n"
+                f"📐 סף: *{MIN_SCORE}/100* · גרפים: 4H → 1H → 15m\n"
+                f"🛡️ Anti-FOMO: RSI≤{RSI_VETO_LONG} · EMA±{EMA_PROXIMITY_PCT}% · Wick Filter\n"
                 f"{regime_emoji} *BTC Regime: {regime_note}*"
             )
 
