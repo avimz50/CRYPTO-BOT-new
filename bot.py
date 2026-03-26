@@ -116,6 +116,22 @@ def load_wallet():
         save_wallet()
         print(f"Wallet created fresh: ${STARTING_BALANCE}")
 
+def load_active_trades():
+    """טוען עסקאות פעילות מ-JSON לאחר הפעלה מחדש של הבוט."""
+    global active_trades
+    try:
+        with open(ACTIVE_TRADES_FILE, 'r') as f:
+            data = json.load(f)
+        loaded = data.get('trades', [])
+        if loaded:
+            with trades_lock:
+                active_trades = loaded
+            print(f"Active trades loaded: {len(loaded)} trade(s) restored from disk")
+        else:
+            print("Active trades loaded: none on disk")
+    except Exception:
+        print("Active trades: no existing file, starting fresh")
+
 def save_wallet():
     try:
         with open(WALLET_FILE, 'w') as f:
@@ -845,6 +861,7 @@ def track_trades():
         try:
             ticker        = exchange.fetch_ticker(trade['symbol'])
             current_price = ticker['last']
+            trade['current_price'] = current_price   # שמור לדאשבורד (Floating P&L)
             entry         = trade['entry']
             sym           = trade['symbol']
             direction     = trade.get('direction', 'LONG')
@@ -1191,15 +1208,39 @@ def send_heartbeat():
         phase_label = "🔄 Trailing" if phase == 'trailing' else "📊 Initial"
         be_label    = " · 🔒 BE" if t.get('be_triggered') else ""
 
+        run_label = "💰 Running Profit" if pnl_usd >= 0 else "🔻 Running Loss"
         msg += (
             f"\n{dir_emoji} *{sym}*  {phase_label}{be_label}\n"
             f"   כניסה: `{entry:.6g}` → עכשיו: `{price:.6g}`\n"
-            f"   {pnl_arrow} P&L: *{pnl_usd:+.2f}$*  ({pnl_pct:+.2f}%)\n"
+            f"   {run_label}: *${pnl_usd:+.2f}*  ({pnl_pct:+.1f}%)\n"
             f"   {sl_lbl}\n"
             f"   {tp_lbl}\n"
         )
 
-    msg += f"\n{'─' * 24}\n{pnl_icon} P&L היום: *${pnl_today:+}*  ·  {len(trades_snapshot)} עסקה פעילה"
+    # ── Floating P&L כולל ──
+    total_floating = 0.0
+    for t in trades_snapshot:
+        cp = t.get('current_price', t.get('entry', 0))
+        ep = t['entry']
+        d  = t.get('direction', 'LONG')
+        raw_pct = (cp - ep) / ep * 100 if ep else 0
+        p_pct   = raw_pct if d == 'LONG' else -raw_pct
+        if t.get('tp1_triggered'):
+            total_floating += round(t.get('tp1_pnl', 0) + POSITION_SIZE / 2 * p_pct / 100, 2)
+        else:
+            total_floating += round(POSITION_SIZE * p_pct / 100, 2)
+
+    float_icon = "📈" if total_floating >= 0 else "📉"
+    realized   = round(wallet.get('total_pnl', 0.0), 2)
+    total_bal  = round(wallet.get('starting', STARTING_BALANCE) + realized + total_floating, 2)
+
+    msg += (
+        f"\n{'─' * 24}\n"
+        f"{pnl_icon} Realized P&L: *${realized:+.2f}*\n"
+        f"{float_icon} Floating P&L: *${total_floating:+.2f}*\n"
+        f"💼 Total Balance: *${total_bal:.2f}*\n"
+        f"📊 P&L היום: *${pnl_today:+}* · {len(trades_snapshot)} עסקה פעילה"
+    )
     send_msg(msg)
     print(f"Heartbeat sent at {now_str} — {len(trades_snapshot)} trade(s)")
 
@@ -1728,7 +1769,8 @@ def scan_loop():
 
 def main():
     keep_alive()
-    load_wallet()   # ← טעינת ארנק וירטואלי
+    load_wallet()          # ← טעינת ארנק וירטואלי
+    load_active_trades()   # ← שחזור עסקאות פעילות לאחר restart
 
     # Thread 1 — Telegram polling
     polling_thread = threading.Thread(target=start_telegram_polling, daemon=True)

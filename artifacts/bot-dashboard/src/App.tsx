@@ -16,6 +16,7 @@ interface HotData {
 interface Trade {
   symbol: string;
   entry: number;
+  current_price?: number;
   sl: number;
   tp: number;
   tp1: number;
@@ -26,6 +27,7 @@ interface Trade {
   phase: "initial" | "trailing";
   be_triggered: boolean;
   tp1_triggered: boolean;
+  tp1_pnl?: number;
   score: number;
   atr: number;
   peak_price: number;
@@ -155,6 +157,15 @@ function TradeCard({ trade }: { trade: Trade }) {
   const tp1Label = trade.tp1_triggered ? " · TP1 ✅" : "";
   const tf      = trade.timeframe ?? "4H";
 
+  // Floating P&L for this trade
+  const cp      = trade.current_price ?? trade.entry;
+  const rawPct  = (cp - trade.entry) / trade.entry * 100;
+  const pnlPct  = isLong ? rawPct : -rawPct;
+  const pnlUsd  = trade.tp1_triggered
+    ? (trade.tp1_pnl ?? 0) + 250 * pnlPct / 100
+    : 500 * pnlPct / 100;
+  const isProfit = pnlUsd >= 0;
+
   return (
     <div className={`border rounded-xl p-4 ${dirBg}`}>
       <div className="flex items-start justify-between mb-3">
@@ -210,6 +221,19 @@ function TradeCard({ trade }: { trade: Trade }) {
             <span className="font-mono text-yellow-400">{fmt(trade.trailing_sl)}</span>
           </div>
         )}
+        {/* Running Profit / Loss */}
+        <div className="col-span-2 flex justify-between border-t border-gray-700/50 pt-2 mt-1">
+          <span className="text-gray-400 font-medium">{isProfit ? "💰 Running Profit" : "🔻 Running Loss"}</span>
+          <span
+            className="font-mono font-bold text-base"
+            style={{
+              color: isProfit ? "#39ff14" : "#f87171",
+              textShadow: isProfit ? "0 0 8px #39ff1460" : "none",
+            }}
+          >
+            {pnlUsd >= 0 ? "+" : ""}{pnlUsd.toFixed(2)}$ ({pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%)
+          </span>
+        </div>
       </div>
     </div>
   );
@@ -234,11 +258,24 @@ export default function App() {
 
   const balance  = walletData?.balance ?? 200;
   const starting = walletData?.starting ?? 200;
-  const totalPnl = walletData?.total_pnl ?? 0;
-  const equity   = balance + trades.length * 50;
-  const pnlPct   = starting > 0 ? ((equity - starting) / starting * 100) : 0;
-  const pnlPos   = totalPnl >= 0;
+  const realized = walletData?.total_pnl ?? 0;
   const history  = walletData?.equity_history ?? [];
+
+  // Floating P&L — calculated from live current_price stored per trade
+  const floating = trades.reduce((sum, t) => {
+    const cp  = t.current_price ?? t.entry;
+    const raw = (cp - t.entry) / t.entry * 100;
+    const pct = t.direction === "LONG" ? raw : -raw;
+    const usd = t.tp1_triggered
+      ? (t.tp1_pnl ?? 0) + 250 * pct / 100
+      : 500 * pct / 100;
+    return sum + usd;
+  }, 0);
+
+  const totalBalance = starting + realized + floating;
+  const totalPct     = starting > 0 ? ((totalBalance - starting) / starting * 100) : 0;
+  const floatPos     = floating >= 0;
+  const realizedPos  = realized >= 0;
 
   return (
     <div className="min-h-screen bg-gray-950 text-white" dir="rtl">
@@ -269,25 +306,41 @@ export default function App() {
               <h2 className="font-semibold text-gray-200">ארנק וירטואלי</h2>
               <span className="text-xs text-gray-500">התחיל ב-${starting}</span>
             </div>
-            <span className={`text-sm font-bold ${pnlPos ? "text-emerald-400" : "text-red-400"}`}>
-              {pnlPos ? "+" : ""}{totalPnl.toFixed(2)}$ ({pnlPct.toFixed(1)}%)
+            <span className={`text-sm font-bold ${totalBalance >= starting ? "text-emerald-400" : "text-red-400"}`}>
+              {totalPct >= 0 ? "+" : ""}{totalPct.toFixed(1)}% total
             </span>
           </div>
 
+          {/* Row 1: Total Balance (big) */}
+          <div className="px-5 py-4 border-b border-gray-800 text-center">
+            <p className="text-xs text-gray-500 uppercase tracking-widest mb-1">Total Balance</p>
+            <p className={`text-4xl font-bold ${totalBalance >= starting ? "text-white" : "text-red-400"}`}>
+              ${totalBalance.toFixed(2)}
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              ${starting.toFixed(0)} התחלתי
+              {totalPct >= 0 ? " +" : " "}{totalPct.toFixed(2)}%
+            </p>
+          </div>
+
+          {/* Row 2: Realized | Floating | Free Cash */}
           <div className="grid grid-cols-3 divide-x divide-gray-800 text-center">
             <div className="p-4">
-              <p className="text-2xl font-bold text-white">${equity.toFixed(2)}</p>
-              <p className="text-xs text-gray-500 mt-1">Total Equity</p>
-            </div>
-            <div className="p-4">
-              <p className="text-2xl font-bold text-blue-400">${balance.toFixed(2)}</p>
-              <p className="text-xs text-gray-500 mt-1">יתרה פנויה</p>
-            </div>
-            <div className="p-4">
-              <p className={`text-2xl font-bold ${pnlPos ? "text-emerald-400" : "text-red-400"}`}>
-                {pnlPos ? "+" : ""}{totalPnl.toFixed(2)}$
+              <p className={`text-xl font-bold ${realizedPos ? "text-emerald-400" : "text-red-400"}`}>
+                {realizedPos ? "+" : ""}{realized.toFixed(2)}$
               </p>
-              <p className="text-xs text-gray-500 mt-1">P&L כולל</p>
+              <p className="text-xs text-gray-500 mt-1">Realized P&L</p>
+            </div>
+            <div className="p-4">
+              <p className={`text-xl font-bold ${floatPos ? "text-[#39ff14]" : "text-red-500"}`}
+                 style={{ textShadow: floatPos ? "0 0 8px #39ff1460" : "none" }}>
+                {floatPos ? "+" : ""}{floating.toFixed(2)}$
+              </p>
+              <p className="text-xs text-gray-500 mt-1">Floating P&L</p>
+            </div>
+            <div className="p-4">
+              <p className="text-xl font-bold text-blue-400">${balance.toFixed(2)}</p>
+              <p className="text-xs text-gray-500 mt-1">יתרה פנויה</p>
             </div>
           </div>
 
