@@ -1,14 +1,19 @@
 import { Router } from "express";
 import fs from "fs";
 import path from "path";
+import http from "http";
 import https from "https";
 
 const router = Router();
 
+// Flask bot server (keep_alive.py) always runs on BOT_PORT (default 8091)
+// Express api-server runs on PORT (8080 in prod) — no conflict
+const BOT_FLASK_PORT = parseInt(process.env.BOT_PORT ?? "8091", 10);
+const BOT_FLASK_BASE = `http://localhost:${BOT_FLASK_PORT}`;
+
 // workspace root = two levels above artifacts/api-server
-const ROOT      = path.resolve(process.cwd(), "../..");
-// bot writes JSON files to the dashboard's public folder
-const PUBLIC    = path.join(ROOT, "artifacts", "bot-dashboard", "public");
+const ROOT   = path.resolve(process.cwd(), "../..");
+const PUBLIC = path.join(ROOT, "artifacts", "bot-dashboard", "public");
 
 function readJson(filePath: string): unknown {
   try {
@@ -19,22 +24,52 @@ function readJson(filePath: string): unknown {
   }
 }
 
-router.get("/trades", (_req, res) => {
-  const data = readJson(path.join(PUBLIC, "active_trades.json"));
-  if (!data) return res.json([]);
+/** Fetch JSON from internal Flask bot server, fallback to reading disk file */
+function fetchFromFlask(endpoint: string, fallbackFile: string, fallback: unknown): Promise<unknown> {
+  return new Promise((resolve) => {
+    const req = http.get(`${BOT_FLASK_BASE}${endpoint}`, { timeout: 2000 }, (r) => {
+      let body = "";
+      r.on("data", (c) => (body += c));
+      r.on("end", () => {
+        try {
+          resolve(JSON.parse(body));
+        } catch {
+          resolve(readJson(fallbackFile) ?? fallback);
+        }
+      });
+    });
+    req.on("error", () => resolve(readJson(fallbackFile) ?? fallback));
+    req.on("timeout", () => { req.destroy(); resolve(readJson(fallbackFile) ?? fallback); });
+  });
+}
+
+router.get("/trades", async (_req, res) => {
+  const data = await fetchFromFlask("/api/trades", path.join(PUBLIC, "active_trades.json"), { updated: null, count: 0, trades: [] });
   res.json(data);
 });
 
-router.get("/wallet", (_req, res) => {
-  const data = readJson(path.join(PUBLIC, "wallet.json"));
-  if (!data) return res.json({ balance: 200, total_pnl: 0 });
+router.get("/wallet", async (_req, res) => {
+  const data = await fetchFromFlask("/api/wallet", path.join(PUBLIC, "wallet.json"), { balance: 200, starting: 200, total_pnl: 0, trades_opened: 0, equity_history: [] });
   res.json(data);
 });
 
-router.get("/hot", (_req, res) => {
-  const data = readJson(path.join(PUBLIC, "hot_candidates.json"));
-  if (!data) return res.json({ updated: null, count: 0, candidates: [] });
+router.get("/hot", async (_req, res) => {
+  const data = await fetchFromFlask("/api/hot", path.join(PUBLIC, "hot_candidates.json"), { updated: null, count: 0, candidates: [] });
   res.json(data);
+});
+
+router.get("/debug", async (_req, res) => {
+  const data = await fetchFromFlask("/api/debug", "", null);
+  res.json({
+    flask_port: BOT_FLASK_PORT,
+    flask_response: data,
+    root: ROOT,
+    public: PUBLIC,
+    wallet_exists: fs.existsSync(path.join(PUBLIC, "wallet.json")),
+    trades_exists: fs.existsSync(path.join(PUBLIC, "active_trades.json")),
+    hot_exists:    fs.existsSync(path.join(PUBLIC, "hot_candidates.json")),
+    cwd: process.cwd(),
+  });
 });
 
 router.get("/audit", (_req, res) => {
@@ -54,10 +89,8 @@ let _fngCache: { value: number; label: string; ts: number } = { value: 50, label
 
 router.get("/fng", (_req, res) => {
   const now = Date.now() / 1000;
-  if (_fngCache.value !== 50 || now - _fngCache.ts < 3600) {
-    if (now - _fngCache.ts < 3600) {
-      return res.json({ value: _fngCache.value, label: _fngCache.label });
-    }
+  if (now - _fngCache.ts < 3600) {
+    return res.json({ value: _fngCache.value, label: _fngCache.label });
   }
   const url = "https://api.alternative.me/fng/?limit=1";
   https.get(url, (r) => {

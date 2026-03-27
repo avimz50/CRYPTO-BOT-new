@@ -38,6 +38,19 @@ def api_audit():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/debug')
+def api_debug():
+    import os as _os
+    hot    = 'artifacts/bot-dashboard/public/hot_candidates.json'
+    wallet = 'artifacts/bot-dashboard/public/wallet.json'
+    trades = 'artifacts/bot-dashboard/public/active_trades.json'
+    return jsonify({
+        'cwd':           _os.getcwd(),
+        'hot_exists':    _os.path.exists(hot),
+        'wallet_exists': _os.path.exists(wallet),
+        'trades_exists': _os.path.exists(trades),
+    })
+
 @app.route('/api/fng')
 def api_fng():
     """Fear & Greed Index — cached 1h from Alternative.me. Never returns error — fallback to 50/Neutral."""
@@ -54,7 +67,8 @@ def api_fng():
     return jsonify({'value': _fng_ka['value'], 'label': _fng_ka['label']})
 
 def run():
-    port = int(os.environ.get('PORT', 8090))
+    # Use BOT_PORT so Flask never conflicts with the Express api-server (PORT=8080)
+    port = int(os.environ.get('BOT_PORT', 8091))
     app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
