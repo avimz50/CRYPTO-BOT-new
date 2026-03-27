@@ -5,11 +5,14 @@ import https from "https";
 
 const router = Router();
 
-const ROOT = path.resolve(process.cwd(), "../..");
+// workspace root = two levels above artifacts/api-server
+const ROOT      = path.resolve(process.cwd(), "../..");
+// bot writes JSON files to the dashboard's public folder
+const PUBLIC    = path.join(ROOT, "artifacts", "bot-dashboard", "public");
 
-function readJson(filename: string): unknown {
+function readJson(filePath: string): unknown {
   try {
-    const raw = fs.readFileSync(path.join(ROOT, filename), "utf-8");
+    const raw = fs.readFileSync(filePath, "utf-8");
     return JSON.parse(raw);
   } catch {
     return null;
@@ -17,20 +20,20 @@ function readJson(filename: string): unknown {
 }
 
 router.get("/trades", (_req, res) => {
-  const data = readJson("active_trades.json");
+  const data = readJson(path.join(PUBLIC, "active_trades.json"));
   if (!data) return res.json([]);
   res.json(data);
 });
 
 router.get("/wallet", (_req, res) => {
-  const data = readJson("wallet.json");
+  const data = readJson(path.join(PUBLIC, "wallet.json"));
   if (!data) return res.json({ balance: 200, total_pnl: 0 });
   res.json(data);
 });
 
 router.get("/hot", (_req, res) => {
-  const data = readJson("hot_candidates.json");
-  if (!data) return res.json({ gainers: [], losers: [], updated_at: null });
+  const data = readJson(path.join(PUBLIC, "hot_candidates.json"));
+  if (!data) return res.json({ updated: null, count: 0, candidates: [] });
   res.json(data);
 });
 
