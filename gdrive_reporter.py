@@ -1,18 +1,21 @@
 """
 Trading Bot — Audit Reporter
-Builds a structured JSON audit report, saves it locally to audit_report.json,
-and uploads it to Google Drive (TradingBot_Reports folder).
+Builds a structured JSON audit report, saves locally, sends via Telegram,
+and (optionally) uploads to Google Shared Drive.
 """
 
 import os
 import json
 import io
+import requests
 from datetime import datetime
 
 
 AUDIT_FILE    = 'audit_report.json'
 FOLDER_ID     = os.environ.get('GDRIVE_FOLDER_ID', '')
 SA_JSON_STR   = os.environ.get('GDRIVE_SERVICE_ACCOUNT_JSON', '')
+TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '')
+CHAT_ID        = os.environ.get('CHAT_ID', '')
 
 
 # ─────────────────────────────────────────────────────────────
@@ -113,6 +116,55 @@ def save_report_locally(report_data):
 
 
 # ─────────────────────────────────────────────────────────────
+# 3. TELEGRAM FILE SENDER
+# ─────────────────────────────────────────────────────────────
+
+def send_report_via_telegram(report_data):
+    """
+    Sends the audit report as a downloadable JSON file via Telegram.
+    Returns (True, 'sent') or (False, error_str).
+    """
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        return False, "Missing TELEGRAM_TOKEN or CHAT_ID"
+    try:
+        now       = datetime.now()
+        file_name = f"trading_report_{now.strftime('%Y-%m-%d')}.json"
+        content   = json.dumps(report_data, indent=2, ensure_ascii=False).encode('utf-8')
+        url       = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
+
+        w = report_data['wallet']
+        s = report_data['summary']
+        wr = (s['wins_24h'] / s['closed_count'] * 100) if s['closed_count'] > 0 else 0
+
+        caption = (
+            f"📊 *דוח יומי — {now.strftime('%d/%m/%Y')}*\n"
+            f"💰 יתרה: `${w['total_balance']:.2f}` | "
+            f"P&L 24h: `{'+' if s['pnl_24h']>=0 else ''}${s['pnl_24h']:.2f}`\n"
+            f"✅ {s['wins_24h']} רווח / ❌ {s['losses_24h']} הפסד "
+            f"({wr:.0f}% הצלחה)\n"
+            f"📂 {s['closed_count']} עסקאות סגורות | "
+            f"🔓 {s['active_count']} פעילות"
+        )
+
+        resp = requests.post(url, data={
+            'chat_id':    CHAT_ID,
+            'caption':    caption,
+            'parse_mode': 'Markdown',
+        }, files={
+            'document': (file_name, io.BytesIO(content), 'application/json')
+        }, timeout=15)
+
+        if resp.ok:
+            print(f"✅ Report sent via Telegram as {file_name}")
+            return True, 'sent'
+        else:
+            return False, resp.text
+    except Exception as e:
+        print(f"Telegram file send error: {e}")
+        return False, str(e)
+
+
+# ─────────────────────────────────────────────────────────────
 # 3. GOOGLE DRIVE UPLOAD
 # ─────────────────────────────────────────────────────────────
 
@@ -182,24 +234,29 @@ def upload_to_gdrive(report_data):
 
 
 # ─────────────────────────────────────────────────────────────
-# 4. TOP-LEVEL RUNNER (called from bot.py every 12h)
+# 5. TOP-LEVEL RUNNER (called from bot.py every 12h)
 # ─────────────────────────────────────────────────────────────
 
 def run_audit_upload(active_trades, wallet, closed_trades_log,
                      starting=200.0, send_telegram=None):
     """
-    Builds the audit report, saves locally, and uploads to Google Drive.
+    Builds the audit report, saves locally, sends via Telegram (file),
+    and attempts Google Shared Drive upload if configured.
     Returns True on success.
     """
     report     = build_audit_report(active_trades, wallet, closed_trades_log, starting)
     ok_local, err_local = save_report_locally(report)
 
-    drive_ok,  drive_info = upload_to_gdrive(report)
+    # שלח קובץ לטלגרם (ראשי — עובד תמיד)
+    tg_ok, tg_info = send_report_via_telegram(report)
+
+    # נסה העלאה לדרייב (משני — עובד רק עם Shared Drive)
+    drive_ok, drive_info = upload_to_gdrive(report)
 
     if send_telegram:
         if ok_local:
             drive_line = (f"☁️ Drive: [פתח קובץ]({drive_info})"
-                          if drive_ok else f"📁 _(Drive לא מוגדר עדיין)_")
+                          if drive_ok else "📎 _הקובץ נשלח לטלגרם להורדה_")
 
             w   = report['wallet']
             s   = report['summary']

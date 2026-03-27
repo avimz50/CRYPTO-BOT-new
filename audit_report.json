@@ -1,12 +1,12 @@
 {
-  "generated_at": "2026-03-27T14:05:40",
+  "generated_at": "2026-03-27T14:10:10",
   "wallet": {
     "starting_balance": 200.0,
     "realized_pnl": 61.53,
-    "floating_pnl": 17.52,
+    "floating_pnl": 16.98,
     "free_cash": 161.53,
     "margin_used": 50.0,
-    "total_balance": 279.05
+    "total_balance": 278.51
   },
   "summary": {
     "active_count": 1,
@@ -21,9 +21,9 @@
       "direction": "SHORT",
       "timeframe": "4H",
       "entry_price": 9.13,
-      "current_price": 8.81,
-      "unrealized_pct": 3.5,
-      "unrealized_usd": 17.52,
+      "current_price": 8.82,
+      "unrealized_pct": 3.4,
+      "unrealized_usd": 16.98,
       "score": 90,
       "rsi": 37.58,
       "ema200": 9.33804,
