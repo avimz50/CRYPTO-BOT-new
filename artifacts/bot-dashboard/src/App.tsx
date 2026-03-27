@@ -362,6 +362,15 @@ function TradeCard({ trade }: { trade: Trade }) {
     : 500 * pnlPct / 100;
   const isProfit = pnlUsd >= 0;
 
+  // price movement colour (green = good for this direction)
+  const priceUp   = cp > trade.entry;
+  const priceGood = isLong ? priceUp : !priceUp;
+  const cpColor   = priceGood ? "text-green-400" : "text-red-400";
+
+  // TradingView chart link (Bitget perpetuals)
+  const tvSymbol  = trade.symbol.replace("/", "").replace("USDT", "USDT.P");
+  const tvUrl     = `https://www.tradingview.com/chart/?symbol=BITGET:${tvSymbol}`;
+
   return (
     <div className={`border rounded-xl p-4 ${dirBg}`}>
       <div className="flex items-start justify-between mb-3">
@@ -376,6 +385,16 @@ function TradeCard({ trade }: { trade: Trade }) {
             <span className="text-xs bg-gray-800 text-gray-400 px-1.5 py-0.5 rounded font-mono">
               {tf}
             </span>
+            {/* TradingView chart link */}
+            <a
+              href={tvUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs bg-blue-900/40 hover:bg-blue-800/60 border border-blue-700/40 text-blue-300 px-2 py-0.5 rounded transition-colors"
+              title="פתח גרף ב-TradingView"
+            >
+              📈 גרף
+            </a>
           </div>
           <p className="text-xs text-gray-500 mt-0.5">{phase}{beLabel}{tp1Label}</p>
         </div>
@@ -383,6 +402,17 @@ function TradeCard({ trade }: { trade: Trade }) {
       </div>
 
       <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
+        {/* מחיר נוכחי — שורה ראשונה ומודגשת */}
+        <div className="col-span-2 flex justify-between items-center bg-gray-800/50 rounded-lg px-3 py-1.5 mb-1">
+          <span className="text-gray-400 font-medium">💹 מחיר נוכחי</span>
+          <span className={`font-mono font-bold text-base ${cpColor}`}>
+            {fmt(cp)}
+            <span className="text-xs text-gray-500 font-normal ml-1">
+              ({rawPct >= 0 ? "+" : ""}{rawPct.toFixed(2)}% מכניסה)
+            </span>
+          </span>
+        </div>
+
         <div className="flex justify-between">
           <span className="text-gray-500">כניסה</span>
           <span className="font-mono text-gray-200">{fmt(trade.entry)}</span>
