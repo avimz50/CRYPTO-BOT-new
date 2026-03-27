@@ -367,9 +367,9 @@ function TradeCard({ trade }: { trade: Trade }) {
   const priceGood = isLong ? priceUp : !priceUp;
   const cpColor   = priceGood ? "text-green-400" : "text-red-400";
 
-  // TradingView chart link (Bitget perpetuals)
-  const tvSymbol  = trade.symbol.replace("/", "").replace("USDT", "USDT.P");
-  const tvUrl     = `https://www.tradingview.com/chart/?symbol=BITGET:${tvSymbol}`;
+  // Bitget futures chart link
+  const bgSymbol  = trade.symbol.replace("/", "");
+  const tvUrl     = `https://www.bitget.com/futures/usdt/${bgSymbol}`;
 
   return (
     <div className={`border rounded-xl p-4 ${dirBg}`}>
@@ -391,9 +391,9 @@ function TradeCard({ trade }: { trade: Trade }) {
               target="_blank"
               rel="noopener noreferrer"
               className="text-xs bg-blue-900/40 hover:bg-blue-800/60 border border-blue-700/40 text-blue-300 px-2 py-0.5 rounded transition-colors"
-              title="פתח גרף ב-TradingView"
+              title="פתח גרף ב-Bitget"
             >
-              📈 גרף
+              📈 גרף Bitget
             </a>
           </div>
           <p className="text-xs text-gray-500 mt-0.5">{phase}{beLabel}{tp1Label}</p>
