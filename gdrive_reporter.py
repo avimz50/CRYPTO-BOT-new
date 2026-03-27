@@ -11,11 +11,13 @@ import requests
 from datetime import datetime
 
 
-AUDIT_FILE    = 'audit_report.json'
-FOLDER_ID     = os.environ.get('GDRIVE_FOLDER_ID', '')
-SA_JSON_STR   = os.environ.get('GDRIVE_SERVICE_ACCOUNT_JSON', '')
+AUDIT_FILE     = 'audit_report.json'
+FOLDER_ID      = os.environ.get('GDRIVE_FOLDER_ID', '')
+SA_JSON_STR    = os.environ.get('GDRIVE_SERVICE_ACCOUNT_JSON', '')
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '')
 CHAT_ID        = os.environ.get('CHAT_ID', '')
+GEMINI_URL     = os.environ.get('AI_INTEGRATIONS_GEMINI_BASE_URL', '')
+GEMINI_KEY     = os.environ.get('AI_INTEGRATIONS_GEMINI_API_KEY', '')
 
 
 # ─────────────────────────────────────────────────────────────
@@ -116,7 +118,82 @@ def save_report_locally(report_data):
 
 
 # ─────────────────────────────────────────────────────────────
-# 3. TELEGRAM FILE SENDER
+# 3. GEMINI AI ANALYSIS
+# ─────────────────────────────────────────────────────────────
+
+def analyze_with_gemini(report_data):
+    """
+    Sends the trading report to Gemini for AI analysis.
+    Returns analysis string (Hebrew) or None on failure.
+    """
+    if not GEMINI_URL or not GEMINI_KEY:
+        return None
+    try:
+        w = report_data['wallet']
+        s = report_data['summary']
+        closed = report_data['closed_trades']
+        active = report_data['active_trades']
+
+        # סיכום עסקאות לפרומפט
+        closed_lines = '\n'.join(
+            f"  - {t['symbol']} {t.get('direction','LONG')} | "
+            f"P&L: ${t['pnl_usd']:+.2f} | סיבת סגירה: {t.get('close_reason','')}"
+            for t in closed[:15]
+        ) or "  אין עסקאות סגורות"
+
+        active_lines = '\n'.join(
+            f"  - {t['symbol']} {t.get('direction','LONG')} | "
+            f"Floating: ${t['unrealized_usd']:+.2f} | ציון: {t.get('score',0)}"
+            for t in active
+        ) or "  אין עסקאות פעילות"
+
+        wr = (s['wins_24h'] / s['closed_count'] * 100) if s['closed_count'] > 0 else 0
+
+        prompt = f"""אתה אנליסט מסחר מקצועי. נתח את דוח המסחר הבא ותן תובנות קצרות ועשירות בעברית.
+
+📊 **נתוני הדוח — {report_data['generated_at']}:**
+• יתרה כוללת: ${w['total_balance']:.2f} (התחלה: ${w['starting_balance']:.2f})
+• Realized P&L: ${w['realized_pnl']:+.2f} | Floating: ${w['floating_pnl']:+.2f}
+• עסקאות 24h: {s['closed_count']} נסגרו (✅ {s['wins_24h']} / ❌ {s['losses_24h']}) | Win Rate: {wr:.0f}%
+• P&L 24h: ${s['pnl_24h']:+.2f}
+
+📂 **עסקאות שנסגרו:**
+{closed_lines}
+
+🔓 **עסקאות פעילות:**
+{active_lines}
+
+תן ניתוח קצר (4-6 שורות) הכולל:
+1. הערכת ביצועי הבוט היום
+2. דפוסים שבולטים (סוגי סגירות, כיוונים)
+3. המלצה אחת קצרה לשיפור או אישור שהאסטרטגיה עובדת
+ענה בעברית בלבד, ללא כותרות markdown מורכבות."""
+
+        url  = f'{GEMINI_URL}/models/gemini-2.5-flash:generateContent'
+        hdrs = {'x-goog-api-key': GEMINI_KEY, 'Content-Type': 'application/json'}
+        body = {
+            'contents': [{'role': 'user', 'parts': [{'text': prompt}]}],
+            'generationConfig': {'maxOutputTokens': 600, 'temperature': 0.4}
+        }
+        resp = requests.post(url, headers=hdrs, json=body, timeout=25)
+        if resp.ok:
+            analysis = (resp.json()
+                        .get('candidates', [{}])[0]
+                        .get('content', {})
+                        .get('parts', [{}])[0]
+                        .get('text', ''))
+            print(f"✅ Gemini analysis complete ({len(analysis)} chars)")
+            return analysis.strip()
+        else:
+            print(f"Gemini error: {resp.status_code} {resp.text[:150]}")
+            return None
+    except Exception as e:
+        print(f"Gemini analysis error: {e}")
+        return None
+
+
+# ─────────────────────────────────────────────────────────────
+# 4. TELEGRAM FILE SENDER
 # ─────────────────────────────────────────────────────────────
 
 def send_report_via_telegram(report_data):
@@ -247,6 +324,9 @@ def run_audit_upload(active_trades, wallet, closed_trades_log,
     report     = build_audit_report(active_trades, wallet, closed_trades_log, starting)
     ok_local, err_local = save_report_locally(report)
 
+    # ניתוח AI מ-Gemini
+    gemini_analysis = analyze_with_gemini(report)
+
     # שלח קובץ לטלגרם (ראשי — עובד תמיד)
     tg_ok, tg_info = send_report_via_telegram(report)
 
@@ -317,6 +397,14 @@ def run_audit_upload(active_trades, wallet, closed_trades_log,
                 f"{drive_line}\n"
                 f"{'─'*28}"
             )
+
+            # שלח ניתוח Gemini כהודעה נפרדת
+            if gemini_analysis:
+                send_telegram(
+                    f"🤖 *ניתוח AI — Gemini:*\n"
+                    f"{'─'*28}\n\n"
+                    f"{gemini_analysis}"
+                )
         else:
             send_telegram(f"⚠️ *Daily Report — שגיאה בשמירה*\n`{err_local}`")
 
