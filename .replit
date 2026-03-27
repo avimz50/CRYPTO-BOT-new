@@ -48,3 +48,8 @@ timeoutMs = 20000
 [nix]
 channel = "stable-25_05"
 packages = ["glibcLocales"]
+
+[userenv]
+
+[userenv.shared]
+GDRIVE_FOLDER_ID = "1DkapUVXvVvWydBCETazrJBOQxK-QutU4"
