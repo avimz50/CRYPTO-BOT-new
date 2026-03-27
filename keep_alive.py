@@ -40,16 +40,17 @@ def api_audit():
 
 @app.route('/api/fng')
 def api_fng():
-    """Fear & Greed Index — cached 1h from Alternative.me"""
+    """Fear & Greed Index — cached 1h from Alternative.me. Never returns error — fallback to 50/Neutral."""
     now = _time.time()
     if _fng_ka['value'] is None or now - _fng_ka['ts'] > 3600:
         try:
             r = _req.get('https://api.alternative.me/fng/?limit=1', timeout=5)
             d = r.json()['data'][0]
             _fng_ka.update({'value': int(d['value']), 'label': d['value_classification'], 'ts': now})
-        except Exception as e:
+        except Exception:
             if _fng_ka['value'] is None:
-                return jsonify({'error': str(e)}), 500
+                # Fallback — never block the dashboard
+                _fng_ka.update({'value': 50, 'label': 'Neutral', 'ts': now - 3500})
     return jsonify({'value': _fng_ka['value'], 'label': _fng_ka['label']})
 
 def run():

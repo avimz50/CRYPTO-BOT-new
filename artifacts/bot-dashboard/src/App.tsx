@@ -110,10 +110,10 @@ function FearGreedGauge({ value, label }: { value: number | null; label: string 
   const color  = fngColor(v);
 
   return (
-    <svg viewBox="0 0 200 118" width="100%" style={{ display: 'block', margin: '0 auto', maxWidth: 260 }}>
+    <svg viewBox="0 0 200 118" width="100%" style={{ display: 'block', margin: '0 auto', maxWidth: 170 }}>
       <defs>
         <filter id="fg-glow" x="-40%" y="-40%" width="180%" height="180%">
-          <feGaussianBlur stdDeviation="2.5" result="b"/>
+          <feGaussianBlur stdDeviation="2" result="b"/>
           <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
         </filter>
         <radialGradient id="hub-grad" cx="40%" cy="35%">
@@ -125,9 +125,9 @@ function FearGreedGauge({ value, label }: { value: number | null; label: string 
       {/* Dim background tracks */}
       {FNG_ZONES.map((z, i) => (
         <path key={`bg${i}`} d={arc(z.from, z.to, R)}
-          fill="none" stroke={z.color} strokeWidth={15}
+          fill="none" stroke={z.color} strokeWidth={14}
           strokeLinecap={i === 0 || i === 4 ? 'round' : 'butt'}
-          opacity={0.18} />
+          opacity={0.2} />
       ))}
 
       {/* Filled arcs */}
@@ -137,7 +137,7 @@ function FearGreedGauge({ value, label }: { value: number | null; label: string 
         const isLast = end < z.to;
         return (
           <path key={`fill${i}`} d={arc(z.from, end, R)}
-            fill="none" stroke={z.color} strokeWidth={15}
+            fill="none" stroke={z.color} strokeWidth={14}
             strokeLinecap={i === 0 || isLast ? 'round' : 'butt'}
             filter="url(#fg-glow)" />
         );
@@ -145,44 +145,47 @@ function FearGreedGauge({ value, label }: { value: number | null; label: string 
 
       {/* Tick marks */}
       {[0, 25, 50, 75, 100].map(tv => {
-        const inn = pt(R - 10, tv), out = pt(R + 4, tv);
+        const inn = pt(R - 9, tv), out = pt(R + 3, tv);
         return <line key={tv} x1={inn.x} y1={inn.y} x2={out.x} y2={out.y}
-          stroke="white" strokeWidth={1.5} opacity={0.3} />;
+          stroke="white" strokeWidth={1.2} opacity={0.35} />;
       })}
 
       {/* Needle shadow */}
       <line x1={cx} y1={cy} x2={needle.x} y2={needle.y}
-        stroke="#000" strokeWidth={4.5} strokeLinecap="round" opacity={0.45} />
+        stroke="#000" strokeWidth={3.5} strokeLinecap="round" opacity={0.5} />
 
       {/* Needle */}
       <line x1={cx} y1={cy} x2={needle.x} y2={needle.y}
-        stroke={color} strokeWidth={2.8} strokeLinecap="round"
+        stroke="white" strokeWidth={2.2} strokeLinecap="round"
         filter="url(#fg-glow)"
-        style={{ transition: 'all 1.4s cubic-bezier(0.34,1.56,0.64,1)' }} />
+        style={{ transition: 'all 1.2s cubic-bezier(0.34,1.56,0.64,1)' }} />
+
+      {/* Needle tip dot */}
+      <circle cx={needle.x} cy={needle.y} r={3} fill={color} filter="url(#fg-glow)" />
 
       {/* Hub */}
-      <circle cx={cx} cy={cy} r={8} fill="url(#hub-grad)" stroke={color} strokeWidth={2.2} />
+      <circle cx={cx} cy={cy} r={6} fill="url(#hub-grad)" stroke={color} strokeWidth={2} />
 
       {/* Value */}
-      <text x={cx} y={cy - 22} textAnchor="middle"
-        fill={color} fontSize={24} fontWeight="bold" fontFamily="monospace"
-        filter="url(#fg-glow)">{value ?? '?'}</text>
+      <text x={cx} y={cy - 20} textAnchor="middle"
+        fill={color} fontSize={22} fontWeight="bold" fontFamily="monospace"
+        filter="url(#fg-glow)">{value ?? '—'}</text>
 
       {/* Zone label */}
-      <text x={cx} y={cy - 8} textAnchor="middle"
-        fill="#d1d5db" fontSize={8} fontFamily="sans-serif">
-        {value !== null ? fngLabel(v) : label ?? 'טוען...'}
+      <text x={cx} y={cy - 7} textAnchor="middle"
+        fill="#d1d5db" fontSize={7.5} fontFamily="sans-serif">
+        {fngLabel(v)}
       </text>
 
       {/* Side labels */}
-      <text x={8}   y={cy + 18} textAnchor="middle" fontSize={13}>😱</text>
-      <text x={192} y={cy + 18} textAnchor="middle" fontSize={13}>🤑</text>
+      <text x={9}   y={cy + 16} textAnchor="middle" fontSize={12}>😱</text>
+      <text x={191} y={cy + 16} textAnchor="middle" fontSize={12}>🤑</text>
 
       {/* Numeric scale */}
       {[0, 50, 100].map(tv => {
         const p = pt(R + 12, tv);
-        return <text key={tv} x={p.x} y={p.y + 3.5} textAnchor="middle"
-          fill="#6b7280" fontSize={7} fontFamily="monospace">{tv}</text>;
+        return <text key={tv} x={p.x} y={p.y + 3} textAnchor="middle"
+          fill="#6b7280" fontSize={6.5} fontFamily="monospace">{tv}</text>;
       })}
     </svg>
   );
