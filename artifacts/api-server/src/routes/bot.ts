@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import http from "http";
 import https from "https";
+import { fileURLToPath } from "url";
 
 const router = Router();
 
@@ -11,8 +12,11 @@ const router = Router();
 const BOT_FLASK_PORT = parseInt(process.env.BOT_PORT ?? "8091", 10);
 const BOT_FLASK_BASE = `http://localhost:${BOT_FLASK_PORT}`;
 
-// workspace root = two levels above artifacts/api-server
-const ROOT   = path.resolve(process.cwd(), "../..");
+// Use import.meta.url so ROOT is always correct regardless of process.cwd().
+// Compiled bundle lives at: <workspace>/artifacts/api-server/dist/index.mjs
+// Three levels up from dist/ → workspace root.
+const __dirname_here = path.dirname(fileURLToPath(import.meta.url));
+const ROOT   = path.resolve(__dirname_here, "../../..");
 const PUBLIC = path.join(ROOT, "artifacts", "bot-dashboard", "public");
 
 function readJson(filePath: string): unknown {
