@@ -23,7 +23,7 @@ def build_audit_report(active_trades, wallet, closed_trades_log, starting=200.0)
     """Builds a structured JSON audit report from current bot state."""
 
     now    = datetime.now()
-    cutoff = now.timestamp() - 12 * 3600   # last 12h for closed trades
+    cutoff = now.timestamp() - 24 * 3600   # last 24h for closed trades
 
     balance     = wallet.get('balance', starting)
     total_pnl   = wallet.get('total_pnl', 0.0)
@@ -46,9 +46,9 @@ def build_audit_report(active_trades, wallet, closed_trades_log, starting=200.0)
         t for t in closed_trades_log
         if datetime.fromisoformat(t['closed_at']).timestamp() >= cutoff
     ]
-    wins_12h   = sum(1 for t in recent_closed if t['pnl_usd'] > 0)
-    losses_12h = sum(1 for t in recent_closed if t['pnl_usd'] <= 0)
-    pnl_12h    = round(sum(t['pnl_usd'] for t in recent_closed), 2)
+    wins_24h   = sum(1 for t in recent_closed if t['pnl_usd'] > 0)
+    losses_24h = sum(1 for t in recent_closed if t['pnl_usd'] <= 0)
+    pnl_24h    = round(sum(t['pnl_usd'] for t in recent_closed), 2)
 
     active_detail = []
     for t in active_trades:
@@ -90,9 +90,9 @@ def build_audit_report(active_trades, wallet, closed_trades_log, starting=200.0)
         'summary': {
             'active_count': n_active,
             'closed_count': len(recent_closed),
-            'wins_12h':     wins_12h,
-            'losses_12h':   losses_12h,
-            'pnl_12h':      pnl_12h,
+            'wins_24h':     wins_24h,
+            'losses_24h':   losses_24h,
+            'pnl_24h':      pnl_24h,
         },
         'active_trades':  active_detail,
         'closed_trades':  recent_closed,
@@ -199,24 +199,69 @@ def run_audit_upload(active_trades, wallet, closed_trades_log,
     if send_telegram:
         if ok_local:
             drive_line = (f"☁️ Drive: [פתח קובץ]({drive_info})"
-                          if drive_ok else f"⚠️ Drive: {drive_info}")
+                          if drive_ok else f"📁 _(Drive לא מוגדר עדיין)_")
+
+            w   = report['wallet']
+            s   = report['summary']
+            closed = report['closed_trades']
+
+            # פירוט עסקאות סגורות (מקסימום 10)
+            trades_lines = ""
+            for t in closed[:10]:
+                sym   = t['symbol'].replace('USDT', '')
+                direc = '🟢 L' if t.get('direction','LONG')=='LONG' else '🔴 S'
+                pnl   = t['pnl_usd']
+                sign  = '+' if pnl >= 0 else ''
+                emoji = '✅' if pnl > 0 else '❌'
+                reason = t.get('close_reason', '')
+                trades_lines += (f"  {emoji} `{sym}` {direc} | "
+                                 f"`{sign}${pnl:.2f}` | {reason}\n")
+            if not trades_lines:
+                trades_lines = "  _אין עסקאות סגורות ב-24 שעות האחרונות_\n"
+            elif len(closed) > 10:
+                trades_lines += f"  _...ועוד {len(closed)-10} עסקאות_\n"
+
+            # עסקאות פעילות
+            active_lines = ""
+            for t in report['active_trades']:
+                sym   = t['symbol'].replace('USDT', '')
+                direc = '🟢 L' if t.get('direction','LONG')=='LONG' else '🔴 S'
+                upnl  = t['unrealized_usd']
+                sign  = '+' if upnl >= 0 else ''
+                active_lines += f"  `{sym}` {direc} | `{sign}${upnl:.2f}` (floating)\n"
+            if not active_lines:
+                active_lines = "  _אין עסקאות פעילות_\n"
+
+            wr = (s['wins_24h'] / s['closed_count'] * 100) if s['closed_count'] > 0 else 0
+
             send_telegram(
-                "📊 *Risk Audit Report — עודכן*\n"
-                f"🕐 {report['generated_at']}\n\n"
-                f"*מצב ארנק:*\n"
-                f"💰 Total Balance: `${report['wallet']['total_balance']:.2f}`\n"
-                f"📈 Realized P&L: `${report['wallet']['realized_pnl']:+.2f}`\n"
-                f"💹 Floating P&L: `${report['wallet']['floating_pnl']:+.2f}`\n"
-                f"💵 Free Cash:    `${report['wallet']['free_cash']:.2f}`\n\n"
-                f"📊 עסקאות פעילות: `{report['summary']['active_count']}`\n"
-                f"📋 נסגרו ב-12h: `{report['summary']['closed_count']}` "
-                f"(✅ {report['summary']['wins_12h']} / ❌ {report['summary']['losses_12h']})\n"
-                f"💵 P&L 12h: `${report['summary']['pnl_12h']:+.2f}`\n\n"
+                f"📊 *דוח יומי — 24 שעות אחרונות*\n"
+                f"🕛 {report['generated_at']}\n"
+                f"{'─'*28}\n\n"
+
+                f"*💼 מצב ארנק:*\n"
+                f"  💰 יתרה כוללת: `${w['total_balance']:.2f}`\n"
+                f"  📈 Realized P&L: `{'+' if w['realized_pnl']>=0 else ''}${w['realized_pnl']:.2f}`\n"
+                f"  💹 Floating P&L: `{'+' if w['floating_pnl']>=0 else ''}${w['floating_pnl']:.2f}`\n"
+                f"  💵 מזומן חופשי:  `${w['free_cash']:.2f}`\n\n"
+
+                f"*📋 סיכום 24 שעות:*\n"
+                f"  עסקאות שנסגרו: `{s['closed_count']}` "
+                f"(✅ {s['wins_24h']} / ❌ {s['losses_24h']})\n"
+                f"  🎯 אחוז הצלחה: `{wr:.0f}%`\n"
+                f"  💵 P&L 24h: `{'+' if s['pnl_24h']>=0 else ''}${s['pnl_24h']:.2f}`\n\n"
+
+                f"*📂 עסקאות שנסגרו ({min(len(closed),10)}/{len(closed)}):*\n"
+                f"{trades_lines}\n"
+
+                f"*🔓 עסקאות פעילות ({s['active_count']}):*\n"
+                f"{active_lines}\n"
+
                 f"{drive_line}\n"
-                f"📥 הורד מהדשבורד: /api/audit"
+                f"{'─'*28}"
             )
         else:
-            send_telegram(f"⚠️ *Risk Audit — שגיאה בשמירה*\n`{err_local}`")
+            send_telegram(f"⚠️ *Daily Report — שגיאה בשמירה*\n`{err_local}`")
 
     print(f"Audit local: {'✅ ' + AUDIT_FILE if ok_local else '❌ ' + str(err_local)}")
     return ok_local

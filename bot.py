@@ -107,7 +107,7 @@ trades_lock        = threading.RLock()   # מגן מ-race conditions בין Thre
 closed_trades_log  = []
 
 # Audit report — שעות שליחה ומעקב שהוגש
-AUDIT_HOURS        = {8, 20}    # 08:00 ו-20:00
+AUDIT_HOURS        = {12}       # 12:00 בצהריים — דוח יומי
 _last_audit_hour   = None       # מונע כפילות באותה שעה
 
 # מעקב אחרי עסקאות שנסגרו היום
@@ -1433,7 +1433,7 @@ def check_daily_report():
     now = datetime.now()
     today = date.today()
 
-    if now.hour == 9 and now.minute < 15:
+    if now.hour == 12 and now.minute < 15:
         if last_daily_report_date != today:
             send_daily_report()
             last_daily_report_date = today
@@ -1929,7 +1929,7 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL'):
 
 
 def _maybe_run_drive_audit():
-    """מפעיל דוח Drive ב-08:00 ו-20:00 — פעם אחת בלבד לכל שעה."""
+    """מפעיל דוח יומי כולל ב-12:00 — פעם אחת ביום."""
     global _last_audit_hour
     now_hour = datetime.now().hour
     if now_hour in AUDIT_HOURS and now_hour != _last_audit_hour:
@@ -1940,7 +1940,7 @@ def _maybe_run_drive_audit():
                 active_trades, wallet, closed_trades_log,
                 send_telegram=send_msg
             )
-            print(f"Audit report saved at {now_hour:02d}:00")
+            print(f"Daily audit report generated at {now_hour:02d}:00")
         except ImportError:
             print("gdrive_reporter not available — skipping audit")
         except Exception as e:
