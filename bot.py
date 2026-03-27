@@ -69,6 +69,31 @@ def get_fear_greed():
         print(f"  [FNG] שגיאה בטעינה: {e} (משתמש ב-cache אחרון)")
     return _fng_cache['value'], _fng_cache['label']
 
+# ─── Global Sentiment Thresholds ──────────────────────────────────────────────
+EXTREME_FEAR_THRESHOLD = 15   # Kill-Switch: אין עסקאות חדשות בכלל
+FEAR_THRESHOLD         = 30   # Fear Filter: RSI<30 ל-LONG + SL+1%
+GREED_THRESHOLD        = 70   # Greed Filter: פוזיציה ×60% + BE@+2%
+GREED_EARLY_BE_PCT     = 2.0  # % רווח להפעלת BE מוקדם בחמדנות
+FEAR_EXTRA_SL_PCT      = 1.0  # % נוסף ל-SL בתנאי פחד
+
+def sentiment_check(context: str = "scan"):
+    """
+    בודק את מצב הסנטימנט ומדפיס לוג.
+    מחזיר (fng_v:int, label:str, action:str).
+    נדרש לוג לכל בדיקת כניסה: 'Sentiment Check: [Value] - [Action Taken]'
+    """
+    fng_v, lbl = get_fear_greed()
+    if fng_v < EXTREME_FEAR_THRESHOLD:
+        action = f"KILL-SWITCH — אין עסקאות חדשות (< {EXTREME_FEAR_THRESHOLD})"
+    elif fng_v <= FEAR_THRESHOLD:
+        action = f"FEAR FILTER — SL +{FEAR_EXTRA_SL_PCT}% · LONG דורש RSI<30"
+    elif fng_v >= GREED_THRESHOLD:
+        action = f"GREED FILTER — פוזיציה ×60% · BE@+{GREED_EARLY_BE_PCT}%"
+    else:
+        action = "נייטרלי — אין שינוי"
+    print(f"Sentiment Check: {fng_v} [{lbl}] - {action} [{context}]")
+    return fng_v, lbl, action
+
 # --- פרמטרי מינוף (דמו) ---
 LEVERAGE       = 10          # מינוף 10x
 MARGIN         = 50          # בטחון ($) לכל עסקה
@@ -841,19 +866,32 @@ def _pnl_on_half(dist_pct):
 
 def open_demo_trade(symbol, price, reason, df_3h=None,
                     direction='LONG', score=0, atr=0, timeframe='4H', tf_reason='',
-                    rsi=None, ema200=None):
+                    rsi=None, ema200=None, fng_v=None):
     """
     פותח עסקת דמו עם SL/TP קבועים.
     SL=3.5% | TP1=5% (סגירת 50%) | TP=10.5% (RR 1:3) | BE=2%
     timeframe: '4H' / '1H' — גרף הכניסה שנבחר אדפטיבית
+    fng_v: ערך FNG שכבר חושב ב-scan (כדי לא לשאול שוב)
     """
     # בדיקת יתרה — אין לפתוח עסקה אם אין מספיק כסף
     if wallet.get('balance', STARTING_BALANCE) < MARGIN:
         print(f"WALLET: insufficient balance (${wallet.get('balance', 0):.2f}) — skipping {symbol}")
         send_msg(f"⚠️ *יתרה נמוכה* — אין מספיק להפקדת מרג'ין\nנדרש: ${MARGIN} | יש: ${wallet.get('balance', 0):.2f}")
         return
+
+    # ── Sentiment Rules: position size & SL ──────────────────────────────────
+    if fng_v is None:
+        fng_v, _, _ = sentiment_check("open_trade")
+    pos_size = POSITION_SIZE   # default $500
+    sl_pct   = SL_PCT_FIXED    # 3.5%
+    if fng_v >= GREED_THRESHOLD:
+        pos_size = round(POSITION_SIZE * 0.60)   # ×60% — Greed Filter
+        print(f"  [SENTIMENT] GREED ({fng_v}) → פוזיציה צומצמה ל-${pos_size}")
+    if fng_v <= FEAR_THRESHOLD:
+        sl_pct = SL_PCT_FIXED + FEAR_EXTRA_SL_PCT   # +1% — Fear buffer
+        print(f"  [SENTIMENT] FEAR ({fng_v}) → SL מורחב ל-{sl_pct}% (+{FEAR_EXTRA_SL_PCT}%)")
+
     # ── SL/TP קבועים לגרף 4H ──
-    sl_pct  = SL_PCT_FIXED    # 3.5%
     tp_pct  = TP_PCT_FIXED    # 10.5%
     tp1_pct = TP1_PCT_FIXED   # 5.0%
     be_pct  = BE_BUFFER_PCT   # 2.0%
@@ -874,11 +912,11 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         be_price  = price - be_dist
         tp1_price = price - tp1_dist
 
-    # ── P&L ──
-    tp1_pnl    = _pnl_on_half(tp1_pct)
-    tp2_pnl    = _pnl_on_half(tp_pct)
+    # ── P&L (using pos_size for sentiment-adjusted positions) ──
+    tp1_pnl    = round(pos_size / 2 * tp1_pct / 100, 2)
+    tp2_pnl    = round(pos_size / 2 * tp_pct  / 100, 2)
     max_profit = round(tp1_pnl + tp2_pnl, 2)
-    sl_loss    = round(POSITION_SIZE * sl_pct / 100, 2)
+    sl_loss    = round(pos_size * sl_pct / 100, 2)
 
     trade = {
         'symbol':          symbol,
@@ -903,6 +941,8 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         'ema200':          round(ema200, 6) if ema200 is not None else None,
         'score_breakdown': reason,
         'opened_at':       datetime.now().isoformat(timespec='seconds'),
+        'pos_size':        pos_size,    # נשמר לחישובי P&L בניהול עסקאות
+        'fng_at_entry':    fng_v,       # FNG בזמן הכניסה
     }
     with trades_lock:
         active_trades.append(trade)
@@ -963,7 +1003,8 @@ def track_trades():
             'close_reasons': {'TP': 0, 'TP1+Trail': 0, 'Trailing': 0, 'SL': 0, 'BE': 0, 'Manual': 0},
         }
 
-    half = POSITION_SIZE / 2   # $250 — חצי פוזיציה לאחר TP1
+    # FNG once per manage cycle (avoid spamming API/log)
+    fng_v_mgr, _, _ = sentiment_check("manage_risk")
 
     for trade in active_trades[:]:
         try:
@@ -973,6 +1014,8 @@ def track_trades():
             entry         = trade['entry']
             sym           = trade['symbol']
             direction     = trade.get('direction', 'LONG')
+            pos_size      = trade.get('pos_size', POSITION_SIZE)  # per-trade position size
+            half          = pos_size / 2                          # חצי פוזיציה
 
             # helpers: "profit direction" — True כאשר המחיר זזה לכיוון הרצוי
             def profit_dir(p):
@@ -1021,7 +1064,7 @@ def track_trades():
                 if trail_sl_hit:
                     dist_pct = abs(current_price - entry) / entry * 100
                     sign     = 1 if profit_dir(current_price) else -1
-                    pnl_usd  = round(sign * POSITION_SIZE * dist_pct / 100, 2)
+                    pnl_usd  = round(sign * pos_size * dist_pct / 100, 2)
                     pnl_pct_r = round(sign * dist_pct * LEVERAGE, 1)
                     icon     = "📈" if pnl_usd >= 0 else "📉"
                     if pnl_usd >= 0:
@@ -1047,7 +1090,21 @@ def track_trades():
                     save_active_trades()
                     continue
 
-                # 1. Break Even (2% רווח)
+                # 1a. Greed Early BE — FNG≥70: BE at +2% (immediately, before TP1)
+                if not trade['be_triggered'] and fng_v_mgr >= GREED_THRESHOLD:
+                    greed_profit_pct = abs(current_price - entry) / entry * 100
+                    if profit_dir(current_price) and greed_profit_pct >= GREED_EARLY_BE_PCT:
+                        trade['sl']           = entry
+                        trade['be_triggered'] = True
+                        print(f"  [SENTIMENT] GREED EARLY BE: {sym} SL→BE @ {current_price:.6g} (+{greed_profit_pct:.2f}%, FNG={fng_v_mgr})")
+                        send_msg(
+                            f"🔒 *Greed Early BE — {sym}*\n"
+                            f"מחיר: `{current_price:.6g}` (+{greed_profit_pct:.2f}% רווח)\n"
+                            f"SL הועבר לכניסה: `{entry:.6g}` 🛡️ (FNG={fng_v_mgr} — מצב חמדנות)\n"
+                            f"💼 {LEVERAGE}x Isolated · ההון מוגן!"
+                        )
+
+                # 1b. Break Even (סטנדרטי — 2% רווח)
                 if not trade['be_triggered'] and be_hit(current_price):
                     trade['sl']           = entry
                     trade['be_triggered'] = True
@@ -1061,7 +1118,7 @@ def track_trades():
                 # 2. TP1 (5%) — סגור 50%, הפעל Trailing
                 if tp1_hit(current_price):
                     dist_pct  = abs(current_price - entry) / entry * 100
-                    tp1_pnl   = _pnl_on_half(dist_pct)
+                    tp1_pnl   = round(half * dist_pct / 100, 2)
                     tp1_pct_r = round(tp1_pnl / MARGIN * 100, 1)
                     trade['tp1_triggered'] = True
                     trade['tp1_pnl']       = tp1_pnl
@@ -1099,7 +1156,7 @@ def track_trades():
                             f"📊 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                         )
                     else:
-                        loss     = round(POSITION_SIZE * trade['sl_pct'] / 100, 2)
+                        loss     = round(pos_size * trade['sl_pct'] / 100, 2)
                         loss_pct = round(loss / MARGIN * 100, 1)
                         daily_stats['losses']    += 1
                         daily_stats['total_pnl'] -= loss
@@ -1137,7 +1194,7 @@ def track_trades():
                 # TP מלא — סגור שאר 50%
                 if tp_full_hit(current_price):
                     dist_pct = abs(current_price - entry) / entry * 100
-                    tp_pnl   = _pnl_on_half(dist_pct)
+                    tp_pnl   = round(half * dist_pct / 100, 2)
                     total    = round(trade['tp1_pnl'] + tp_pnl, 2)
                     daily_stats['wins']      += 1
                     daily_stats['total_pnl'] += tp_pnl
@@ -1164,7 +1221,7 @@ def track_trades():
                      (direction == 'SHORT' and trade['trailing_sl'] and current_price >= trade['trailing_sl']):
                     dist_pct = abs(current_price - entry) / entry * 100
                     sign     = 1 if profit_dir(current_price) else -1
-                    half_pnl = round(sign * _pnl_on_half(dist_pct), 2)
+                    half_pnl = round(sign * half * dist_pct / 100, 2)
                     total    = round(trade['tp1_pnl'] + half_pnl, 2)
                     icon     = "📈" if half_pnl >= 0 else "📉"
                     if half_pnl >= 0:
@@ -1290,13 +1347,14 @@ def send_heartbeat():
             continue
 
         # ── P&L ──
+        _ps     = t.get('pos_size', POSITION_SIZE)   # per-trade position size
         raw_pct = (price - entry) / entry * 100
         pnl_pct = raw_pct if direction == 'LONG' else -raw_pct
         if t.get('tp1_triggered'):
-            half_pnl = round(POSITION_SIZE / 2 * pnl_pct / 100, 2)
+            half_pnl = round(_ps / 2 * pnl_pct / 100, 2)
             pnl_usd  = round(t.get('tp1_pnl', 0) + half_pnl, 2)
         else:
-            pnl_usd = round(POSITION_SIZE * pnl_pct / 100, 2)
+            pnl_usd = round(_ps * pnl_pct / 100, 2)
 
         pnl_arrow = "📈" if pnl_usd >= 0 else "📉"
 
@@ -1333,15 +1391,16 @@ def send_heartbeat():
     # ── Floating P&L כולל ──
     total_floating = 0.0
     for t in trades_snapshot:
-        cp = t.get('current_price', t.get('entry', 0))
-        ep = t['entry']
-        d  = t.get('direction', 'LONG')
+        cp  = t.get('current_price', t.get('entry', 0))
+        ep  = t['entry']
+        d   = t.get('direction', 'LONG')
+        _ps = t.get('pos_size', POSITION_SIZE)
         raw_pct = (cp - ep) / ep * 100 if ep else 0
         p_pct   = raw_pct if d == 'LONG' else -raw_pct
         if t.get('tp1_triggered'):
-            total_floating += round(t.get('tp1_pnl', 0) + POSITION_SIZE / 2 * p_pct / 100, 2)
+            total_floating += round(t.get('tp1_pnl', 0) + _ps / 2 * p_pct / 100, 2)
         else:
-            total_floating += round(POSITION_SIZE * p_pct / 100, 2)
+            total_floating += round(_ps * p_pct / 100, 2)
 
     float_icon = "📈" if total_floating >= 0 else "📉"
     realized   = round(wallet.get('total_pnl', 0.0), 2)
@@ -1501,10 +1560,11 @@ def handle_update(message):
         trade['sl_pct'] = round((entry - new_sl) / entry * 100, 2)
         trade['tp_pct'] = round((new_tp - entry) / entry * 100, 2)
 
-        sl_pct = trade['sl_pct']
-        tp_pct = trade['tp_pct']
-        sl_pnl = round(POSITION_SIZE * sl_pct / 100, 2)
-        tp_pnl = round(POSITION_SIZE * tp_pct / 100, 2)
+        sl_pct    = trade['sl_pct']
+        tp_pct    = trade['tp_pct']
+        _ps_upd   = trade.get('pos_size', POSITION_SIZE)
+        sl_pnl    = round(_ps_upd * sl_pct / 100, 2)
+        tp_pnl    = round(_ps_upd * tp_pct / 100, 2)
 
         send_msg(
             f"✏️ *עסקה עודכנה — {symbol}*\n\n"
@@ -1542,25 +1602,26 @@ def handle_close(message):
         entry         = trade['entry']
 
         # חישוב P&L בפועל
+        _ps_m = trade.get('pos_size', POSITION_SIZE)   # per-trade position size
         if trade.get('tp1_triggered'):
             # חצי פוזיציה נסגרת עכשיו, חצי כבר נסגר ב-TP1
-            half    = POSITION_SIZE / 2
-            half_pnl = round(half * (current_price - entry) / entry * 100 / 100, 2)
-            total   = round(trade.get('tp1_pnl', 0) + half_pnl, 2)
-            pnl_str = f"TP1 + יציאה: *{'+' if total>=0 else ''}${total}*"
+            half_m   = _ps_m / 2
+            half_pnl = round(half_m * (current_price - entry) / entry * 100 / 100, 2)
+            total    = round(trade.get('tp1_pnl', 0) + half_pnl, 2)
+            pnl_str  = f"TP1 + יציאה: *{'+' if total>=0 else ''}${total}*"
         else:
             pct     = (current_price - entry) / entry * 100
-            pnl     = round(POSITION_SIZE * pct / 100, 2)
+            pnl     = round(_ps_m * pct / 100, 2)
             pnl_str = f"P&L: *{'+' if pnl>=0 else ''}${pnl}* ({pct:+.2f}%)"
 
         # חישוב P&L נטו לארנק
         if trade.get('tp1_triggered'):
-            net_pnl = round(trade.get('tp1_pnl', 0) + round(POSITION_SIZE / 2 * (current_price - entry) / entry, 2), 2)
+            net_pnl = round(trade.get('tp1_pnl', 0) + round(_ps_m / 2 * (current_price - entry) / entry, 2), 2)
         else:
             direction_m = trade.get('direction', 'LONG')
             raw_pct     = (current_price - entry) / entry * 100
             pnl_pct_m   = raw_pct if direction_m == 'LONG' else -raw_pct
-            net_pnl     = round(POSITION_SIZE * pnl_pct_m / 100, 2)
+            net_pnl     = round(_ps_m * pnl_pct_m / 100, 2)
 
         with trades_lock:
             active_trades.remove(trade)
@@ -1774,6 +1835,12 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL'):
     btc_regime: 'BULL' / 'BEAR' / 'NEUTRAL' — BTC EMA50 Market Regime Filter
     מחזיר מספר האיתותים שנמצאו.
     """
+    # ── Sentiment Kill-Switch (Extreme Fear < 15) ─────────────────────────────
+    fng_v_scan, _, fng_action = sentiment_check("scan")
+    if fng_v_scan < EXTREME_FEAR_THRESHOLD:
+        print(f"SENTIMENT KILL-SWITCH: FNG={fng_v_scan} < {EXTREME_FEAR_THRESHOLD} — סריקה בוטלה לגמרי")
+        return 0
+
     # ── BTC Market Regime Safety Switch ──
     if direction == 'LONG' and btc_regime == 'BEAR':
         print(f"BTC REGIME VETO: BEAR market — skipping all {len(candidates)} LONG candidates")
@@ -1837,12 +1904,22 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL'):
                     _last_ema   = ta.ema(chosen_df['close'], length=200).iloc[-1]
                 except Exception:
                     _last_rsi = _last_ema = None
+
+                # ── Fear Filter: LONG requires RSI < 30 ─────────────────────
+                if fng_v_scan <= FEAR_THRESHOLD and direction == 'LONG':
+                    rsi_ok = _last_rsi is not None and _last_rsi < 30
+                    if not rsi_ok:
+                        rsi_str = f"{_last_rsi:.1f}" if _last_rsi else "N/A"
+                        print(f"  [SENTIMENT] FEAR FILTER: {symbol} LONG rejected — RSI={rsi_str} ≥ 30 (דרוש RSI<30 במצב פחד)")
+                        continue
+
                 open_demo_trade(
                     symbol, price, breakdown,
                     chosen_df, direction=direction,
                     score=score, atr=atr,
                     timeframe=chosen_tf, tf_reason=tf_reason,
-                    rsi=_last_rsi, ema200=_last_ema
+                    rsi=_last_rsi, ema200=_last_ema,
+                    fng_v=fng_v_scan
                 )
                 found += 1
 
