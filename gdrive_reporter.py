@@ -173,16 +173,18 @@ def analyze_with_gemini(report_data):
         hdrs = {'x-goog-api-key': GEMINI_KEY, 'Content-Type': 'application/json'}
         body = {
             'contents': [{'role': 'user', 'parts': [{'text': prompt}]}],
-            'generationConfig': {'maxOutputTokens': 600, 'temperature': 0.4}
+            'generationConfig': {'maxOutputTokens': 8192, 'temperature': 0.4}
         }
         resp = requests.post(url, headers=hdrs, json=body, timeout=25)
         if resp.ok:
-            analysis = (resp.json()
-                        .get('candidates', [{}])[0]
-                        .get('content', {})
-                        .get('parts', [{}])[0]
-                        .get('text', ''))
-            print(f"✅ Gemini analysis complete ({len(analysis)} chars)")
+            data = resp.json()
+            candidate = data.get('candidates', [{}])[0]
+            parts = candidate.get('content', {}).get('parts', [])
+            # איחוד כל החלקים
+            analysis = ''.join(p.get('text', '') for p in parts)
+            # הסר markdown חזק שעלול לשבור Telegram
+            analysis = analysis.replace('**', '').replace('__', '')
+            print(f"✅ Gemini analysis complete ({len(analysis)} chars) | finish: {candidate.get('finishReason','?')}")
             return analysis.strip()
         else:
             print(f"Gemini error: {resp.status_code} {resp.text[:150]}")
@@ -401,8 +403,7 @@ def run_audit_upload(active_trades, wallet, closed_trades_log,
             # שלח ניתוח Gemini כהודעה נפרדת
             if gemini_analysis:
                 send_telegram(
-                    f"🤖 *ניתוח AI — Gemini:*\n"
-                    f"{'─'*28}\n\n"
+                    f"🤖 *ניתוח AI | Gemini*\n\n"
                     f"{gemini_analysis}"
                 )
         else:
