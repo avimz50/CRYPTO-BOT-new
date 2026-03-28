@@ -1790,9 +1790,10 @@ def handle_home(message):
         f"  {pnl_icon} P&L היום: *${pnl_today:+}*\n\n"
         f"{'─' * 30}\n"
         f"📋 *פקודות מידע*\n"
-        f"  /status — עסקאות פעילות + SL/TP\n"
-        f"  /report — דוח יומי מלא\n"
-        f"  /ping   — בדיקת חיות הבוט\n\n"
+        f"  /status     — עסקאות פעילות + SL/TP\n"
+        f"  /report     — דוח יומי מלא\n"
+        f"  /scanreport — דוח סריקה אחרון\n"
+        f"  /ping       — בדיקת חיות הבוט\n\n"
         f"🔍 *פקודות פעולה*\n"
         f"  /scan              — סריקה ידנית עכשיו\n"
         f"  /close BTC         — סגירת עסקה ידנית\n"
@@ -1807,6 +1808,66 @@ def handle_home(message):
         f"  🛡️ SL: *{SL_PCT_FIXED}%*  ·  TP1: *{TP1_PCT_FIXED}%*  ·  TP: *{TP_PCT_FIXED}%*\n"
         f"  ⏰ סריקה כל שעה  ·  מעקב כל 60 שניות"
     )
+
+
+@bot.message_handler(commands=['scanreport'])
+def handle_scanreport(message):
+    """שולח את דוח הסריקה האחרונה."""
+    import json as _json
+    try:
+        with open(SCAN_REPORT_FILE, 'r', encoding='utf-8') as f:
+            d = _json.load(f)
+    except FileNotFoundError:
+        send_msg("⚠️ *אין דוח סריקה עדיין*\n_הפעל /scan כדי לייצר דוח ראשון_")
+        return
+    except Exception as e:
+        send_msg(f"❌ שגיאה בקריאת הדוח: {e}")
+        return
+
+    scan_time = d.get('scan_time', '')
+    try:
+        from datetime import datetime as _dt
+        dt = _dt.fromisoformat(scan_time)
+        time_str = dt.strftime('%d/%m/%Y %H:%M')
+    except Exception:
+        time_str = scan_time
+
+    total     = d.get('total_scanned', 0)
+    signals   = d.get('signals_found', 0)
+    regime    = d.get('btc_regime', 'NEUTRAL')
+    fng_v     = d.get('fng_value', 50)
+    fng_lbl   = d.get('fng_label', 'Neutral')
+    sentiment = d.get('market_sentiment_factor', '')
+    sys_msg   = d.get('system_message', '')
+    duration  = d.get('scan_duration_s', 0)
+    rejected  = d.get('rejected_coins', [])
+    regime_e  = "🟢" if regime == 'BULL' else ("🔴" if regime == 'BEAR' else "🟡")
+    sig_e     = "✅" if signals > 0 else "⭕"
+
+    msg  = f"🔍 *Scan Analysis Report*\n"
+    msg += f"{'─' * 28}\n"
+    msg += f"🕐 זמן סריקה: `{time_str}` ({duration}s)\n"
+    msg += f"📦 נסרקו: *{total}* מטבעות\n"
+    msg += f"{sig_e} איתותים שנמצאו: *{signals}*\n"
+    msg += f"{regime_e} BTC Regime: *{regime}*\n"
+    msg += f"📊 FNG: *{fng_v}* ({fng_lbl})\n\n"
+    msg += f"📈 *Sentiment Factor:*\n_{sentiment}_\n\n"
+    msg += f"💬 *System Message:*\n_{sys_msg}_\n"
+
+    if rejected:
+        msg += f"\n{'─' * 28}\n"
+        msg += f"🚫 *Top Near\\-Misses (לא עברו סף {MIN_SCORE}/100):*\n"
+        for i, c in enumerate(rejected[:5], 1):
+            sym   = c.get('symbol', '?').replace('/', '\\/').replace('.', '\\.')
+            score = c.get('best_score', 0)
+            dir_  = c.get('direction', '')
+            dir_e = "🟢" if dir_ == 'LONG' else "🔴"
+            reason = c.get('reason', '')[:55]
+            score_e = "🟡" if score >= 80 else ("🟠" if score >= 60 else "⚫")
+            msg += f"{i}\\. {dir_e} `{c.get('symbol','?')}` {score_e} *{score}/100*\n"
+            msg += f"   _{reason}_\n"
+
+    send_msg(msg)
 
 
 @bot.message_handler(commands=['scan'])
@@ -1845,11 +1906,14 @@ def handle_scan(message):
                 f"{regime_emoji} BTC Regime: *{regime_note}*"
             )
 
-            signals_found  = 0
-            signals_found += _scan_batch(gainers, 'LONG', btc_regime)
-            signals_found += _scan_batch(losers, 'SHORT', btc_regime)
+            fng_v_m, fng_lbl_m, _ = sentiment_check("manual_scan")
+            all_rejections_m = []
+            signals_found    = 0
+            scan_start_m     = time.time()
+            signals_found += _scan_batch(gainers, 'LONG', btc_regime, all_rejections_m)
+            signals_found += _scan_batch(losers, 'SHORT', btc_regime, all_rejections_m)
             energy_candidates = [{'symbol': s} for s in ENERGY_GEO]
-            signals_found += _scan_batch(energy_candidates, 'LONG', btc_regime)
+            signals_found += _scan_batch(energy_candidates, 'LONG', btc_regime, all_rejections_m)
 
             pnl_today = round(daily_stats.get('total_pnl', 0), 2)
             send_msg(
@@ -1857,8 +1921,24 @@ def handle_scan(message):
                 f"🔍 נסרקו: *{total_scanned}* מטבעות\n"
                 f"📊 איתותים: *{signals_found}*\n"
                 f"📊 עסקאות פעילות: *{len(active_trades)}*\n"
-                f"💰 P&L היום: *${pnl_today:+}*"
+                f"💰 P&L היום: *${pnl_today:+}*\n"
+                f"_השתמש ב /scanreport לדוח מלא_"
             )
+
+            # שמירת דוח סריקה
+            if signals_found == 0 and len(active_trades) >= MAX_TRADES:
+                sys_msg_m = f"מקסימום עסקאות ({MAX_TRADES}/{MAX_TRADES}) — ממתין לסגירה"
+            elif signals_found == 0:
+                top_m = sorted(all_rejections_m, key=lambda x: x.get('best_score', 0), reverse=True)
+                best_m = top_m[0] if top_m else None
+                sys_msg_m = (
+                    f"אף מטבע לא הגיע לציון {MIN_SCORE}/100. הטוב ביותר: {best_m['symbol']} עם {best_m['best_score']}/100" if best_m
+                    else f"אף מטבע לא עמד בסף {MIN_SCORE}/100"
+                )
+            else:
+                sys_msg_m = f"{signals_found} עסקה/ות נפתחו — סריקה ידנית"
+            save_scan_results(total_scanned, signals_found, fng_v_m, fng_lbl_m,
+                              btc_regime, all_rejections_m, sys_msg_m, scan_start_m)
         except Exception as e:
             send_msg(f"❌ שגיאה בסריקה: {e}")
         finally:
