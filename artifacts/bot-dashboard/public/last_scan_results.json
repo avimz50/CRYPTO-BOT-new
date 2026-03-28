@@ -1,5 +1,5 @@
 {
-  "scan_time": "2026-03-28T21:00:02",
+  "scan_time": "2026-03-28T22:58:22",
   "total_scanned": 29,
   "signals_found": 0,
   "active_trades_count": 0,
@@ -11,13 +11,6 @@
   "market_sentiment_factor": "Fear & Greed=12 (Extreme Fear) — Kill-Switch הפעיל: כל הסריקות בוטלו",
   "rejected_coins": [
     {
-      "symbol": "TRIA/USDT",
-      "direction": "LONG",
-      "best_score": 0,
-      "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 13)",
-      "scores": {}
-    },
-    {
       "symbol": "RIVER/USDT",
       "direction": "LONG",
       "best_score": 0,
@@ -25,14 +18,14 @@
       "scores": {}
     },
     {
-      "symbol": "PRL/USDT",
+      "symbol": "TRIA/USDT",
       "direction": "LONG",
       "best_score": 0,
       "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 13)",
       "scores": {}
     },
     {
-      "symbol": "ARIA/USDT",
+      "symbol": "CYS/USDT",
       "direction": "LONG",
       "best_score": 0,
       "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 13)",
@@ -44,24 +37,38 @@
       "best_score": 0,
       "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 13)",
       "scores": {}
+    },
+    {
+      "symbol": "ARIA/USDT",
+      "direction": "LONG",
+      "best_score": 0,
+      "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 13)",
+      "scores": {}
     }
   ],
   "system_message": "Kill-Switch Sentiment: FNG=12 (Extreme Fear) — הסריקה בוטלה לבטיחות",
-  "scan_duration_s": 2.6,
+  "scan_duration_s": 2.8,
   "bubble_watch": [
     {
       "symbol": "Q/USDT",
-      "change_pct": -29.83,
+      "change_pct": -27.9,
       "direction": "SHORT",
-      "price": 0.0086946,
-      "volume_usd": 3113305
+      "price": 0.0087255,
+      "volume_usd": 3192853
+    },
+    {
+      "symbol": "RIVER/USDT",
+      "change_pct": 12.25,
+      "direction": "LONG",
+      "price": 14.434,
+      "volume_usd": 11331895
     },
     {
       "symbol": "TRIA/USDT",
-      "change_pct": 12.89,
+      "change_pct": 11.08,
       "direction": "LONG",
-      "price": 0.031335,
-      "volume_usd": 5167546
+      "price": 0.031048,
+      "volume_usd": 5871620
     }
   ]
 }
