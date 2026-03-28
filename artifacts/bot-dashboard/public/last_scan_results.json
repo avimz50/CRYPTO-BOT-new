@@ -1,6 +1,6 @@
 {
-  "scan_time": "2026-03-28T20:33:35",
-  "total_scanned": 30,
+  "scan_time": "2026-03-28T20:35:17",
+  "total_scanned": 29,
   "signals_found": 0,
   "active_trades_count": 0,
   "max_trades": 3,
@@ -46,36 +46,29 @@
       "scores": {}
     }
   ],
-  "system_message": "Kill-Switch Sentiment: FNG=12 (Extreme Fear) — הסריקה בוטלה לבטיחות",
-  "scan_duration_s": 2.9,
+  "system_message": "אף מטבע לא הגיע לציון 90/100. הטוב ביותר: TRIA/USDT עם 0/100",
+  "scan_duration_s": 0.2,
   "bubble_watch": [
     {
       "symbol": "Q/USDT",
-      "change_pct": -32.12,
+      "change_pct": -32.45,
       "direction": "SHORT",
-      "price": 0.0087144,
-      "volume_usd": 3132033
+      "price": 0.0086832,
+      "volume_usd": 3128884
     },
     {
       "symbol": "TRIA/USDT",
-      "change_pct": 14.52,
+      "change_pct": 11.48,
       "direction": "LONG",
-      "price": 0.03139,
-      "volume_usd": 5001902
-    },
-    {
-      "symbol": "RIVER/USDT",
-      "change_pct": 11.02,
-      "direction": "LONG",
-      "price": 14.4429,
-      "volume_usd": 12464456
+      "price": 0.030921,
+      "volume_usd": 5010240
     },
     {
       "symbol": "COLLECT/USDT",
-      "change_pct": -10.26,
+      "change_pct": -10.53,
       "direction": "SHORT",
-      "price": 0.042563,
-      "volume_usd": 1592422
+      "price": 0.042342,
+      "volume_usd": 1592033
     }
   ]
 }
