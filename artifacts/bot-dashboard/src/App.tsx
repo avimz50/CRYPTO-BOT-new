@@ -688,6 +688,16 @@ export default function App() {
               <span className="text-base">📥</span>
               <span className="text-blue-400 text-sm font-medium">דוח Audit</span>
             </a>
+            <a
+              href="https://t.me/avi_cripto_bot"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 bg-sky-500/10 border border-sky-500/30 rounded-full px-3 py-1.5 hover:bg-sky-500/20 transition-colors"
+              title="פתח בוט טלגרם"
+            >
+              <span className="text-base">✈️</span>
+              <span className="text-sky-400 text-sm font-medium">Telegram</span>
+            </a>
             <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/30 rounded-full px-3 py-1.5">
               <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
               <span className="text-green-400 text-sm font-medium">פעיל</span>
