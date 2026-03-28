@@ -823,7 +823,7 @@ export default function App() {
         {/* Stats Row */}
         <div className="grid grid-cols-3 gap-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
-            <p className="text-3xl font-bold text-emerald-400">{trades.length}<span className="text-lg text-gray-600">/3</span></p>
+            <p className="text-3xl font-bold text-emerald-400">{trades.length}<span className="text-lg text-gray-600">/5</span></p>
             <p className="text-gray-400 text-sm mt-1">עסקאות פעילות</p>
           </div>
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center flex flex-col items-center gap-2"

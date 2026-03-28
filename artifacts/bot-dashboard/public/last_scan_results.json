@@ -1,6 +1,6 @@
 {
-  "scan_time": "2026-03-28T23:02:00",
-  "total_scanned": 29,
+  "scan_time": "2026-03-28T23:19:42",
+  "total_scanned": 28,
   "signals_found": 0,
   "active_trades_count": 0,
   "max_trades": 5,
@@ -11,13 +11,6 @@
   "market_sentiment_factor": "Fear & Greed=12 (Extreme Fear) — Kill-Switch הפעיל: כל הסריקות בוטלו",
   "rejected_coins": [
     {
-      "symbol": "RIVER/USDT",
-      "direction": "LONG",
-      "best_score": 0,
-      "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 13)",
-      "scores": {}
-    },
-    {
       "symbol": "TRIA/USDT",
       "direction": "LONG",
       "best_score": 0,
@@ -25,7 +18,14 @@
       "scores": {}
     },
     {
-      "symbol": "CYS/USDT",
+      "symbol": "RIVER/USDT",
+      "direction": "LONG",
+      "best_score": 0,
+      "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 13)",
+      "scores": {}
+    },
+    {
+      "symbol": "PRL/USDT",
       "direction": "LONG",
       "best_score": 0,
       "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 13)",
@@ -39,7 +39,7 @@
       "scores": {}
     },
     {
-      "symbol": "ARIA/USDT",
+      "symbol": "CYS/USDT",
       "direction": "LONG",
       "best_score": 0,
       "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 13)",
@@ -47,28 +47,35 @@
     }
   ],
   "system_message": "Kill-Switch Sentiment: FNG=12 (Extreme Fear) — הסריקה בוטלה לבטיחות",
-  "scan_duration_s": 2.8,
+  "scan_duration_s": 2.4,
   "bubble_watch": [
     {
       "symbol": "Q/USDT",
-      "change_pct": -27.68,
+      "change_pct": -27.54,
       "direction": "SHORT",
-      "price": 0.0087339,
-      "volume_usd": 3193664
-    },
-    {
-      "symbol": "RIVER/USDT",
-      "change_pct": 12.3,
-      "direction": "LONG",
-      "price": 14.4236,
-      "volume_usd": 11311642
+      "price": 0.0087864,
+      "volume_usd": 3194994
     },
     {
       "symbol": "TRIA/USDT",
-      "change_pct": 11.57,
+      "change_pct": 14.12,
       "direction": "LONG",
-      "price": 0.03115,
-      "volume_usd": 5877650
+      "price": 0.031128,
+      "volume_usd": 5877988
+    },
+    {
+      "symbol": "RIVER/USDT",
+      "change_pct": 12.61,
+      "direction": "LONG",
+      "price": 14.3012,
+      "volume_usd": 11182647
+    },
+    {
+      "symbol": "PRL/USDT",
+      "change_pct": 10.92,
+      "direction": "LONG",
+      "price": 0.16773,
+      "volume_usd": 2672936
     }
   ]
 }
