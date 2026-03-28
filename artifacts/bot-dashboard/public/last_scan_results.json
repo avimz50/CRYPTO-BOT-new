@@ -1,9 +1,9 @@
 {
-  "scan_time": "2026-03-28T22:58:22",
+  "scan_time": "2026-03-28T23:02:00",
   "total_scanned": 29,
   "signals_found": 0,
   "active_trades_count": 0,
-  "max_trades": 3,
+  "max_trades": 5,
   "min_score": 90,
   "btc_regime": "BEAR",
   "fng_value": 12,
@@ -51,24 +51,24 @@
   "bubble_watch": [
     {
       "symbol": "Q/USDT",
-      "change_pct": -27.9,
+      "change_pct": -27.68,
       "direction": "SHORT",
-      "price": 0.0087255,
-      "volume_usd": 3192853
+      "price": 0.0087339,
+      "volume_usd": 3193664
     },
     {
       "symbol": "RIVER/USDT",
-      "change_pct": 12.25,
+      "change_pct": 12.3,
       "direction": "LONG",
-      "price": 14.434,
-      "volume_usd": 11331895
+      "price": 14.4236,
+      "volume_usd": 11311642
     },
     {
       "symbol": "TRIA/USDT",
-      "change_pct": 11.08,
+      "change_pct": 11.57,
       "direction": "LONG",
-      "price": 0.031048,
-      "volume_usd": 5871620
+      "price": 0.03115,
+      "volume_usd": 5877650
     }
   ]
 }

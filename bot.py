@@ -694,7 +694,7 @@ def get_btc_regime():
 # ═══════════════════════════════════════════════════════════════
 
 MIN_SCORE  = 90   # סף מינימום לפתיחת עסקה (90 = alignment כמעט מושלם)
-MAX_TRADES = 3    # מקסימום עסקאות פתוחות במקביל
+MAX_TRADES = 5    # מקסימום עסקאות פתוחות במקביל
 RSI_VETO_LONG  = 65   # Anti-FOMO: RSI מעל 65 = לא קונים (overbought ceiling)
 RSI_VETO_SHORT = 28   # RSI מתחת זה = לא מוכרים (oversold)
 EMA_PROXIMITY_PCT = 2.5  # מחיר חייב להיות תוך 2.5% מ-EMA200 (Anti-Chase)
