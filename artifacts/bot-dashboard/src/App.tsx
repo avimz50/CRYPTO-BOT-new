@@ -511,12 +511,123 @@ const BOT_API = "https://python-script-bymzrkhy.replit.app";
 
 interface FngData { value: number; label: string; }
 
+interface RejectedCoin {
+  symbol: string;
+  direction: string;
+  best_score: number;
+  reason: string;
+  scores?: { "4H"?: number; "1H"?: number; "15m"?: number };
+}
+interface ScanData {
+  scan_time: string;
+  total_scanned: number;
+  signals_found: number;
+  active_trades_count: number;
+  btc_regime: string;
+  fng_value: number;
+  fng_label: string;
+  market_sentiment_factor: string;
+  rejected_coins: RejectedCoin[];
+  system_message: string;
+  scan_duration_s: number;
+}
+
+function LastScanStatus({ scan }: { scan: ScanData | null }) {
+  if (!scan) return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center text-gray-600 text-xs">
+      ממתין לסריקה הראשונה...
+    </div>
+  );
+  const scanTime  = scan.scan_time ? new Date(scan.scan_time).toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" }) : "—";
+  const scanDate  = scan.scan_time ? new Date(scan.scan_time).toLocaleDateString("he-IL") : "";
+  const regEmoji  = scan.btc_regime === "BULL" ? "🟢" : scan.btc_regime === "BEAR" ? "🔴" : "🟡";
+  const sigColor  = scan.signals_found > 0 ? "text-green-400" : "text-gray-500";
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden"
+         style={{ background: "linear-gradient(135deg, #0d1117 0%, #0a1628 100%)" }}>
+      {/* Header */}
+      <div className="px-5 py-3 border-b border-gray-800 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-base">🔍</span>
+          <h2 className="font-semibold text-gray-300 text-sm">Last Scan Status</h2>
+          {scan.signals_found > 0 && (
+            <span className="text-xs bg-green-500/20 text-green-400 border border-green-500/30 px-2 py-0.5 rounded-full">
+              {scan.signals_found} איתות/ות
+            </span>
+          )}
+        </div>
+        <span className="text-xs text-gray-600">{scanDate} · {scanTime} · {scan.scan_duration_s}s</span>
+      </div>
+
+      <div className="p-4 space-y-3">
+        {/* Summary row */}
+        <div className="grid grid-cols-3 gap-3 text-center">
+          <div className="bg-gray-800/50 rounded-lg py-2">
+            <p className="text-lg font-bold text-blue-400">{scan.total_scanned}</p>
+            <p className="text-xs text-gray-500">מטבעות שנסרקו</p>
+          </div>
+          <div className="bg-gray-800/50 rounded-lg py-2">
+            <p className={`text-lg font-bold ${sigColor}`}>{scan.signals_found}</p>
+            <p className="text-xs text-gray-500">איתותים שנמצאו</p>
+          </div>
+          <div className="bg-gray-800/50 rounded-lg py-2">
+            <p className="text-lg font-bold text-gray-300">{regEmoji} {scan.btc_regime}</p>
+            <p className="text-xs text-gray-500">BTC Regime</p>
+          </div>
+        </div>
+
+        {/* Sentiment factor */}
+        <div className="bg-gray-800/30 border border-gray-700/30 rounded-lg px-3 py-2 text-xs text-gray-400">
+          <span className="text-yellow-400 font-semibold">📊 Sentiment: </span>
+          {scan.market_sentiment_factor}
+        </div>
+
+        {/* System message */}
+        <div className="bg-blue-900/20 border border-blue-700/30 rounded-lg px-3 py-2 text-xs text-blue-300">
+          <span className="font-semibold">💬 </span>{scan.system_message}
+        </div>
+
+        {/* Rejected coins — top 5 near-misses */}
+        {scan.rejected_coins && scan.rejected_coins.length > 0 && (
+          <div>
+            <p className="text-xs text-gray-500 mb-2 font-semibold uppercase tracking-wide">
+              🚫 Top Near-Misses (לא עברו סף {scan.min_score ?? 90}/100)
+            </p>
+            <div className="space-y-1.5">
+              {scan.rejected_coins.slice(0, 5).map((c, i) => {
+                const dirColor  = c.direction === "LONG" ? "text-green-400" : "text-red-400";
+                const scoreColor = c.best_score >= 80 ? "text-yellow-400" : c.best_score >= 60 ? "text-orange-400" : "text-gray-500";
+                return (
+                  <div key={`${c.symbol}-${i}`}
+                       className="flex items-center justify-between bg-gray-800/40 rounded-lg px-3 py-1.5 text-xs">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-gray-600 w-4">{i + 1}.</span>
+                      <span className="font-mono font-semibold text-gray-200">{c.symbol.replace("/USDT", "")}</span>
+                      <span className={`font-semibold ${dirColor}`}>{c.direction}</span>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0 ml-2">
+                      <span className={`font-mono font-bold ${scoreColor}`}>{c.best_score}/100</span>
+                      <span className="text-gray-500 text-right max-w-[160px] truncate">{c.reason}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const now        = useClock();
   const hotData    = useJson<HotData>(`${BOT_API}/api/hot`,    "/hot_candidates.json", 60_000);
   const tradesData = useJson<TradesData>(`${BOT_API}/api/trades`, "/active_trades.json", 30_000);
   const walletData = useJson<WalletData>(`${BOT_API}/api/wallet`, "/wallet.json",        30_000);
   const fngData    = useJson<FngData>(`${BOT_API}/api/fng`,    "/fng.json",             300_000);
+  const scanData   = useJson<ScanData>(`${BOT_API}/api/last_scan`, "/last_scan_results.json", 120_000);
 
   const SCAN_INTERVAL = 3600; // seconds
   const nextScan = new Date(Math.ceil(now.getTime() / (SCAN_INTERVAL * 1000)) * (SCAN_INTERVAL * 1000));
@@ -682,6 +793,9 @@ export default function App() {
             </p>
           )}
         </div>
+
+        {/* Last Scan Status */}
+        <LastScanStatus scan={scanData ?? null} />
 
         {/* Active Trades */}
         <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">

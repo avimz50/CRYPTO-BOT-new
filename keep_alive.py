@@ -51,6 +51,19 @@ def api_debug():
         'trades_exists': _os.path.exists(trades),
     })
 
+@app.route('/api/last_scan')
+def api_last_scan():
+    """Serve the latest scan analysis report."""
+    scan_file = 'artifacts/bot-dashboard/public/last_scan_results.json'
+    try:
+        with open(scan_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return jsonify(data)
+    except FileNotFoundError:
+        return jsonify({'error': 'No scan report yet — runs after first scan cycle.'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/fng')
 def api_fng():
     """Fear & Greed Index — cached 1h from Alternative.me. Never returns error — fallback to 50/Neutral."""

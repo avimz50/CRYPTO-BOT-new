@@ -76,6 +76,12 @@ router.get("/debug", async (_req, res) => {
   });
 });
 
+router.get("/last_scan", async (_req, res) => {
+  const data = await fetchFromFlask("/api/last_scan", path.join(PUBLIC, "last_scan_results.json"), null);
+  if (!data) return res.status(404).json({ error: "No scan report yet." });
+  res.json(data);
+});
+
 router.get("/audit", (_req, res) => {
   const filePath = path.join(ROOT, "audit_report.json");
   try {

@@ -122,6 +122,88 @@ daily_stats = {
 # שמירת תאריך הדוח האחרון שנשלח
 last_daily_report_date = None
 
+# ── Scan Analysis Report ──────────────────────────────────────────────────────
+SCAN_REPORT_FILE = 'artifacts/bot-dashboard/public/last_scan_results.json'
+
+def _reject_reason(score: int, breakdown: str) -> str:
+    """הופך breakdown גולמי לסיבת דחייה קריאה לאדם."""
+    bd = breakdown.lower()
+    if 'veto' in bd:
+        return breakdown[:80]
+    if score == 0 and not breakdown:
+        return "ניקוד 0/100 — שגיאת חישוב"
+    parts = []
+    try:
+        if 'ema=' in bd:
+            ema_pts = int(breakdown.split('EMA=')[1].split('/')[0])
+            if ema_pts < 35: parts.append(f"EMA חלש ({ema_pts}/35)")
+        if 'macd=' in bd:
+            macd_pts = int(breakdown.split('MACD=')[1].split('/')[0])
+            if macd_pts < 25: parts.append(f"MACD חסר ({macd_pts}/25)")
+        if 'rsi=' in bd:
+            rsi_pts = int(breakdown.split('RSI=')[1].split('/')[0])
+            if rsi_pts < 20: parts.append(f"RSI חלש ({rsi_pts}/20)")
+        if 'bb+vol=' in bd:
+            bb_pts = int(breakdown.split('BB+Vol=')[1].split('/')[0])
+            if bb_pts < 10: parts.append(f"נפח נמוך ({bb_pts}/15)")
+    except Exception:
+        pass
+    reason_str = ", ".join(parts[:2]) if parts else "כלל הפילטרים"
+    return f"ניקוד {score}/100 — {reason_str}"
+
+
+def save_scan_results(
+    total_scanned: int,
+    signals_found: int,
+    fng_value: int,
+    fng_label: str,
+    btc_regime: str,
+    all_rejections: list,
+    system_message: str,
+    scan_start_ts: float,
+):
+    """שומר last_scan_results.json לאחר כל סריקה."""
+    import time as _t
+    duration = round(_t.time() - scan_start_ts, 1)
+
+    # top 5 near-misses — הגבוהים ביותר שלא עברו
+    near_misses = sorted(all_rejections, key=lambda x: x.get('best_score', 0), reverse=True)[:5]
+
+    # Sentiment impact sentence
+    if fng_value < 20:
+        sentiment_note = f"Fear & Greed={fng_value} (Extreme Fear) — Kill-Switch הפעיל: כל הסריקות בוטלו"
+    elif fng_value <= 30:
+        sentiment_note = f"Fear & Greed={fng_value} (Fear) — ל-LONG דרוש RSI<30; SL הורחב ב-{FEAR_EXTRA_SL_PCT}%"
+    elif fng_value >= 75:
+        sentiment_note = f"Fear & Greed={fng_value} (Extreme Greed) — פוזיציה צומצמה ל-60%; BE מהיר הופעל"
+    elif fng_value >= 60:
+        sentiment_note = f"Fear & Greed={fng_value} (Greed) — זהירות קלה; ±2 נקודות על ציון"
+    else:
+        sentiment_note = f"Fear & Greed={fng_value} ({fng_label}) — מצב ניטרלי, אין השפעה על פתיחות"
+
+    report = {
+        'scan_time':               datetime.now().isoformat(timespec='seconds'),
+        'total_scanned':           total_scanned,
+        'signals_found':           signals_found,
+        'active_trades_count':     len(active_trades),
+        'max_trades':              MAX_TRADES,
+        'min_score':               MIN_SCORE,
+        'btc_regime':              btc_regime,
+        'fng_value':               fng_value,
+        'fng_label':               fng_label,
+        'market_sentiment_factor': sentiment_note,
+        'rejected_coins':          near_misses,
+        'system_message':          system_message,
+        'scan_duration_s':         duration,
+    }
+    try:
+        with open(SCAN_REPORT_FILE, 'w', encoding='utf-8') as f:
+            import json as _json
+            _json.dump(report, f, ensure_ascii=False, indent=2)
+        print(f"Scan report saved → {SCAN_REPORT_FILE}")
+    except Exception as e:
+        print(f"Failed to save scan report: {e}")
+
 # מניעת שתי סריקות במקביל
 _scan_running = False
 
@@ -1837,25 +1919,47 @@ def trade_monitor_loop():
 
 # --- לולאת סריקת איתותים — Thread נפרד ---
 
-def _scan_batch(candidates, direction, btc_regime='NEUTRAL'):
+def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
     """
     עוזר לסריקה: מריץ score_symbol על רשימת מועמדים.
     direction: 'LONG' או 'SHORT'
     btc_regime: 'BULL' / 'BEAR' / 'NEUTRAL' — BTC EMA50 Market Regime Filter
+    rejected_out: רשימה שבה יצטברו מטבעות שנדחו (לדוח הסריקה)
     מחזיר מספר האיתותים שנמצאו.
     """
+    if rejected_out is None:
+        rejected_out = []
+
     # ── Sentiment Kill-Switch (Extreme Fear < 15) ─────────────────────────────
-    fng_v_scan, _, fng_action = sentiment_check("scan")
+    fng_v_scan, fng_lbl_scan, fng_action = sentiment_check("scan")
     if fng_v_scan < EXTREME_FEAR_THRESHOLD:
         print(f"SENTIMENT KILL-SWITCH: FNG={fng_v_scan} < {EXTREME_FEAR_THRESHOLD} — סריקה בוטלה לגמרי")
+        for c in candidates:
+            rejected_out.append({
+                'symbol': c['symbol'], 'direction': direction, 'best_score': 0,
+                'reason': f'Sentiment Kill-Switch: FNG={fng_v_scan} (Extreme Fear < {EXTREME_FEAR_THRESHOLD})',
+                'scores': {},
+            })
         return 0
 
     # ── BTC Market Regime Safety Switch ──
     if direction == 'LONG' and btc_regime == 'BEAR':
         print(f"BTC REGIME VETO: BEAR market — skipping all {len(candidates)} LONG candidates")
+        for c in candidates:
+            rejected_out.append({
+                'symbol': c['symbol'], 'direction': direction, 'best_score': 0,
+                'reason': 'BTC BEAR Regime — LONGs חסומים',
+                'scores': {},
+            })
         return 0
     if direction == 'SHORT' and btc_regime == 'BULL':
         print(f"BTC REGIME VETO: BULL market — skipping all {len(candidates)} SHORT candidates")
+        for c in candidates:
+            rejected_out.append({
+                'symbol': c['symbol'], 'direction': direction, 'best_score': 0,
+                'reason': 'BTC BULL Regime — SHORTs חסומים',
+                'scores': {},
+            })
         return 0
 
     found = 0
@@ -1874,7 +1978,11 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL'):
 
             print(f"Scoring {symbol} [{direction}] @ {price:.6g} [4H]")
             score, breakdown, atr = score_symbol(df_4h, df_1h, symbol, direction)
-            score_4h  = score        # שמור לדיווח
+            score_4h  = score
+            score_1h  = 0
+            score_15m = 0
+            best_score     = score
+            best_breakdown = breakdown
             chosen_tf = '4H'
             chosen_df = df_4h
             tf_reason = 'טרנד חזק בגרף 4H'
@@ -1884,6 +1992,9 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL'):
                 df_15m = get_data(symbol, timeframe='15m', limit=250)
                 score_1h, breakdown_1h, atr_1h = score_symbol(df_1h, df_15m, symbol, direction)
                 print(f"  4H={score_4h} < {MIN_SCORE} → try 1H: {score_1h}")
+                if score_1h > best_score:
+                    best_score     = score_1h
+                    best_breakdown = breakdown_1h
                 if score_1h >= MIN_SCORE:
                     score     = score_1h
                     breakdown = breakdown_1h
@@ -1897,6 +2008,9 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL'):
                 else:
                     score_15m, breakdown_15m, atr_15m = score_symbol(df_15m, df_1h, symbol, direction)
                     print(f"  1H={score_1h} < {MIN_SCORE} → try 15m: {score_15m}")
+                    if score_15m > best_score:
+                        best_score     = score_15m
+                        best_breakdown = breakdown_15m
                     if score_15m >= MIN_SCORE:
                         score     = score_15m
                         breakdown = breakdown_15m
@@ -1920,6 +2034,11 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL'):
                     if not rsi_ok:
                         rsi_str = f"{_last_rsi:.1f}" if _last_rsi else "N/A"
                         print(f"  [SENTIMENT] FEAR FILTER: {symbol} LONG rejected — RSI={rsi_str} ≥ 30 (דרוש RSI<30 במצב פחד)")
+                        rejected_out.append({
+                            'symbol': symbol, 'direction': direction, 'best_score': best_score,
+                            'reason': f'Fear Filter: RSI={rsi_str} ≥ 30 (ב-Sentiment FEAR נדרש RSI<30)',
+                            'scores': {'4H': score_4h, '1H': score_1h, '15m': score_15m},
+                        })
                         continue
 
                 open_demo_trade(
@@ -1931,6 +2050,15 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL'):
                     fng_v=fng_v_scan
                 )
                 found += 1
+            else:
+                # ניקוד לא מספיק בכל הטיים-פריימים → דחייה
+                rejected_out.append({
+                    'symbol':     symbol,
+                    'direction':  direction,
+                    'best_score': best_score,
+                    'reason':     _reject_reason(best_score, best_breakdown),
+                    'scores':     {'4H': score_4h, '1H': score_1h, '15m': score_15m},
+                })
 
         except Exception as e:
             print(f"Error scanning {symbol}: {e}")
@@ -1967,6 +2095,7 @@ def scan_loop():
         try:
             check_daily_report()
             now_str = datetime.now().strftime('%H:%M:%S')
+            scan_start_ts = time.time()
 
             # ── שלב 1: BTC Market Regime ──
             btc_regime = get_btc_regime()
@@ -1981,6 +2110,9 @@ def scan_loop():
             gainers, losers = get_hot_candidates()
             total_scanned   = len(gainers) + len(losers) + len(ENERGY_GEO)
 
+            # FNG לדוח הסריקה
+            fng_v_loop, fng_lbl_loop, _ = sentiment_check("scan_summary")
+
             send_msg(
                 f"🔍 *Professional Scoring Scan* — {now_str}\n"
                 f"🟢 Gainers (LONG): *{len(gainers)}*  🔴 Losers (SHORT): *{len(losers)}*\n"
@@ -1989,17 +2121,18 @@ def scan_loop():
                 f"{regime_emoji} *BTC Regime: {regime_note}*"
             )
 
-            signals_found = 0
+            signals_found  = 0
+            all_rejections = []   # ← אוסף דחיות מכל הבאצ'ים
 
             # ── שלב 3: סריקת גיינרים — LONG ──
-            signals_found += _scan_batch(gainers, 'LONG', btc_regime)
+            signals_found += _scan_batch(gainers, 'LONG', btc_regime, all_rejections)
 
             # ── שלב 4: סריקת לוזרים — SHORT ──
-            signals_found += _scan_batch(losers, 'SHORT', btc_regime)
+            signals_found += _scan_batch(losers, 'SHORT', btc_regime, all_rejections)
 
             # ── שלב 5: רשימה קבועה — ENERGY_GEO (LONG בלבד) ──
             energy_candidates = [{'symbol': s} for s in ENERGY_GEO]
-            signals_found += _scan_batch(energy_candidates, 'LONG', btc_regime)
+            signals_found += _scan_batch(energy_candidates, 'LONG', btc_regime, all_rejections)
 
             print(f"Scan done — {signals_found} signal(s) / {total_scanned} scanned")
 
@@ -2028,7 +2161,38 @@ def scan_loop():
 
             print(f"Scan complete at {now}. Next scan at {next_scan}.")
 
-            # ── דוח Drive ב-08:00 ו-20:00 ──
+            # ── שמירת Scan Analysis Report ──
+            if signals_found == 0 and len(active_trades) >= MAX_TRADES:
+                sys_msg = f"מקסימום עסקאות פעיל ({MAX_TRADES}/{MAX_TRADES}) — ממתין לסגירת עסקה לפני פתיחה חדשה"
+            elif signals_found == 0 and fng_v_loop < EXTREME_FEAR_THRESHOLD:
+                sys_msg = f"Kill-Switch Sentiment: FNG={fng_v_loop} (Extreme Fear) — הסריקה בוטלה לבטיחות"
+            elif signals_found == 0 and btc_regime == 'BEAR':
+                sys_msg = f"BTC BEAR Regime — כל ה-LONGs חסומים; SHORTs בלבד מאושרים"
+            elif signals_found == 0 and btc_regime == 'BULL':
+                sys_msg = f"BTC BULL Regime — כל ה-SHORTs חסומים; LONGs בלבד מאושרים"
+            elif signals_found == 0:
+                top = sorted(all_rejections, key=lambda x: x.get('best_score', 0), reverse=True)
+                best = top[0] if top else None
+                sys_msg = (
+                    f"אף מטבע לא הגיע לציון {MIN_SCORE}/100 הנדרש. "
+                    f"הטוב ביותר: {best['symbol']} עם {best['best_score']}/100" if best
+                    else f"אף מטבע לא עמד בסף {MIN_SCORE}/100"
+                )
+            else:
+                sys_msg = f"{signals_found} עסקה/ות נפתחו בהצלחה — Professional Score ≥ {MIN_SCORE}/100"
+
+            save_scan_results(
+                total_scanned  = total_scanned,
+                signals_found  = signals_found,
+                fng_value      = fng_v_loop,
+                fng_label      = fng_lbl_loop,
+                btc_regime     = btc_regime,
+                all_rejections = all_rejections,
+                system_message = sys_msg,
+                scan_start_ts  = scan_start_ts,
+            )
+
+            # ── דוח Drive ב-12:00 ──
             _maybe_run_drive_audit()
 
         except Exception as e:
