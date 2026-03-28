@@ -1,5 +1,5 @@
 {
-  "scan_time": "2026-03-28T20:20:53",
+  "scan_time": "2026-03-28T20:28:24",
   "total_scanned": 30,
   "signals_found": 0,
   "active_trades_count": 0,
@@ -39,7 +39,7 @@
       "scores": {}
     },
     {
-      "symbol": "BSB/USDT",
+      "symbol": "PRL/USDT",
       "direction": "LONG",
       "best_score": 0,
       "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 15)",
@@ -47,5 +47,5 @@
     }
   ],
   "system_message": "Kill-Switch Sentiment: FNG=12 (Extreme Fear) — הסריקה בוטלה לבטיחות",
-  "scan_duration_s": 3.0
+  "scan_duration_s": 3.1
 }
