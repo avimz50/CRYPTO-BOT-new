@@ -55,31 +55,46 @@ def build_audit_report(active_trades, wallet, closed_trades_log, starting=200.0)
     losses_24h = sum(1 for t in recent_closed if t['pnl_usd'] <= 0)
     pnl_24h    = round(sum(t['pnl_usd'] for t in recent_closed), 2)
 
+    POSITION_SIZE = 500.0   # $50 margin × 10x leverage
+
     active_detail = []
     for t in active_trades:
         cp  = t.get('current_price', t['entry'])
         ep  = t['entry']
+        sl  = t.get('sl')
+        tp  = t.get('tp')
         pct = (cp - ep) / ep * 100 if ep else 0
         if t.get('direction') == 'SHORT':
             pct = -pct
+
+        # Expected P&L at TP / SL
+        # Formula: abs(target - entry) / entry * position_size
+        # Works for both LONG and SHORT (direction doesn't matter — abs handles it)
+        exp_profit_usd = round(abs(tp  - ep) / ep * POSITION_SIZE, 2) if (tp  and ep) else None
+        exp_loss_usd   = round(abs(sl  - ep) / ep * POSITION_SIZE, 2) if (sl  and ep) else None
+        rr_ratio       = round(exp_profit_usd / exp_loss_usd, 2) if (exp_profit_usd and exp_loss_usd and exp_loss_usd > 0) else None
+
         active_detail.append({
-            'symbol':          t['symbol'],
-            'direction':       t.get('direction', 'LONG'),
-            'timeframe':       t.get('timeframe', '4H'),
-            'entry_price':     ep,
-            'current_price':   round(cp, 8),
-            'unrealized_pct':  round(pct, 2),
-            'unrealized_usd':  round(500 * pct / 100, 2),
-            'score':           t.get('score', 0),
-            'rsi':             t.get('rsi'),
-            'ema200':          t.get('ema200'),
-            'score_breakdown': t.get('score_breakdown', ''),
-            'phase':           t.get('phase', 'initial'),
-            'be_triggered':    t.get('be_triggered', False),
-            'tp1_triggered':   t.get('tp1_triggered', False),
-            'sl':              t.get('sl'),
-            'tp':              t.get('tp'),
-            'opened_at':       t.get('opened_at', ''),
+            'symbol':              t['symbol'],
+            'direction':           t.get('direction', 'LONG'),
+            'timeframe':           t.get('timeframe', '4H'),
+            'entry_price':         ep,
+            'current_price':       round(cp, 8),
+            'unrealized_pct':      round(pct, 2),
+            'unrealized_usd':      round(POSITION_SIZE * pct / 100, 2),
+            'expected_profit_usd': exp_profit_usd,
+            'expected_loss_usd':   exp_loss_usd,
+            'risk_reward_ratio':   rr_ratio,
+            'score':               t.get('score', 0),
+            'rsi':                 t.get('rsi'),
+            'ema200':              t.get('ema200'),
+            'score_breakdown':     t.get('score_breakdown', ''),
+            'phase':               t.get('phase', 'initial'),
+            'be_triggered':        t.get('be_triggered', False),
+            'tp1_triggered':       t.get('tp1_triggered', False),
+            'sl':                  sl,
+            'tp':                  tp,
+            'opened_at':           t.get('opened_at', ''),
         })
 
     return {

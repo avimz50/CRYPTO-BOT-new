@@ -362,6 +362,18 @@ function TradeCard({ trade }: { trade: Trade }) {
     : 500 * pnlPct / 100;
   const isProfit = pnlUsd >= 0;
 
+  // Expected P&L at TP and SL  (position size = $500 = $50 margin × 10x leverage)
+  const POSITION = 500;
+  const estProfit = trade.tp && trade.entry
+    ? Math.abs(trade.tp - trade.entry) / trade.entry * POSITION
+    : null;
+  const estLoss = trade.sl && trade.entry
+    ? Math.abs(trade.sl - trade.entry) / trade.entry * POSITION
+    : null;
+  const rr = estProfit && estLoss && estLoss > 0
+    ? (estProfit / estLoss).toFixed(2)
+    : null;
+
   // price movement colour (green = good for this direction)
   const priceUp   = cp > trade.entry;
   const priceGood = isLong ? priceUp : !priceUp;
@@ -441,6 +453,35 @@ function TradeCard({ trade }: { trade: Trade }) {
           <span className="text-gray-500">🎯 TP</span>
           <span className="font-mono text-green-400">{fmt(trade.tp)}</span>
         </div>
+
+        {/* ── Expected P&L at TP / SL ── */}
+        {(estProfit !== null || estLoss !== null) && (
+          <div className="col-span-2 border-t border-gray-700/50 mt-1 pt-2 space-y-1">
+            {estProfit !== null && (
+              <div className="flex justify-between items-center">
+                <span className="text-gray-400 text-xs">Est. Profit at TP</span>
+                <span className="font-mono font-semibold text-green-400">
+                  +${estProfit.toFixed(2)}
+                </span>
+              </div>
+            )}
+            {estLoss !== null && (
+              <div className="flex justify-between items-center">
+                <span className="text-gray-400 text-xs">Est. Loss at SL</span>
+                <span className="font-mono font-semibold text-red-400">
+                  -${estLoss.toFixed(2)}
+                </span>
+              </div>
+            )}
+            {rr !== null && (
+              <div className="flex justify-between items-center">
+                <span className="text-gray-500 text-xs">Risk / Reward</span>
+                <span className="font-mono text-xs text-yellow-400">1 : {rr}</span>
+              </div>
+            )}
+          </div>
+        )}
+
         {trade.trailing_sl !== null && (
           <div className="col-span-2 flex justify-between border-t border-gray-700/50 pt-1.5 mt-0.5">
             <span className="text-gray-500">📍 Trailing SL</span>
