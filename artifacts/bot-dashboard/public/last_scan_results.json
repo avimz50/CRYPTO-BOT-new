@@ -1,6 +1,6 @@
 {
-  "scan_time": "2026-03-28T20:37:53",
-  "total_scanned": 29,
+  "scan_time": "2026-03-28T20:43:19",
+  "total_scanned": 31,
   "signals_found": 0,
   "active_trades_count": 0,
   "max_trades": 3,
@@ -11,13 +11,6 @@
   "market_sentiment_factor": "Fear & Greed=12 (Extreme Fear) — Kill-Switch הפעיל: כל הסריקות בוטלו",
   "rejected_coins": [
     {
-      "symbol": "TRIA/USDT",
-      "direction": "LONG",
-      "best_score": 0,
-      "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 13)",
-      "scores": {}
-    },
-    {
       "symbol": "RIVER/USDT",
       "direction": "LONG",
       "best_score": 0,
@@ -25,7 +18,7 @@
       "scores": {}
     },
     {
-      "symbol": "PRL/USDT",
+      "symbol": "TRIA/USDT",
       "direction": "LONG",
       "best_score": 0,
       "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 13)",
@@ -33,6 +26,13 @@
     },
     {
       "symbol": "ARIA/USDT",
+      "direction": "LONG",
+      "best_score": 0,
+      "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 13)",
+      "scores": {}
+    },
+    {
+      "symbol": "PRL/USDT",
       "direction": "LONG",
       "best_score": 0,
       "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 13)",
@@ -47,28 +47,21 @@
     }
   ],
   "system_message": "Kill-Switch Sentiment: FNG=12 (Extreme Fear) — הסריקה בוטלה לבטיחות",
-  "scan_duration_s": 2.6,
+  "scan_duration_s": 2.5,
   "bubble_watch": [
     {
       "symbol": "Q/USDT",
-      "change_pct": -32.88,
+      "change_pct": -31.98,
       "direction": "SHORT",
-      "price": 0.0086662,
-      "volume_usd": 3132919
+      "price": 0.0086721,
+      "volume_usd": 3131159
     },
     {
-      "symbol": "TRIA/USDT",
-      "change_pct": 10.76,
+      "symbol": "RIVER/USDT",
+      "change_pct": 11.27,
       "direction": "LONG",
-      "price": 0.031004,
-      "volume_usd": 5008559
-    },
-    {
-      "symbol": "COLLECT/USDT",
-      "change_pct": -10.04,
-      "direction": "SHORT",
-      "price": 0.042318,
-      "volume_usd": 1591959
+      "price": 14.3229,
+      "volume_usd": 12364080
     }
   ]
 }

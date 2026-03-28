@@ -53,6 +53,10 @@ DASHBOARD_URL       = 'https://python-script-bymzrkhy.replit.app/'
 # ─── Fear & Greed Index — cache גלובלי (מתרענן כל שעה) ───────────────────────
 _fng_cache = {'value': 50, 'label': 'Neutral', 'ts': 0}
 
+# ─── Kill-Switch State Tracker ─────────────────────────────────────────────────
+# None = לא ידוע (הפעלה ראשונה) | True = פעיל | False = כבוי
+_kill_switch_active: bool | None = None
+
 def get_fear_greed():
     """מחזיר (value:int, label:str) — Alternative.me API עם cache של שעה."""
     import time as _time
@@ -93,6 +97,52 @@ def sentiment_check(context: str = "scan"):
         action = "נייטרלי — אין שינוי"
     print(f"Sentiment Check: {fng_v} [{lbl}] - {action} [{context}]")
     return fng_v, lbl, action
+
+
+def check_kill_switch_change():
+    """
+    בודק אם מצב ה-Kill-Switch השתנה מאז הבדיקה הקודמת.
+    שולח התראת טלגרם רק כשיש שינוי מצב בפועל.
+    """
+    global _kill_switch_active
+    fng_v, lbl = get_fear_greed()
+    now_active = fng_v < EXTREME_FEAR_THRESHOLD
+
+    # הפעלה ראשונה — רק מאתחל, לא שולח
+    if _kill_switch_active is None:
+        _kill_switch_active = now_active
+        print(f"[Kill-Switch] מצב ראשוני: {'ACTIVE' if now_active else 'INACTIVE'} (FNG={fng_v})")
+        return
+
+    # אין שינוי — לא עושים כלום
+    if now_active == _kill_switch_active:
+        return
+
+    # ── שינוי מצב! ──────────────────────────────────────────────────────────────
+    _kill_switch_active = now_active
+
+    if now_active:
+        # FNG ירד מתחת לסף — Kill-Switch הופעל
+        print(f"[Kill-Switch] הופעל! FNG={fng_v} < {EXTREME_FEAR_THRESHOLD}")
+        send_msg(
+            f"⚠️ *Market Panic Detected*\n\n"
+            f"📊 Fear & Greed Index: *{fng_v}* ({lbl})\n"
+            f"🛑 *Kill\\-Switch ENABLED*\n\n"
+            f"כל פתיחות עסקאות חדשות חסומות לבטיחות\\.\n"
+            f"הבוט ממשיך לנטר עסקאות פעילות קיימות כרגיל\\.\n"
+            f"_ההגבלה תבוטל אוטומטית כשה\\-FNG יעלה מעל {EXTREME_FEAR_THRESHOLD}_"
+        )
+    else:
+        # FNG עלה מעל הסף — Kill-Switch בוטל
+        print(f"[Kill-Switch] בוטל! FNG={fng_v} >= {EXTREME_FEAR_THRESHOLD}")
+        send_msg(
+            f"✅ *Market Sentiment Recovered*\n\n"
+            f"📊 Fear & Greed Index: *{fng_v}* ({lbl})\n"
+            f"🟢 *Kill\\-Switch DISABLED*\n\n"
+            f"סריקת שוק מלאה חזרה לפעולה\\.\n"
+            f"הבוט ימשיך לחפש איתותים בסריקה הבאה\\.\n"
+            f"_סריקה הבאה: עד שעה_"
+        )
 
 # --- פרמטרי מינוף (דמו) ---
 LEVERAGE       = 10          # מינוף 10x
@@ -2045,10 +2095,14 @@ def trade_monitor_loop():
     רץ בThread נפרד.
     בודק SL / TP / BE / Trailing כל 60 שניות — ללא תלות בסריקה.
     שולח Heartbeat כל 30 דקות כשיש עסקאות פעילות.
+    בודק שינוי מצב Kill-Switch (FNG) בכל איטרציה.
     """
     print("Trade monitor started — checking every 60s")
     while True:
         try:
+            # ── Kill-Switch state change detection ──
+            check_kill_switch_change()
+
             if active_trades:
                 track_trades()
                 check_daily_report()
