@@ -918,6 +918,11 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     max_profit = round(tp1_pnl + tp2_pnl, 2)
     sl_loss    = round(pos_size * sl_pct / 100, 2)
 
+    # ── Expected P&L at TP / SL — formula: abs(target-entry)/entry * pos_size ──
+    est_profit_tp = round(abs(tp_price  - price) / price * pos_size, 2)
+    est_loss_sl   = round(abs(sl_price  - price) / price * pos_size, 2)
+    rr_ratio      = round(est_profit_tp / est_loss_sl, 2) if est_loss_sl > 0 else 0
+
     trade = {
         'symbol':          symbol,
         'entry':           price,
@@ -977,9 +982,12 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     msg += f"📍 Trailing: {TRAIL_PCT}% מהשיא (מיידי עם הרווח הראשון)\n\n"
     msg += f"{'─' * 26}\n"
     msg += f"💼 *Leverage: {LEVERAGE}x (Isolated)*\n"
-    msg += f"💰 בטחון: ${MARGIN} · נשלט: ${POSITION_SIZE}\n"
-    msg += f"📈 מקסימום רווח: *+${max_profit}*\n"
-    msg += f"📉 מקסימום הפסד: *-${sl_loss}*\n"
+    msg += f"💰 בטחון: ${MARGIN} · נשלט: ${pos_size}\n"
+    msg += f"{'─' * 26}\n"
+    msg += f"📊 *Expected P&L*\n"
+    msg += f"✅ Est\\. Profit at TP: *+${est_profit_tp}*\n"
+    msg += f"❌ Est\\. Loss at SL:   *\\-${est_loss_sl}*\n"
+    msg += f"⚖️ Risk / Reward: *1 : {rr_ratio}*\n"
     msg += f"{'─' * 26}\n"
     msg += f"💼 Equity: `${equity_after:.2f}` | יתרה: `${wallet.get('balance', 0):.2f}`\n\n"
     msg += tip
@@ -1132,7 +1140,7 @@ def track_trades():
                     send_msg(
                         f"🎯 *TP1 הושג — {sym}!*\n"
                         f"מחיר: `{current_price:.6g}` | {direction}\n"
-                        f"50% נסגרו · 📈 רווח נעול: *+${tp1_pnl} (+{tp1_pct_r}%)*\n"
+                        f"50% נסגרו · ✅ *Est\\. Profit at TP1: \\+${tp1_pnl}* (\\+{tp1_pct_r}%)\n"
                         f"💼 {LEVERAGE}x · שאר 50% ($250) בטריילינג 2%\n"
                         f"📍 Trailing SL: `{trade['trailing_sl']:.6g}`\n"
                         f"📈 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
@@ -1167,7 +1175,7 @@ def track_trades():
                         send_msg(
                             f"🛑 *SL נגע — {sym}*\n"
                             f"כניסה: `{entry:.6g}` → SL: `{trade['sl']:.6g}`\n"
-                            f"📉 *הפסד: -${loss} (-{loss_pct}% על מרג'ין)*\n"
+                            f"❌ *Est\\. Loss at SL: \\-${loss}* ({loss_pct}% על מרג'ין)\n"
                             f"💼 {LEVERAGE}x Isolated · בטחון: ${MARGIN}\n"
                             f"💼 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance',0):.2f}`\n"
                             f"📉 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
@@ -1202,11 +1210,12 @@ def track_trades():
                     wallet_credit(total)
                     _log_closed_trade(trade, 'TP', total, current_price)
                     eq = _get_equity()
+                    est_tp_full = round(abs(current_price - entry) / entry * half, 2)
                     send_msg(
                         f"✅ *TP מלא הושג — {sym}!* 🎉\n"
                         f"מחיר: `{current_price:.6g}` | {direction}\n"
-                        f"שאר 50% נסגרו: 📈 *+${tp_pnl}*\n"
-                        f"TP1 + TP סה\"כ: 📈 *+${total}*\n"
+                        f"שאר 50% נסגרו · ✅ *Est\\. Profit at TP: \\+${est_tp_full}*\n"
+                        f"TP1 \\+ TP סה\"כ: 📈 *\\+${total}*\n"
                         f"💼 {LEVERAGE}x Isolated\n"
                         f"💼 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance',0):.2f}`\n"
                         f"📈 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
