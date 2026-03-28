@@ -70,7 +70,7 @@ def get_fear_greed():
     return _fng_cache['value'], _fng_cache['label']
 
 # ─── Global Sentiment Thresholds ──────────────────────────────────────────────
-EXTREME_FEAR_THRESHOLD = 15   # Kill-Switch: אין עסקאות חדשות בכלל
+EXTREME_FEAR_THRESHOLD = 13   # Kill-Switch: אין עסקאות חדשות בכלל
 FEAR_THRESHOLD         = 30   # Fear Filter: RSI<30 ל-LONG + SL+1%
 GREED_THRESHOLD        = 70   # Greed Filter: פוזיציה ×60% + BE@+2%
 GREED_EARLY_BE_PCT     = 2.0  # % רווח להפעלת BE מוקדם בחמדנות

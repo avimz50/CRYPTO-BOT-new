@@ -1,5 +1,5 @@
 {
-  "scan_time": "2026-03-28T20:35:17",
+  "scan_time": "2026-03-28T20:37:53",
   "total_scanned": 29,
   "signals_found": 0,
   "active_trades_count": 0,
@@ -14,61 +14,61 @@
       "symbol": "TRIA/USDT",
       "direction": "LONG",
       "best_score": 0,
-      "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 15)",
+      "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 13)",
       "scores": {}
     },
     {
       "symbol": "RIVER/USDT",
       "direction": "LONG",
       "best_score": 0,
-      "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 15)",
-      "scores": {}
-    },
-    {
-      "symbol": "ARIA/USDT",
-      "direction": "LONG",
-      "best_score": 0,
-      "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 15)",
+      "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 13)",
       "scores": {}
     },
     {
       "symbol": "PRL/USDT",
       "direction": "LONG",
       "best_score": 0,
-      "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 15)",
+      "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 13)",
+      "scores": {}
+    },
+    {
+      "symbol": "ARIA/USDT",
+      "direction": "LONG",
+      "best_score": 0,
+      "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 13)",
       "scores": {}
     },
     {
       "symbol": "FET/USDT",
       "direction": "LONG",
       "best_score": 0,
-      "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 15)",
+      "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 13)",
       "scores": {}
     }
   ],
-  "system_message": "אף מטבע לא הגיע לציון 90/100. הטוב ביותר: TRIA/USDT עם 0/100",
-  "scan_duration_s": 0.2,
+  "system_message": "Kill-Switch Sentiment: FNG=12 (Extreme Fear) — הסריקה בוטלה לבטיחות",
+  "scan_duration_s": 2.6,
   "bubble_watch": [
     {
       "symbol": "Q/USDT",
-      "change_pct": -32.45,
+      "change_pct": -32.88,
       "direction": "SHORT",
-      "price": 0.0086832,
-      "volume_usd": 3128884
+      "price": 0.0086662,
+      "volume_usd": 3132919
     },
     {
       "symbol": "TRIA/USDT",
-      "change_pct": 11.48,
+      "change_pct": 10.76,
       "direction": "LONG",
-      "price": 0.030921,
-      "volume_usd": 5010240
+      "price": 0.031004,
+      "volume_usd": 5008559
     },
     {
       "symbol": "COLLECT/USDT",
-      "change_pct": -10.53,
+      "change_pct": -10.04,
       "direction": "SHORT",
-      "price": 0.042342,
-      "volume_usd": 1592033
+      "price": 0.042318,
+      "volume_usd": 1591959
     }
   ]
 }
