@@ -152,6 +152,36 @@ def _reject_reason(score: int, breakdown: str) -> str:
     return f"ניקוד {score}/100 — {reason_str}"
 
 
+def build_bubble_watch(gainers: list, losers: list, threshold: float = 10.0) -> list:
+    """
+    מחזיר רשימת מטבעות עם שינוי 24h > threshold% (ברירת מחדל 10%).
+    ממוין לפי גודל השינוי המוחלט — לתצפית בלבד, ללא שינוי בציון.
+    """
+    bubbles = []
+    for g in gainers:
+        pct = g.get('change_pct', 0)
+        if pct > threshold:
+            bubbles.append({
+                'symbol':     g['symbol'],
+                'change_pct': round(pct, 2),
+                'direction':  'LONG',
+                'price':      g.get('price', 0),
+                'volume_usd': g.get('volume_usd', 0),
+            })
+    for l in losers:
+        pct = l.get('change_pct', 0)
+        if abs(pct) > threshold:
+            bubbles.append({
+                'symbol':     l['symbol'],
+                'change_pct': round(pct, 2),
+                'direction':  'SHORT',
+                'price':      l.get('price', 0),
+                'volume_usd': l.get('volume_usd', 0),
+            })
+    bubbles.sort(key=lambda x: abs(x['change_pct']), reverse=True)
+    return bubbles[:10]
+
+
 def save_scan_results(
     total_scanned: int,
     signals_found: int,
@@ -161,6 +191,7 @@ def save_scan_results(
     all_rejections: list,
     system_message: str,
     scan_start_ts: float,
+    bubble_watch: list = None,
 ):
     """שומר last_scan_results.json לאחר כל סריקה."""
     import time as _t
@@ -195,6 +226,7 @@ def save_scan_results(
         'rejected_coins':          near_misses,
         'system_message':          system_message,
         'scan_duration_s':         duration,
+        'bubble_watch':            bubble_watch or [],
     }
     try:
         with open(SCAN_REPORT_FILE, 'w', encoding='utf-8') as f:
@@ -1858,7 +1890,6 @@ def handle_scanreport(message):
         msg += f"\n{'─' * 28}\n"
         msg += f"🚫 *Top Near\\-Misses (לא עברו סף {MIN_SCORE}/100):*\n"
         for i, c in enumerate(rejected[:5], 1):
-            sym   = c.get('symbol', '?').replace('/', '\\/').replace('.', '\\.')
             score = c.get('best_score', 0)
             dir_  = c.get('direction', '')
             dir_e = "🟢" if dir_ == 'LONG' else "🔴"
@@ -1866,6 +1897,25 @@ def handle_scanreport(message):
             score_e = "🟡" if score >= 80 else ("🟠" if score >= 60 else "⚫")
             msg += f"{i}\\. {dir_e} `{c.get('symbol','?')}` {score_e} *{score}/100*\n"
             msg += f"   _{reason}_\n"
+
+    # Bubble Watch section
+    bubbles = d.get('bubble_watch', [])
+    if bubbles:
+        msg += f"\n{'─' * 28}\n"
+        msg += f"🫧 *Bubble Watch — תנודתיות גבוהה \\(>10% ב\\-24h\\)*\n"
+        msg += f"_לתצפית בלבד · ללא שינוי בציון · כל כללי הבטיחות פעילים_\n"
+        for b in bubbles[:8]:
+            sym     = b.get('symbol', '?')
+            pct     = b.get('change_pct', 0)
+            dir_    = b.get('direction', '')
+            dir_e   = "🟢" if dir_ == 'LONG' else "🔴"
+            vol_m   = round(b.get('volume_usd', 0) / 1_000_000, 1)
+            pct_str = f"+{pct:.1f}" if pct >= 0 else f"{pct:.1f}"
+            fire    = "🔥" if abs(pct) > 20 else "⚡"
+            msg += f"{fire} {dir_e} `{sym}` *{pct_str}%* · Vol: ${vol_m}M\n"
+    else:
+        msg += f"\n{'─' * 28}\n"
+        msg += f"🫧 *Bubble Watch:* _אין מטבעות עם שינוי >10% ב-24h_\n"
 
     send_msg(msg)
 
@@ -1907,21 +1957,30 @@ def handle_scan(message):
             )
 
             fng_v_m, fng_lbl_m, _ = sentiment_check("manual_scan")
-            all_rejections_m = []
-            signals_found    = 0
-            scan_start_m     = time.time()
+            all_rejections_m  = []
+            signals_found     = 0
+            scan_start_m      = time.time()
+            bubble_watch_m    = build_bubble_watch(gainers, losers, threshold=10.0)
             signals_found += _scan_batch(gainers, 'LONG', btc_regime, all_rejections_m)
             signals_found += _scan_batch(losers, 'SHORT', btc_regime, all_rejections_m)
             energy_candidates = [{'symbol': s} for s in ENERGY_GEO]
             signals_found += _scan_batch(energy_candidates, 'LONG', btc_regime, all_rejections_m)
 
             pnl_today = round(daily_stats.get('total_pnl', 0), 2)
+            bub_note = ""
+            if bubble_watch_m:
+                bub_names = ", ".join(
+                    f"{b['symbol'].replace('/USDT','')} ({b['change_pct']:+.1f}%)"
+                    for b in bubble_watch_m[:4]
+                )
+                bub_note = f"\n🫧 *Bubble Watch ({len(bubble_watch_m)}):* {bub_names}"
             send_msg(
                 f"✅ *סריקה ידנית הושלמה*\n\n"
                 f"🔍 נסרקו: *{total_scanned}* מטבעות\n"
                 f"📊 איתותים: *{signals_found}*\n"
                 f"📊 עסקאות פעילות: *{len(active_trades)}*\n"
-                f"💰 P&L היום: *${pnl_today:+}*\n"
+                f"💰 P&L היום: *${pnl_today:+}*"
+                f"{bub_note}\n"
                 f"_השתמש ב /scanreport לדוח מלא_"
             )
 
@@ -1938,7 +1997,8 @@ def handle_scan(message):
             else:
                 sys_msg_m = f"{signals_found} עסקה/ות נפתחו — סריקה ידנית"
             save_scan_results(total_scanned, signals_found, fng_v_m, fng_lbl_m,
-                              btc_regime, all_rejections_m, sys_msg_m, scan_start_m)
+                              btc_regime, all_rejections_m, sys_msg_m, scan_start_m,
+                              bubble_watch=bubble_watch_m)
         except Exception as e:
             send_msg(f"❌ שגיאה בסריקה: {e}")
         finally:
@@ -2190,6 +2250,9 @@ def scan_loop():
             gainers, losers = get_hot_candidates()
             total_scanned   = len(gainers) + len(losers) + len(ENERGY_GEO)
 
+            # Bubble Watch — תצפית בלבד, ללא שינוי ציון
+            bubble_watch_list = build_bubble_watch(gainers, losers, threshold=10.0)
+
             # FNG לדוח הסריקה
             fng_v_loop, fng_lbl_loop, _ = sentiment_check("scan_summary")
 
@@ -2235,6 +2298,12 @@ def scan_loop():
                     summary += f"   {dirlab} `{t['symbol']}` [{tf}] {phase} · {score}/100\n"
             summary += f"\n{pnl_icon} P&L היום: *${pnl_today:+}*\n"
             summary += wallet_status_text().replace('💼 *ארנק וירטואלי*\n', '') + "\n"
+            if bubble_watch_list:
+                bub_str = ", ".join(
+                    f"{b['symbol'].replace('/USDT','')} ({b['change_pct']:+.1f}%)"
+                    for b in bubble_watch_list[:5]
+                )
+                summary += f"🫧 *Bubble Watch ({len(bubble_watch_list)}):* {bub_str}\n"
             summary += f"⏰ סריקה הבאה: `{next_scan}`\n"
             summary += f"_📍 מעקב עסקאות פעיל כל 60 שניות_"
             send_msg(summary)
@@ -2270,6 +2339,7 @@ def scan_loop():
                 all_rejections = all_rejections,
                 system_message = sys_msg,
                 scan_start_ts  = scan_start_ts,
+                bubble_watch   = bubble_watch_list,
             )
 
             # ── דוח Drive ב-12:00 ──

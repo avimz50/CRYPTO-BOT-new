@@ -1,5 +1,5 @@
 {
-  "scan_time": "2026-03-28T20:28:24",
+  "scan_time": "2026-03-28T20:33:35",
   "total_scanned": 30,
   "signals_found": 0,
   "active_trades_count": 0,
@@ -18,13 +18,6 @@
       "scores": {}
     },
     {
-      "symbol": "ARIA/USDT",
-      "direction": "LONG",
-      "best_score": 0,
-      "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 15)",
-      "scores": {}
-    },
-    {
       "symbol": "RIVER/USDT",
       "direction": "LONG",
       "best_score": 0,
@@ -32,7 +25,7 @@
       "scores": {}
     },
     {
-      "symbol": "FET/USDT",
+      "symbol": "ARIA/USDT",
       "direction": "LONG",
       "best_score": 0,
       "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 15)",
@@ -44,8 +37,45 @@
       "best_score": 0,
       "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 15)",
       "scores": {}
+    },
+    {
+      "symbol": "FET/USDT",
+      "direction": "LONG",
+      "best_score": 0,
+      "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 15)",
+      "scores": {}
     }
   ],
   "system_message": "Kill-Switch Sentiment: FNG=12 (Extreme Fear) — הסריקה בוטלה לבטיחות",
-  "scan_duration_s": 3.1
+  "scan_duration_s": 2.9,
+  "bubble_watch": [
+    {
+      "symbol": "Q/USDT",
+      "change_pct": -32.12,
+      "direction": "SHORT",
+      "price": 0.0087144,
+      "volume_usd": 3132033
+    },
+    {
+      "symbol": "TRIA/USDT",
+      "change_pct": 14.52,
+      "direction": "LONG",
+      "price": 0.03139,
+      "volume_usd": 5001902
+    },
+    {
+      "symbol": "RIVER/USDT",
+      "change_pct": 11.02,
+      "direction": "LONG",
+      "price": 14.4429,
+      "volume_usd": 12464456
+    },
+    {
+      "symbol": "COLLECT/USDT",
+      "change_pct": -10.26,
+      "direction": "SHORT",
+      "price": 0.042563,
+      "volume_usd": 1592422
+    }
+  ]
 }

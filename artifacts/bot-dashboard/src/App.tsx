@@ -518,6 +518,13 @@ interface RejectedCoin {
   reason: string;
   scores?: { "4H"?: number; "1H"?: number; "15m"?: number };
 }
+interface BubbleCoin {
+  symbol: string;
+  change_pct: number;
+  direction: string;
+  price: number;
+  volume_usd: number;
+}
 interface ScanData {
   scan_time: string;
   total_scanned: number;
@@ -530,6 +537,7 @@ interface ScanData {
   rejected_coins: RejectedCoin[];
   system_message: string;
   scan_duration_s: number;
+  bubble_watch?: BubbleCoin[];
 }
 
 function LastScanStatus({ scan }: { scan: ScanData | null }) {
@@ -616,6 +624,53 @@ function LastScanStatus({ scan }: { scan: ScanData | null }) {
             </div>
           </div>
         )}
+
+        {/* Bubble Watch — high volatility coins, observation only */}
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide">
+              🫧 Bubble Watch
+            </p>
+            {scan.bubble_watch && scan.bubble_watch.length > 0 ? (
+              <span className="text-xs bg-orange-500/20 text-orange-400 border border-orange-500/30 px-2 py-0.5 rounded-full">
+                {scan.bubble_watch.length} מטבעות &gt;10% ב-24h
+              </span>
+            ) : (
+              <span className="text-xs text-gray-600">אין תנודתיות קיצונית</span>
+            )}
+          </div>
+          {scan.bubble_watch && scan.bubble_watch.length > 0 && (
+            <>
+              <p className="text-xs text-gray-600 mb-2 italic">לתצפית בלבד · ללא שינוי בציון · כל כללי הבטיחות פעילים</p>
+              <div className="grid grid-cols-2 gap-1.5">
+                {scan.bubble_watch.slice(0, 8).map((b, i) => {
+                  const isPos    = b.change_pct >= 0;
+                  const pctColor = isPos ? "text-green-400" : "text-red-400";
+                  const bgColor  = isPos ? "bg-green-900/20 border-green-800/30" : "bg-red-900/20 border-red-800/30";
+                  const fire     = Math.abs(b.change_pct) > 20 ? "🔥" : "⚡";
+                  const volM     = (b.volume_usd / 1_000_000).toFixed(1);
+                  return (
+                    <div key={`bub-${i}`}
+                         className={`flex items-center justify-between border rounded-lg px-2.5 py-1.5 text-xs ${bgColor}`}>
+                      <div className="flex items-center gap-1.5">
+                        <span>{fire}</span>
+                        <span className="font-mono font-semibold text-gray-200">
+                          {b.symbol.replace("/USDT", "")}
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <span className={`font-mono font-bold ${pctColor}`}>
+                          {isPos ? "+" : ""}{b.change_pct.toFixed(1)}%
+                        </span>
+                        <span className="text-gray-600 ml-1.5">${volM}M</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
