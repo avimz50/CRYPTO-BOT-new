@@ -329,6 +329,99 @@ def claude_filter(symbol: str, direction: str, score: int, breakdown: str,
         return True, f"Claude error (fallback GO): {str(e)[:60]}"
 
 
+def sniper_claude_check(symbol: str, score: int, direction: str,
+                        df_4h, df_1h, vol_ratio: float,
+                        price: float, fng_v: int,
+                        btc_regime: str) -> tuple[bool, str, str]:
+    """
+    Sniper Exception — מאמת 4 תנאים לחריגה מ-Kill-Switch ב-Extreme Fear:
+      1. ציון ≥ SNIPER_MIN_SCORE (95)
+      2. מחיר תוך SNIPER_EMA_PCT (5%) מ-EMA200 בגרף 4H
+      3. Volume לפחות SNIPER_VOL_MIN (2.5×) הממוצע
+      4. Claude מחזיר STRONG BUY
+
+    מחזיר (ok: bool, verdict: str, reason: str)
+    """
+    # ── תנאי 1: ציון מינימום ─────────────────────────────────────────────────
+    if score < SNIPER_MIN_SCORE:
+        return False, "SCORE TOO LOW", f"Score={score} < {SNIPER_MIN_SCORE} required"
+
+    # ── תנאי 2: מרחק EMA200 ≤ 5% ────────────────────────────────────────────
+    try:
+        ema200_s = ta.ema(df_4h['close'], length=200)
+        if ema200_s is None or ema200_s.dropna().empty:
+            return False, "EMA200 ERROR", "EMA200 calculation failed"
+        ema200 = float(ema200_s.iloc[-1])
+        ema_dist = abs(price - ema200) / ema200 * 100
+    except Exception as e:
+        return False, "EMA200 ERROR", f"EMA200 error: {str(e)[:40]}"
+
+    if ema_dist > SNIPER_EMA_PCT:
+        return False, "OVEREXTENDED", f"EMA200 dist {ema_dist:.1f}% > {SNIPER_EMA_PCT}% (chasing pump)"
+
+    # ── תנאי 3: Volume ≥ 2.5× ───────────────────────────────────────────────
+    if vol_ratio < SNIPER_VOL_MIN:
+        return False, "LOW VOLUME", f"Volume {vol_ratio:.2f}x < {SNIPER_VOL_MIN}x required"
+
+    # ── תנאי 4: Claude → STRONG BUY ─────────────────────────────────────────
+    api_key = os.environ.get('ANTHROPIC_API_KEY', '')
+    if not api_key:
+        return False, "NO API KEY", "Anthropic key not set — cannot confirm Sniper"
+
+    try:
+        rsi_4h = float(ta.rsi(df_4h['close'], length=14).iloc[-1])
+        rsi_1h_str = ""
+        if df_1h is not None:
+            try:
+                rsi_1h = float(ta.rsi(df_1h['close'], length=14).iloc[-1])
+                rsi_1h_str = f" | RSI 1H: {rsi_1h:.1f}"
+            except Exception:
+                pass
+
+        prompt = (
+            f"SNIPER EXCEPTION — Extreme Fear Market (FNG={fng_v})\n"
+            f"This trade bypasses the Kill-Switch (FNG<{SNIPER_MIN_SCORE}) only on STRONG BUY.\n\n"
+            f"Symbol: {symbol} | Direction: {direction} | BTC Regime: {btc_regime}\n"
+            f"Technical Score: {score}/100 (threshold ≥ {SNIPER_MIN_SCORE})\n"
+            f"Price: {price:.6g} | EMA200 (4H): {ema200:.6g} | Distance: {ema_dist:.1f}%\n"
+            f"RSI 4H: {rsi_4h:.1f}{rsi_1h_str}\n"
+            f"Volume vs avg: {vol_ratio:.2f}x (threshold ≥ {SNIPER_VOL_MIN}x)\n\n"
+            f"RESPOND WITH EXACTLY ONE LINE — choose one:\n"
+            f"STRONG BUY — genuinely exceptional setup, all technicals align, safe to trade in Extreme Fear\n"
+            f"APPROVE — setup is good but not exceptional enough to override Extreme Fear Kill-Switch\n"
+            f"REJECT — do NOT trade this in Extreme Fear conditions\n\n"
+            f"Criteria for STRONG BUY (ALL must be true):\n"
+            f"- Price near EMA200 (confirmed dynamic support, not a pump)\n"
+            f"- RSI not overbought (LONG: RSI<60, SHORT: RSI>40)\n"
+            f"- Volume surge confirms real institutional participation\n"
+            f"- Score breakdown shows trend + momentum + volume alignment\n"
+            f"Be EXTREMELY conservative — Extreme Fear means systemic risk. "
+            f"STRONG BUY is reserved for once-in-a-cycle setups only."
+        )
+
+        import anthropic as _anthropic
+        client = _anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model="claude-3-haiku-20240307",
+            max_tokens=40,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        verdict_raw = resp.content[0].text.strip().upper()
+        print(f"  [Sniper] Claude raw: {verdict_raw}")
+
+        if verdict_raw.startswith("STRONG BUY"):
+            reason = f"Score={score}, EMA dist={ema_dist:.1f}%, Vol={vol_ratio:.2f}x"
+            return True, "STRONG BUY", reason
+        elif verdict_raw.startswith("APPROVE"):
+            return False, "APPROVE (not STRONG BUY)", "Claude approved but not exceptional enough for Kill-Switch bypass"
+        else:
+            return False, "REJECT", "Claude rejected — not suitable for Extreme Fear"
+
+    except Exception as e:
+        print(f"  [Sniper] Claude error: {e} — conservative fallback: REJECT")
+        return False, "ERROR", f"Claude error — conservative REJECT: {str(e)[:50]}"
+
+
 # --- זיהוי סביבה (Dev vs Production) ---
 # ב-Replit Deployments מוגדר REPLIT_DEPLOYMENT=1 אוטומטית.
 # בסביבת הפיתוח (workspace) הוא לא מוגדר → IS_DEPLOYED=False.
@@ -743,8 +836,9 @@ def send_msg(text):
 wallet: dict = {}
 
 def _get_equity():
-    """Total equity = cash balance + margin locked in open trades."""
-    return round(wallet.get('balance', STARTING_BALANCE) + len(active_trades) * MARGIN, 2)
+    """Total equity = cash balance + actual margin locked in open trades (Sniper uses half)."""
+    locked = sum(t.get('margin', MARGIN) for t in active_trades)
+    return round(wallet.get('balance', STARTING_BALANCE) + locked, 2)
 
 def _append_equity_point():
     hist = wallet.setdefault('equity_history', [])
@@ -792,16 +886,16 @@ def save_wallet():
     except Exception as e:
         print(f"Wallet save error: {e}")
 
-def wallet_deduct():
-    """קיזוז מרג'ין ($50) בפתיחת עסקה."""
-    wallet['balance']       = round(wallet.get('balance', STARTING_BALANCE) - MARGIN, 2)
+def wallet_deduct(amount: float = MARGIN):
+    """קיזוז מרג'ין בפתיחת עסקה. amount=MARGIN רגיל, MARGIN*0.5 ל-Sniper."""
+    wallet['balance']       = round(wallet.get('balance', STARTING_BALANCE) - amount, 2)
     wallet['trades_opened'] = wallet.get('trades_opened', 0) + 1
     _append_equity_point()
     save_wallet()
 
-def wallet_credit(pnl_usd: float):
-    """זיכוי מרג'ין + P&L בסגירת עסקה."""
-    wallet['balance']   = round(wallet.get('balance', STARTING_BALANCE) + MARGIN + pnl_usd, 2)
+def wallet_credit(pnl_usd: float, amount: float = MARGIN):
+    """זיכוי מרג'ין + P&L בסגירת עסקה. amount צריך להתאים ל-wallet_deduct."""
+    wallet['balance']   = round(wallet.get('balance', STARTING_BALANCE) + amount + pnl_usd, 2)
     wallet['total_pnl'] = round(wallet.get('total_pnl', 0.0) + pnl_usd, 2)
     _append_equity_point()
     save_wallet()
@@ -839,7 +933,7 @@ def wallet_status_text() -> str:
     pnl     = wallet.get('total_pnl', 0.0)
     equity  = _get_equity()
     pnl_pct = round((equity - start) / start * 100, 1)
-    locked  = len(active_trades) * MARGIN
+    locked  = sum(t.get('margin', MARGIN) for t in active_trades)
     icon    = "📈" if pnl >= 0 else "📉"
     return (
         f"💼 *ארנק וירטואלי*\n"
@@ -1111,6 +1205,12 @@ TRAIL_PCT      = 1.5  # % Trailing Stop מהשיא
 SL_PCT_FIXED   = 3.5  # % SL קבוע (3h chart)
 TP1_PCT_FIXED  = 5.0  # % TP1 קבוע — סגירת 50%
 TP_PCT_FIXED   = 10.5 # % TP מלא — RR 1:3 (3 × 3.5%)
+
+# ─── Sniper Exception — Override Kill-Switch under STRICT conditions ───────────
+SNIPER_MIN_SCORE   = 95    # ציון מינימום 4H — מעל 90 הרגיל
+SNIPER_EMA_PCT     = 5.0   # מחיר חייב תוך 5% מ-EMA200 (אין רדיפת פאמפים)
+SNIPER_VOL_MIN     = 2.5   # Volume לפחות 2.5× הממוצע — אישור כניסה
+SNIPER_MARGIN_MULT = 0.5   # Half-Size Entry: 50% מגודל הפוזיציה הרגיל
 
 
 def score_candles(df_15m, direction):
@@ -1438,26 +1538,30 @@ def _pnl_on_half(dist_pct):
 
 def open_demo_trade(symbol, price, reason, df_3h=None,
                     direction='LONG', score=0, atr=0, timeframe='4H', tf_reason='',
-                    rsi=None, ema200=None, fng_v=None):
+                    rsi=None, ema200=None, fng_v=None, sniper_mode=False):
     """
     פותח עסקת דמו עם SL/TP קבועים.
     SL=3.5% | TP1=5% (סגירת 50%) | TP=10.5% (RR 1:3) | BE=2%
     timeframe: '4H' / '1H' — גרף הכניסה שנבחר אדפטיבית
     fng_v: ערך FNG שכבר חושב ב-scan (כדי לא לשאול שוב)
+    sniper_mode: True → Half-Size Entry (50% מגודל הפוזיציה הרגיל)
     """
+    # ── Sniper Mode: מרג'ין מינימלי ──────────────────────────────────────────
+    effective_margin = MARGIN * SNIPER_MARGIN_MULT if sniper_mode else MARGIN
+
     # בדיקת יתרה — אין לפתוח עסקה אם אין מספיק כסף
-    if wallet.get('balance', STARTING_BALANCE) < MARGIN:
+    if wallet.get('balance', STARTING_BALANCE) < effective_margin:
         print(f"WALLET: insufficient balance (${wallet.get('balance', 0):.2f}) — skipping {symbol}")
-        send_msg(f"⚠️ *יתרה נמוכה* — אין מספיק להפקדת מרג'ין\nנדרש: ${MARGIN} | יש: ${wallet.get('balance', 0):.2f}")
+        send_msg(f"⚠️ *יתרה נמוכה* — אין מספיק להפקדת מרג'ין\nנדרש: ${effective_margin:.0f} | יש: ${wallet.get('balance', 0):.2f}")
         return
 
     # ── Sentiment Rules: position size & SL ──────────────────────────────────
     if fng_v is None:
         fng_v, _, _ = sentiment_check("open_trade")
-    pos_size = POSITION_SIZE   # default $500
+    pos_size = POSITION_SIZE * SNIPER_MARGIN_MULT if sniper_mode else POSITION_SIZE   # Sniper=Half-Size
     sl_pct   = SL_PCT_FIXED    # 3.5%
-    if fng_v >= GREED_THRESHOLD:
-        pos_size = round(POSITION_SIZE * 0.60)   # ×60% — Greed Filter
+    if fng_v >= GREED_THRESHOLD and not sniper_mode:
+        pos_size = round(POSITION_SIZE * 0.60)   # ×60% — Greed Filter (לא חל על Sniper)
         print(f"  [SENTIMENT] GREED ({fng_v}) → פוזיציה צומצמה ל-${pos_size}")
     if fng_v <= FEAR_THRESHOLD:
         sl_pct = SL_PCT_FIXED + FEAR_EXTRA_SL_PCT   # +1% — Fear buffer
@@ -1518,12 +1622,14 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         'ema200':          round(ema200, 6) if ema200 is not None else None,
         'score_breakdown': reason,
         'opened_at':       datetime.now().isoformat(timespec='seconds'),
-        'pos_size':        pos_size,    # נשמר לחישובי P&L בניהול עסקאות
-        'fng_at_entry':    fng_v,       # FNG בזמן הכניסה
+        'pos_size':        pos_size,        # נשמר לחישובי P&L בניהול עסקאות
+        'margin':          effective_margin, # מרג'ין בפועל ($50 רגיל / $25 Sniper)
+        'fng_at_entry':    fng_v,           # FNG בזמן הכניסה
+        'sniper':          sniper_mode,     # האם נפתח כ-Sniper Exception
     }
     with trades_lock:
         active_trades.append(trade)
-    wallet_deduct()        # ← נועל $50 מרג'ין בארנק
+    wallet_deduct(effective_margin)   # ← נועל מרג'ין בפועל בארנק
     save_active_trades()
 
     dir_header = get_direction_header(direction)
@@ -1554,7 +1660,10 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     msg += f"📍 Trailing: {TRAIL_PCT}% מהשיא (מיידי עם הרווח הראשון)\n\n"
     msg += f"{'─' * 26}\n"
     msg += f"💼 *Leverage: {LEVERAGE}x (Isolated)*\n"
-    msg += f"💰 בטחון: ${MARGIN} · נשלט: ${pos_size}\n"
+    if sniper_mode:
+        msg += f"🎯 *Sniper Entry* — מרג'ין: ${effective_margin:.0f} \\(Half\\-Size\\) · נשלט: ${pos_size:.0f}\n"
+    else:
+        msg += f"💰 בטחון: ${effective_margin:.0f} · נשלט: ${pos_size:.0f}\n"
     msg += f"{'─' * 26}\n"
     msg += f"📊 *Expected P&L*\n"
     msg += f"✅ Est\\. Profit at TP: *+${est_profit_tp}*\n"
@@ -1654,7 +1763,7 @@ def track_trades():
                         daily_stats['losses'] += 1
                     daily_stats['total_pnl'] += pnl_usd
                     daily_stats['close_reasons']['Trailing'] += 1
-                    wallet_credit(pnl_usd)
+                    wallet_credit(pnl_usd, trade.get('margin', MARGIN))
                     _log_closed_trade(trade, 'Trailing', pnl_usd, current_price)
                     ref = trade['peak_price']
                     eq  = _get_equity()
@@ -1725,7 +1834,7 @@ def track_trades():
                     if trade['be_triggered']:
                         daily_stats['losses'] += 1
                         daily_stats['close_reasons']['BE'] += 1
-                        wallet_credit(0)   # מרג'ין חוזר, ללא P&L
+                        wallet_credit(0, trade.get('margin', MARGIN))   # מרג'ין חוזר, ללא P&L
                         _log_closed_trade(trade, 'BE', 0.0, current_price)
                         eq = _get_equity()
                         send_msg(
@@ -1738,11 +1847,12 @@ def track_trades():
                         )
                     else:
                         loss     = round(pos_size * trade['sl_pct'] / 100, 2)
-                        loss_pct = round(loss / MARGIN * 100, 1)
+                        _trade_margin = trade.get('margin', MARGIN)
+                        loss_pct = round(loss / _trade_margin * 100, 1)
                         daily_stats['losses']    += 1
                         daily_stats['total_pnl'] -= loss
                         daily_stats['close_reasons']['SL'] += 1
-                        wallet_credit(-loss)   # מרג'ין חוזר פחות ההפסד
+                        wallet_credit(-loss, _trade_margin)   # מרג'ין חוזר פחות ההפסד
                         _log_closed_trade(trade, 'SL', -loss, current_price)
                         eq = _get_equity()
                         send_msg(
@@ -1780,7 +1890,7 @@ def track_trades():
                     daily_stats['wins']      += 1
                     daily_stats['total_pnl'] += tp_pnl
                     daily_stats['close_reasons']['TP'] += 1
-                    wallet_credit(total)
+                    wallet_credit(total, trade.get('margin', MARGIN))
                     _log_closed_trade(trade, 'TP', total, current_price)
                     eq = _get_equity()
                     est_tp_full = round(abs(current_price - entry) / entry * half, 2)
@@ -1812,7 +1922,7 @@ def track_trades():
                         daily_stats['losses'] += 1
                     daily_stats['total_pnl'] += half_pnl
                     daily_stats['close_reasons']['TP1+Trail'] += 1
-                    wallet_credit(total)
+                    wallet_credit(total, trade.get('margin', MARGIN))
                     _log_closed_trade(trade, 'TP1+Trail', total, current_price)
                     eq = _get_equity()
                     ref_price = trade['peak_price']
@@ -2207,7 +2317,7 @@ def handle_close(message):
 
         with trades_lock:
             active_trades.remove(trade)
-        wallet_credit(net_pnl)
+        wallet_credit(net_pnl, trade.get('margin', MARGIN))
         _log_closed_trade(trade, 'Manual', net_pnl, current_price)
         eq = _get_equity()
         save_active_trades()
@@ -2643,17 +2753,11 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
     if rejected_out is None:
         rejected_out = []
 
-    # ── Sentiment Kill-Switch (Extreme Fear < 15) ─────────────────────────────
+    # ── Sentiment Kill-Switch (Extreme Fear < EXTREME_FEAR_THRESHOLD) ────────
     fng_v_scan, fng_lbl_scan, fng_action = sentiment_check("scan")
-    if fng_v_scan < EXTREME_FEAR_THRESHOLD:
-        print(f"SENTIMENT KILL-SWITCH: FNG={fng_v_scan} < {EXTREME_FEAR_THRESHOLD} — סריקה בוטלה לגמרי")
-        for c in candidates:
-            rejected_out.append({
-                'symbol': c['symbol'], 'direction': direction, 'best_score': 0,
-                'reason': f'Sentiment Kill-Switch: FNG={fng_v_scan} (Extreme Fear < {EXTREME_FEAR_THRESHOLD})',
-                'scores': {},
-            })
-        return 0
+    kill_switch_active = fng_v_scan < EXTREME_FEAR_THRESHOLD
+    if kill_switch_active:
+        print(f"SENTIMENT KILL-SWITCH: FNG={fng_v_scan} < {EXTREME_FEAR_THRESHOLD} — בודק Sniper Exception לכל מועמד...")
 
     # ── BTC Market Regime Safety Switch ──
     if direction == 'LONG' and btc_regime == 'BEAR':
@@ -2710,6 +2814,43 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
             chosen_tf = '4H'
             chosen_df = df_4h
             tf_reason = 'טרנד חזק בגרף 4H'
+
+            # ── Sniper Exception — Kill-Switch פעיל בלבד ─────────────────────
+            if kill_switch_active:
+                _vol_avg_s   = df_4h['volume'].iloc[-12:-2].mean()
+                _vol_ratio_s = float(df_4h['volume'].iloc[-2] / _vol_avg_s) if _vol_avg_s > 0 else 0.0
+                sniper_ok, sniper_verdict, sniper_reason = sniper_claude_check(
+                    symbol=symbol, score=score_4h, direction=direction,
+                    df_4h=df_4h, df_1h=df_1h, vol_ratio=_vol_ratio_s,
+                    price=price, fng_v=fng_v_scan, btc_regime=btc_regime,
+                )
+                if sniper_ok:
+                    print(f"  🎯 SNIPER EXCEPTION: {symbol} — bypassing Kill-Switch! ({sniper_reason})")
+                    _sniper_notif = (
+                        f"🎯 *Sniper Entry \\— Kill\\-Switch Override\\!*\n\n"
+                        f"{'🟢' if direction == 'LONG' else '🔴'} `{symbol}` {direction} · 4H\n"
+                        f"📊 ציון: *{score_4h}/100* \\(≥ {SNIPER_MIN_SCORE}\\)\n"
+                        f"📐 {sniper_reason.replace('-', '\\-').replace('.', '\\.').replace('(', '\\(').replace(')', '\\)').replace('=', '\\=')}\n\n"
+                        f"⚠️ _Extreme Fear Market — FNG\\={fng_v_scan}_\n"
+                        f"💰 _Half\\-Size Entry: מרג'ין \\${MARGIN * SNIPER_MARGIN_MULT:.0f} במקום \\${MARGIN:.0f}_"
+                    )
+                    send_msg(_sniper_notif)
+                    open_demo_trade(
+                        symbol, price, f"Sniper Exception: {sniper_reason}",
+                        df_4h, direction=direction,
+                        score=score_4h, atr=atr,
+                        timeframe='4H', tf_reason='Sniper Kill-Switch Override',
+                        fng_v=fng_v_scan, sniper_mode=True,
+                    )
+                    found += 1
+                else:
+                    print(f"  [Sniper] ❌ {symbol}: {sniper_verdict} — {sniper_reason}")
+                    rejected_out.append({
+                        'symbol': symbol, 'direction': direction, 'best_score': score_4h,
+                        'reason': f'Kill-Switch + Sniper failed: {sniper_verdict}',
+                        'scores': {'4H': score_4h, '1H': 0, '15m': 0},
+                    })
+                continue  # skip normal flow when Kill-Switch active
 
             # ── שלב 2: אם 4H לא מספיק — נסה 1H ──
             if score < MIN_SCORE:
