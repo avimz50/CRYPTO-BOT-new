@@ -1,5 +1,5 @@
 {
-  "scan_time": "2026-03-29T07:57:57",
+  "scan_time": "2026-03-29T08:05:33",
   "total_scanned": 26,
   "signals_found": 0,
   "active_trades_count": 0,
@@ -39,7 +39,7 @@
       "scores": {}
     },
     {
-      "symbol": "WLD/USDT",
+      "symbol": "BSB/USDT",
       "direction": "LONG",
       "best_score": 0,
       "reason": "Sentiment Kill-Switch: FNG=9 (Extreme Fear < 13)",
@@ -47,63 +47,84 @@
     }
   ],
   "system_message": "Kill-Switch Sentiment: FNG=9 (Extreme Fear) — הסריקה בוטלה לבטיחות",
-  "scan_duration_s": 8.1,
+  "scan_duration_s": 7.0,
   "bubble_watch": [
     {
       "symbol": "PRL/USDT",
-      "change_pct": 16.48,
+      "change_pct": 16.7,
       "direction": "LONG",
-      "price": 0.18179,
-      "volume_usd": 4277699
+      "price": 0.1839,
+      "volume_usd": 4317240
     },
     {
       "symbol": "TRIA/USDT",
-      "change_pct": 16.43,
+      "change_pct": 16.18,
       "direction": "LONG",
-      "price": 0.031458,
-      "volume_usd": 5922972
+      "price": 0.031613,
+      "volume_usd": 5886520
     },
     {
       "symbol": "COLLECT/USDT",
-      "change_pct": 13.9,
+      "change_pct": 15.89,
       "direction": "LONG",
-      "price": 0.052425,
-      "volume_usd": 2949585
+      "price": 0.053013,
+      "volume_usd": 2950269
     },
     {
       "symbol": "CHZ/USDT",
-      "change_pct": 12.5,
+      "change_pct": 12.88,
       "direction": "LONG",
-      "price": 0.04041,
-      "volume_usd": 1235836
+      "price": 0.0403,
+      "volume_usd": 1234528
+    },
+    {
+      "symbol": "BSB/USDT",
+      "change_pct": 11.26,
+      "direction": "LONG",
+      "price": 0.23538,
+      "volume_usd": 1422715
     }
   ],
   "sandbox_analysis": [
     {
       "symbol": "PRL/USDT",
       "direction": "LONG",
-      "change_24h": 16.48,
-      "price": 0.18175,
-      "rsi_4h": 74.6,
-      "rsi_1h": 60.1,
-      "rsi_15m": 58.3,
+      "change_24h": 16.7,
+      "price": 0.18407,
+      "rsi_4h": 74.9,
+      "rsi_1h": 61.5,
+      "rsi_15m": 61.3,
       "volume_ratio": 1.99,
       "score": 0,
       "verdict": "REJECT ❌",
-      "analysis": "REJECT\nThe 4-hour RSI of 74.6 indicates the coin is overbought, while the 1-hour and 15-minute RSI show the momentum is cooling down. The high volume further suggests the recent rally may be unsustainable. Given the BTC bear market regime and Extreme Fear sentiment, the risk of a swift pullback is elevated."
+      "analysis": "The 3-TF RSI is overbought, indicating the move may be overextended.",
+      "ema200_4h": "N/A",
+      "fib_500": "N/A",
+      "fib_618": "N/A",
+      "entry_zone": "N/A",
+      "entry_reason": "N/A",
+      "rsi_wait": "N/A",
+      "overextended": false
     },
     {
       "symbol": "TRIA/USDT",
       "direction": "LONG",
-      "change_24h": 16.43,
-      "price": 0.031377,
-      "rsi_4h": 51.7,
-      "rsi_1h": 62.7,
-      "rsi_15m": 55.4,
+      "change_24h": 16.18,
+      "price": 0.031613,
+      "rsi_4h": 52.5,
+      "rsi_1h": 64.4,
+      "rsi_15m": 59.7,
       "volume_ratio": 0.79,
       "score": 0,
       "verdict": "REJECT ❌",
-      "analysis": "REJECT\nThe RSI alignment across the 4H, 1H, and 15m timeframes is not ideal, with the 1H RSI in overbought territory at 62.7. The technical score of 0/100 and the coin being 15.2% above the EMA200 further suggest this is not a strong setup. Given the current BTC BEAR regime, this LONG trade setup carries increased risk and is not advisable."
+      "analysis": "The 3-TF RSI is not in alignment, and the price is overextended above the 0.5 Fib level.",
+      "ema200_4h": 0.027246,
+      "fib_500": 0.030359,
+      "fib_618": 0.029831,
+      "entry_zone": "0.029831 - 0.030359",
+      "entry_reason": "Fib 0.618 pullback",
+      "rsi_wait": "Wait for RSI 15m to drop below 45",
+      "overextended": true
     }
   ]
 }

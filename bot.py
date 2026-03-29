@@ -417,12 +417,74 @@ def build_bubble_watch(gainers: list, losers: list, threshold: float = 10.0) -> 
     return bubbles[:10]
 
 
+def _sandbox_value_levels(df_4h, df_1h, price: float, direction: str) -> dict:
+    """
+    מחשב רמות כניסת ערך אידיאליות:
+    - EMA200 ב-4H (תמיכה/התנגדות מרכזית)
+    - Fibonacci 0.5 ו-0.618 מהתנועה האחרונה (20 נרות 1H)
+    מחזיר dict שנשלח ל-Claude כהקשר.
+    """
+    try:
+        ema200_4h = float(ta.ema(df_4h['close'], length=200).iloc[-1])
+        ema200_1h = float(ta.ema(df_1h['close'], length=200).iloc[-1])
+
+        # Swing High/Low מ-20 הנרות האחרונים ב-1H (~20 שעות של תנועה)
+        recent     = df_1h.iloc[-20:]
+        swing_high = float(recent['high'].max())
+        swing_low  = float(recent['low'].min())
+        rng        = swing_high - swing_low
+
+        if rng <= 0:
+            return {'ema200_4h': round(ema200_4h, 6)}
+
+        if direction == 'LONG':
+            # פולבק אחרי פאמפ — כניסה בסביבת 50%-61.8% ריטרייסמנט
+            fib_500 = round(swing_high - rng * 0.500, 6)   # מדיאנה
+            fib_618 = round(swing_high - rng * 0.618, 6)   # Golden ratio (עמוק יותר)
+        else:  # SHORT
+            # באונס אחרי דאמפ — כניסה בסביבת 50%-61.8% מהנפילה
+            fib_500 = round(swing_low + rng * 0.500, 6)
+            fib_618 = round(swing_low + rng * 0.618, 6)
+
+        return {
+            'ema200_4h':   round(ema200_4h, 6),
+            'ema200_1h':   round(ema200_1h, 6),
+            'fib_500':     fib_500,
+            'fib_618':     fib_618,
+            'swing_high':  round(swing_high, 6),
+            'swing_low':   round(swing_low, 6),
+            'range_pct':   round(rng / swing_low * 100, 2),
+        }
+    except Exception as e:
+        print(f"  [Sandbox] _sandbox_value_levels error: {e}")
+        return {}
+
+
+def _parse_sandbox_fields(text: str) -> dict:
+    """
+    מפרסר את התשובה המובנית של Claude.
+    מחפש שורות ENTRY_ZONE / ENTRY_REASON / RSI_WAIT.
+    """
+    fields = {'entry_zone': None, 'entry_reason': None, 'rsi_wait': None}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.upper().startswith('ENTRY_ZONE:'):
+            fields['entry_zone'] = stripped.split(':', 1)[1].strip()
+        elif stripped.upper().startswith('ENTRY_REASON:'):
+            fields['entry_reason'] = stripped.split(':', 1)[1].strip()
+        elif stripped.upper().startswith('RSI_WAIT:'):
+            fields['rsi_wait'] = stripped.split(':', 1)[1].strip()
+    return fields
+
+
 def claude_sandbox_analysis(bubble_watch_list: list, btc_regime: str,
                             fng_v: int, fng_lbl: str) -> list:
     """
     Sandbox Mode — ניתוח חינוכי בלבד כשה-Kill-Switch פעיל.
-    לוקח 2 המטבעות הבולטים מ-Bubble Watch, מושך נתוני 3 TF,
-    ושואל את Claude: 'אם ה-Kill-Switch היה כבוי, היית מאשר?'
+    מנתח TOP 2 מ-Bubble Watch עם:
+    - נתוני 3 TF (4H/1H/15m)
+    - רמות ערך (EMA200 + Fibonacci 0.5/0.618)
+    - שאלה היפותטית + הגדרת אזור כניסה אידיאלי
     לא פותח עסקאות בשום מקרה.
     """
     api_key = os.environ.get('ANTHROPIC_API_KEY', '')
@@ -447,56 +509,83 @@ def claude_sandbox_analysis(bubble_watch_list: list, btc_regime: str,
                 print(f"  [Sandbox] {symbol}: נתונים חסרים — מדלג")
                 continue
 
-            price = df_4h['close'].iloc[-1]
+            price = float(df_4h['close'].iloc[-1])
 
             # RSI על כל טיים-פריים
-            rsi_4h  = ta.rsi(df_4h['close'],  length=14).iloc[-1]
-            rsi_1h  = ta.rsi(df_1h['close'],  length=14).iloc[-1]
-            rsi_15m = ta.rsi(df_15m['close'], length=14).iloc[-1]
+            rsi_4h  = float(ta.rsi(df_4h['close'],  length=14).iloc[-1])
+            rsi_1h  = float(ta.rsi(df_1h['close'],  length=14).iloc[-1])
+            rsi_15m = float(ta.rsi(df_15m['close'], length=14).iloc[-1])
 
             # Volume ratio ב-4H
             vol_avg   = df_4h['volume'].iloc[-12:-2].mean()
             vol_ratio = df_4h['volume'].iloc[-2] / vol_avg if vol_avg > 0 else 0.0
 
-            # ניקוד טכני — לצורך הקשר בלבד (לא לפתיחת עסקה!)
+            # ניקוד טכני — לצורך הקשר בלבד
             score, breakdown, _atr = score_symbol(df_4h, df_1h, symbol, direction)
 
+            # ── Value Entry Levels ────────────────────────────────────────────
+            levels = _sandbox_value_levels(df_4h, df_1h, price, direction)
+            ema200_4h = levels.get('ema200_4h', 'N/A')
+            ema200_1h = levels.get('ema200_1h', 'N/A')
+            fib_500   = levels.get('fib_500', 'N/A')
+            fib_618   = levels.get('fib_618', 'N/A')
+            swing_h   = levels.get('swing_high', 'N/A')
+            swing_l   = levels.get('swing_low',  'N/A')
+            rng_pct   = levels.get('range_pct', 'N/A')
+
+            overextended = (
+                (direction == 'LONG'  and isinstance(fib_500, float) and price > fib_500 * 1.03) or
+                (direction == 'SHORT' and isinstance(fib_500, float) and price < fib_500 * 0.97)
+            )
+
             prompt = (
-                f"You are analyzing a crypto trade signal for EDUCATIONAL PURPOSES ONLY.\n"
-                f"The trading bot's Kill-Switch is ACTIVE due to Extreme Fear "
-                f"(Fear & Greed = {fng_v} / 100). No real trades are being opened.\n"
-                f"This is a hypothetical sandbox exercise.\n\n"
-                f"=== COIN OVERVIEW ===\n"
-                f"Symbol: {symbol}  |  Direction: {direction}\n"
-                f"24h Change: {change_24:+.1f}%  |  Current Price: {price:.6g}\n\n"
-                f"=== MULTI-TIMEFRAME TECHNICAL DATA ===\n"
-                f"RSI  4H : {rsi_4h:.1f}\n"
-                f"RSI  1H : {rsi_1h:.1f}\n"
-                f"RSI 15m : {rsi_15m:.1f}\n"
-                f"Volume vs 10-bar avg: {vol_ratio:.2f}×\n"
-                f"Technical Score (if eligible): {score}/100\n"
-                f"Score Breakdown: {breakdown}\n\n"
+                f"You are a senior crypto quant analyst. This is an EDUCATIONAL sandbox — "
+                f"NO trades are being opened (Kill-Switch ACTIVE, FNG={fng_v}).\n\n"
+                f"=== COIN ===\n"
+                f"Symbol: {symbol}  |  Direction: {direction}  |  24h Change: {change_24:+.1f}%\n"
+                f"Current Price: {price:.6g}\n"
+                f"Price is {'OVEREXTENDED above' if overextended and direction=='LONG' else 'OVEREXTENDED below' if overextended else 'near'} the 0.5 Fib level\n\n"
+                f"=== MULTI-TIMEFRAME RSI ===\n"
+                f"RSI 4H: {rsi_4h:.1f}  |  RSI 1H: {rsi_1h:.1f}  |  RSI 15m: {rsi_15m:.1f}\n"
+                f"Volume vs avg: {vol_ratio:.2f}×  |  Technical Score: {score}/100\n\n"
+                f"=== VALUE ENTRY LEVELS (pre-calculated) ===\n"
+                f"EMA 200 (4H): {ema200_4h}\n"
+                f"EMA 200 (1H): {ema200_1h}\n"
+                f"Recent Swing High: {swing_h}  |  Swing Low: {swing_l}  |  Range: {rng_pct}%\n"
+                f"Fibonacci 0.5  retracement: {fib_500}\n"
+                f"Fibonacci 0.618 retracement: {fib_618}\n\n"
                 f"=== MARKET CONTEXT ===\n"
-                f"BTC Market Regime: {btc_regime}\n"
-                f"Fear & Greed Index: {fng_v} ({fng_lbl}) — Extreme Fear\n\n"
-                f"=== YOUR TASK ===\n"
-                f"If the Kill-Switch was OFF and this coin was presented as a live signal:\n"
-                f"1. Start with APPROVE or REJECT (single word on line 1)\n"
-                f"2. Explain your logic based on the 3 timeframes and RSI alignment\n"
-                f"3. Comment on what the BTC {btc_regime} regime means for this setup\n"
-                f"4. Note any key risk in 1 sentence\n\n"
-                f"Keep your full response to 4 sentences maximum."
+                f"BTC Regime: {btc_regime}  |  Fear & Greed: {fng_v} ({fng_lbl})\n\n"
+                f"=== YOUR STRUCTURED RESPONSE ===\n"
+                f"Line 1: APPROVE or REJECT (single word — would you trade this if Kill-Switch was OFF?)\n"
+                f"Line 2: 1-sentence analysis of the 3-TF RSI alignment and whether the move is overextended\n"
+                f"Line 3: ENTRY_ZONE: [low_price] - [high_price]  "
+                f"(the ideal buy/short zone using EMA200 or Fib levels; use the pre-calculated values above)\n"
+                f"Line 4: ENTRY_REASON: [one phrase, e.g. 'EMA200 4H retest' or 'Fib 0.618 pullback']\n"
+                f"Line 5: RSI_WAIT: [exact RSI condition before entering, e.g. 'Wait for RSI 15m to drop below 45']\n\n"
+                f"Use ONLY the 5 lines above. No extra text."
             )
 
             client   = _anthropic.Anthropic(api_key=api_key)
             response = client.messages.create(
                 model="claude-3-haiku-20240307",
-                max_tokens=220,
+                max_tokens=200,
                 messages=[{"role": "user", "content": prompt}]
             )
-            analysis = response.content[0].text.strip()
-            verdict  = "APPROVE ✅" if analysis.upper().startswith("APPROVE") else "REJECT ❌"
-            print(f"  [Sandbox] {symbol} {direction}: {verdict.split()[0]}")
+            raw      = response.content[0].text.strip()
+            verdict  = "APPROVE ✅" if raw.upper().startswith("APPROVE") else "REJECT ❌"
+            parsed   = _parse_sandbox_fields(raw)
+
+            # שורה 2 = שורת הניתוח הכללי (לא ENTRY_ZONE / ENTRY_REASON / RSI_WAIT)
+            lines = [l.strip() for l in raw.splitlines() if l.strip()]
+            analysis_line = ""
+            for ln in lines[1:]:
+                if not any(ln.upper().startswith(k) for k in ('ENTRY_ZONE:', 'ENTRY_REASON:', 'RSI_WAIT:')):
+                    analysis_line = ln
+                    break
+
+            print(f"  [Sandbox] {symbol} {direction}: {verdict.split()[0]} | "
+                  f"Entry={parsed.get('entry_zone','?')} | Wait={parsed.get('rsi_wait','?')}")
 
             results.append({
                 'symbol':       symbol,
@@ -509,7 +598,15 @@ def claude_sandbox_analysis(bubble_watch_list: list, btc_regime: str,
                 'volume_ratio': round(vol_ratio, 2),
                 'score':        score,
                 'verdict':      verdict,
-                'analysis':     analysis,
+                'analysis':     analysis_line,
+                # Value Entry fields
+                'ema200_4h':    ema200_4h,
+                'fib_500':      fib_500,
+                'fib_618':      fib_618,
+                'entry_zone':   parsed.get('entry_zone'),
+                'entry_reason': parsed.get('entry_reason'),
+                'rsi_wait':     parsed.get('rsi_wait'),
+                'overextended': overextended,
             })
 
         except Exception as e:
@@ -2276,16 +2373,24 @@ def handle_scanreport(message):
         sandbox_msg += f"{'─' * 28}\n\n"
 
         for i, s in enumerate(sandbox, 1):
-            sym      = s.get('symbol', '?')
-            dir_     = s.get('direction', '')
-            chg      = s.get('change_24h', 0)
-            verdict  = s.get('verdict', '?')
-            analysis = s.get('analysis', '')
-            r4h      = s.get('rsi_4h')
-            r1h      = s.get('rsi_1h')
-            r15      = s.get('rsi_15m')
-            vol      = s.get('volume_ratio')
-            score    = s.get('score', 0)
+            sym           = s.get('symbol', '?')
+            dir_          = s.get('direction', '')
+            chg           = s.get('change_24h', 0)
+            verdict       = s.get('verdict', '?')
+            analysis      = s.get('analysis', '')
+            r4h           = s.get('rsi_4h')
+            r1h           = s.get('rsi_1h')
+            r15           = s.get('rsi_15m')
+            vol           = s.get('volume_ratio')
+            score         = s.get('score', 0)
+            entry_zone    = s.get('entry_zone')
+            entry_reason  = s.get('entry_reason')
+            rsi_wait      = s.get('rsi_wait')
+            ema200_4h     = s.get('ema200_4h')
+            fib_500       = s.get('fib_500')
+            fib_618       = s.get('fib_618')
+            overextended  = s.get('overextended', False)
+
             dir_e    = "🟢" if dir_ == 'LONG' else "🔴"
             chg_str  = f"{chg:+.1f}%" if chg is not None else "N/A"
             rsi_str  = (
@@ -2293,21 +2398,58 @@ def handle_scanreport(message):
                 if None not in (r4h, r1h, r15) else "N/A"
             )
             vol_str = f"{vol:.2f}×" if vol is not None else "N/A"
+            ext_tag = " ⚠️ _Overextended_" if overextended else ""
 
-            sandbox_msg += f"*{i}\\. {dir_e} `{sym}`*\n"
+            sandbox_msg += f"*{i}\\. {dir_e} `{sym}`*{ext_tag}\n"
             sandbox_msg += f"📈 שינוי 24h: *{chg_str}*\n"
             sandbox_msg += f"📊 RSI \\(3 TF\\): `{rsi_str}`\n"
-            sandbox_msg += f"📦 Volume: `{vol_str}` avg\n"
-            sandbox_msg += f"🎯 Score \\(if eligible\\): `{score}/100`\n"
+            sandbox_msg += f"📦 Volume: `{vol_str}` avg  ·  Score: `{score}/100`\n\n"
 
-            # Verdict bold
-            sandbox_msg += f"🤖 *Claude: {verdict}*\n\n"
+            # Claude verdict + analysis
+            sandbox_msg += f"🤖 *Claude: {verdict}*\n"
+            if analysis:
+                analysis_esc = (analysis[:250] + "…") if len(analysis) > 250 else analysis
+                for ch in r'_*[]()~`>#+-=|{}.!':
+                    analysis_esc = analysis_esc.replace(ch, f'\\{ch}')
+                sandbox_msg += f"_{analysis_esc}_\n\n"
 
-            # Claude analysis — escape all Markdown special chars
-            analysis_clean = (analysis[:400] + "…") if len(analysis) > 400 else analysis
-            for ch in r'_*[]()~`>#+-=|{}.!':
-                analysis_clean = analysis_clean.replace(ch, f'\\{ch}')
-            sandbox_msg += f"💬 _{analysis_clean}_\n"
+            # ── Value Entry Section ──────────────────────────────────────────
+            sandbox_msg += f"{'─' * 22}\n"
+            sandbox_msg += f"📐 *Value Entry Levels*\n"
+
+            # Pre-computed reference levels
+            if ema200_4h:
+                ema_str = str(ema200_4h)
+                for ch in r'_*[]()~`>#+-=|{}.!':
+                    ema_str = ema_str.replace(ch, f'\\{ch}')
+                sandbox_msg += f"  EMA 200 \\(4H\\): `{ema_str}`\n"
+            if fib_500 and fib_618:
+                f5 = str(fib_500)
+                f6 = str(fib_618)
+                for ch in r'_*[]()~`>#+-=|{}.!':
+                    f5 = f5.replace(ch, f'\\{ch}')
+                    f6 = f6.replace(ch, f'\\{ch}')
+                lbl = "Pullback" if dir_ == 'LONG' else "Bounce"
+                sandbox_msg += f"  Fib 0\\.5  \\({lbl}\\): `{f5}`\n"
+                sandbox_msg += f"  Fib 0\\.618 \\({lbl}\\): `{f6}`\n"
+            sandbox_msg += "\n"
+
+            # Claude's ideal entry zone
+            if entry_zone:
+                ez = entry_zone
+                for ch in r'_*[]()~`>#+-=|{}.!':
+                    ez = ez.replace(ch, f'\\{ch}')
+                sandbox_msg += f"🎯 *Ideal Entry Zone:* `{ez}`\n"
+            if entry_reason:
+                er = entry_reason
+                for ch in r'_*[]()~`>#+-=|{}.!':
+                    er = er.replace(ch, f'\\{ch}')
+                sandbox_msg += f"💡 *Reason:* _{er}_\n"
+            if rsi_wait:
+                rw = rsi_wait
+                for ch in r'_*[]()~`>#+-=|{}.!':
+                    rw = rw.replace(ch, f'\\{ch}')
+                sandbox_msg += f"⏳ *RSI Condition:* _{rw}_\n"
 
             if i < len(sandbox):
                 sandbox_msg += f"\n{'─' * 28}\n\n"
