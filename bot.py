@@ -444,6 +444,11 @@ trades_lock        = threading.RLock()   # מגן מ-race conditions בין Thre
 # לוג עסקאות סגורות (48 שעות אחרונות) לדוח ה-Drive
 closed_trades_log  = []
 
+# ─── Watch List — מעקב מטבעות ספציפיים כל 15 דקות ───────────────────────────
+# מבנה: { 'SOL/USDT': {'direction':'LONG','added_at':..., 'last_score':0, 'expires_at':...} }
+watch_list: dict = {}
+watch_lock = threading.Lock()
+
 # Audit report — שעות שליחה ומעקב שהוגש
 AUDIT_HOURS        = {12}       # 12:00 בצהריים — דוח יומי
 _last_audit_hour   = None       # מונע כפילות באותה שעה
@@ -2372,6 +2377,92 @@ def handle_dashboard(message):
         f"_תראה שם: Top 15 מועמדים חמים, גיינרים, ווליום ועוד_"
     )
 
+@bot.message_handler(commands=['watch'])
+def handle_watch(message):
+    """
+    /watch SOL LONG  — מתחיל מעקב כל 15 דקות
+    /watch SOL SHORT — מעקב SHORT
+    /watch           — מציג רשימת מעקב פעילה
+    """
+    parts = message.text.strip().split()
+
+    # /watch ללא פרמטרים — הצג רשימה
+    if len(parts) == 1:
+        with watch_lock:
+            if not watch_list:
+                send_msg("🔭 *Watch List ריק*\n_השתמש: /watch SOL LONG_")
+                return
+            lines = []
+            for sym, e in watch_list.items():
+                remaining = max(0, int((e['expires_at'] - time.time()) / 3600))
+                lines.append(
+                    f"  {'🟢' if e['direction']=='LONG' else '🔴'} `{sym}` {e['direction']} "
+                    f"— ציון אחרון: *{e.get('last_score', '—')}* | פוקע בעוד {remaining}ש'"
+                )
+        send_msg("🔭 *Watch List פעיל:*\n" + "\n".join(lines) + "\n\n_/unwatch SOL — להסרה_")
+        return
+
+    # /watch SOL או /watch SOL LONG
+    raw_symbol = parts[1].upper()
+    direction  = parts[2].upper() if len(parts) >= 3 else 'LONG'
+    if direction not in ('LONG', 'SHORT'):
+        send_msg("⚠️ כיוון חייב להיות LONG או SHORT\n_דוגמה: /watch SOL LONG_")
+        return
+
+    symbol = raw_symbol + '/USDT' if '/' not in raw_symbol else raw_symbol
+
+    # רישום ב-watch_list
+    entry = {
+        'direction':  direction,
+        'added_at':   now_il().isoformat(timespec='seconds'),
+        'expires_at': time.time() + 24 * 3600,
+        'last_score': 0,
+    }
+    with watch_lock:
+        watch_list[symbol] = entry
+
+    dir_emoji = "🟢" if direction == 'LONG' else "🔴"
+    sym_clean = symbol.replace('/', '\\/')
+    send_msg(
+        f"🔭 *Watch הופעל — {sym_clean} {direction}*\n\n"
+        f"{dir_emoji} מעקב כל *15 דקות* למשך 24 שעות\n"
+        f"📊 עדכון יישלח בכל שינוי של ≥5 נקודות בציון\n"
+        f"🚨 התראה מיוחדת אם ציון יגיע ≥90\n\n"
+        f"_/unwatch {raw_symbol} להפסקת המעקב_\n"
+        f"_מריץ ניתוח ראשוני..._"
+    )
+
+    # בדיקה ראשונה מיידית ב-Thread נפרד (לא לחסום את הטלגרם)
+    def _first_check():
+        time.sleep(2)
+        with watch_lock:
+            e = watch_list.get(symbol)
+        if e:
+            _run_watch_check(symbol, e, silent=False)
+
+    threading.Thread(target=_first_check, daemon=True).start()
+
+
+@bot.message_handler(commands=['unwatch'])
+def handle_unwatch(message):
+    """/unwatch SOL — מסיר מ-Watch List"""
+    parts = message.text.strip().split()
+    if len(parts) < 2:
+        send_msg("_שימוש: /unwatch SOL_")
+        return
+
+    raw_symbol = parts[1].upper()
+    symbol = raw_symbol + '/USDT' if '/' not in raw_symbol else raw_symbol
+
+    with watch_lock:
+        removed = watch_list.pop(symbol, None)
+
+    if removed:
+        send_msg(f"🔭 *Watch הופסק — {symbol.replace('/', '\\/')}*\n_המטבע הוסר מרשימת המעקב_")
+    else:
+        send_msg(f"⚠️ `{symbol}` לא נמצא ב\\-Watch List")
+
+
 @bot.message_handler(commands=['home', 'start', 'help', 'menu'])
 def handle_home(message):
     """מסך ראשי — כל הפקודות של הבוט."""
@@ -2403,6 +2494,11 @@ def handle_home(message):
         f"  /scan              — סריקה ידנית עכשיו\n"
         f"  /close BTC         — סגירת עסקה ידנית\n"
         f"  /update BTC 84000 95000 — עדכון SL/TP\n\n"
+        f"🔭 *Watch — מעקב מטבע ספציפי*\n"
+        f"  /watch SOL LONG    — מעקב כל 15 דקות\n"
+        f"  /watch SOL SHORT   — מעקב SHORT\n"
+        f"  /watch             — רשימת מעקב פעילה\n"
+        f"  /unwatch SOL       — הפסקת מעקב\n\n"
         f"🖥 *דאשבורד*\n"
         f"  /dashboard — קבל קישור לדאשבורד\n"
         f"  [👉 פתח דאשבורד]({DASHBOARD_URL})\n\n"
@@ -3010,6 +3106,125 @@ def _maybe_run_drive_audit():
             print(f"Audit error: {e}")
 
 
+def _run_watch_check(symbol: str, entry: dict, silent: bool = False) -> int:
+    """
+    מריץ ניתוח טכני על מטבע ב-Watch List ושולח עדכון לטלגרם.
+    מחזיר את הציון שנמצא (0 אם שגיאה).
+    silent=True → לא שולח הודעה אם אין שינוי משמעותי (רק אם ציון עלה/ירד ≥5)
+    """
+    direction    = entry.get('direction', 'LONG')
+    last_score   = entry.get('last_score', 0)
+    try:
+        df_4h = get_data(symbol, timeframe='4h', limit=250)
+        df_1h = get_data(symbol, timeframe='1h', limit=250)
+        price = float(df_4h['close'].iloc[-1])
+
+        score, breakdown, atr = score_symbol(df_4h, df_1h, symbol, direction)
+
+        # ── מדדים לדוח ──────────────────────────────────────────────────────
+        rsi_4h_s = ta.rsi(df_4h['close'], length=14)
+        rsi_1h_s = ta.rsi(df_1h['close'], length=14)
+        rsi_4h   = float(rsi_4h_s.iloc[-1]) if rsi_4h_s is not None else None
+        rsi_1h   = float(rsi_1h_s.iloc[-1]) if rsi_1h_s is not None else None
+
+        ema200_s = ta.ema(df_4h['close'], length=200)
+        ema200   = float(ema200_s.iloc[-1]) if ema200_s is not None else None
+        ema_dist = round(abs(price - ema200) / ema200 * 100, 1) if ema200 else None
+        ema_dir  = "↑" if price > ema200 else "↓"
+
+        vol_avg   = df_4h['volume'].iloc[-12:-2].mean()
+        vol_ratio = round(df_4h['volume'].iloc[-2] / vol_avg, 2) if vol_avg > 0 else None
+
+        # ── שינוי ציון ──────────────────────────────────────────────────────
+        score_delta = score - last_score
+        entry['last_score'] = score
+
+        # ── רמת עניין ───────────────────────────────────────────────────────
+        if score >= MIN_SCORE:
+            level = "🚨 *מוכן לעסקה\\!*"
+        elif score >= 85:
+            level = "⚠️ *חם — קרוב לסף*"
+        elif score >= 70:
+            level = "🔥 מתחמם"
+        else:
+            level = "❄️ קר"
+
+        # silent mode — שולח רק אם שינוי ≥5 נקודות
+        if silent and abs(score_delta) < 5:
+            return score
+
+        now_str   = now_il().strftime('%H:%M')
+        dir_emoji = "🟢" if direction == 'LONG' else "🔴"
+        sym_clean = symbol.replace('/', '\\/')
+        delta_str = f"\\({score_delta:+d} מהבדיקה הקודמת\\)" if last_score > 0 else "\\(בדיקה ראשונה\\)"
+        rsi_str   = f"RSI 4H: `{rsi_4h:.1f}`" + (f" | 1H: `{rsi_1h:.1f}`" if rsi_1h else "")
+        ema_str   = f"`{ema_dist:.1f}%` {ema_dir}EMA200" if ema_dist is not None else "N/A"
+        vol_str   = f"`{vol_ratio:.2f}×`" if vol_ratio else "N/A"
+        ema_ok    = "✅" if ema_dist is not None and ema_dist <= SNIPER_EMA_PCT else "⚠️"
+        vol_ok    = "✅" if vol_ratio and vol_ratio >= SNIPER_VOL_MIN else "—"
+
+        score_bar = "█" * (score // 10) + "░" * (10 - score // 10)
+
+        msg = (
+            f"🔭 *Watch Update — {sym_clean} {direction}*\n"
+            f"⏰ {now_str}\n"
+            f"{'─' * 26}\n"
+            f"{dir_emoji} ציון: *{score}/100* {level}\n"
+            f"`{score_bar}` {delta_str}\n\n"
+            f"📉 {rsi_str}\n"
+            f"📐 EMA200: {ema_str} {ema_ok}\n"
+            f"📦 Volume: {vol_str} {vol_ok}\n"
+            f"💰 מחיר: `{price:.6g}`\n"
+        )
+
+        if score >= MIN_SCORE:
+            fng_v, _, _ = sentiment_check("watch")
+            if fng_v < EXTREME_FEAR_THRESHOLD:
+                msg += f"\n⚠️ _Kill\\-Switch פעיל \\(FNG\\={fng_v}\\) — Sniper Exception יבדוק בסריקה_"
+            else:
+                msg += f"\n✅ _הבוט יפתח עסקה בסריקה הבאה אם הציון יחזיק_"
+        elif score >= 85:
+            msg += f"\n_עוד *{MIN_SCORE - score}* נקודות לעסקה_"
+
+        send_msg(msg)
+        return score
+
+    except Exception as e:
+        print(f"[Watch] Error checking {symbol}: {e}")
+        if not silent:
+            send_msg(f"⚠️ *Watch שגיאה* — `{symbol}`: {str(e)[:60]}")
+        return 0
+
+
+def watch_loop():
+    """
+    Thread נפרד — בודק כל מטבע ב-Watch List כל 15 דקות.
+    שולח עדכון גם אם אין שינוי גדול (ק 5 נקודות — silent).
+    """
+    WATCH_INTERVAL = 15 * 60   # 15 דקות
+    WATCH_TTL      = 24 * 3600  # פג תוקף אחרי 24 שעות
+
+    while True:
+        time.sleep(WATCH_INTERVAL)
+        with watch_lock:
+            to_remove = []
+            items = list(watch_list.items())
+
+        for symbol, entry in items:
+            # בדיקת פג תוקף
+            expires_ts = entry.get('expires_at', 0)
+            if time.time() > expires_ts:
+                with watch_lock:
+                    watch_list.pop(symbol, None)
+                send_msg(
+                    f"🔭 *Watch פג תוקף — {symbol.replace('/',  '\\/')}*\n"
+                    f"_24 שעות עברו — הוסף שוב עם /watch_"
+                )
+                continue
+
+            _run_watch_check(symbol, entry, silent=True)
+
+
 def scan_loop():
     """
     רץ בThread נפרד.
@@ -3171,6 +3386,10 @@ def main():
     # Thread 3 — סריקת איתותים כל שעה
     scan_thread = threading.Thread(target=scan_loop, daemon=True)
     scan_thread.start()
+
+    # Thread 4 — Watch List: מעקב מטבעות ספציפיים כל 15 דקות
+    watch_thread = threading.Thread(target=watch_loop, daemon=True)
+    watch_thread.start()
 
     if IS_DEPLOYED:
         send_msg(

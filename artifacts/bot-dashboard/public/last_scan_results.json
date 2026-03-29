@@ -1,5 +1,5 @@
 {
-  "scan_time": "2026-03-29T19:27:30",
+  "scan_time": "2026-03-29T21:25:14+03:00",
   "total_scanned": 33,
   "signals_found": 0,
   "active_trades_count": 0,
@@ -22,36 +22,28 @@
       }
     },
     {
-      "symbol": "FET/USDT",
-      "direction": "SHORT",
-      "best_score": 50,
-      "reason": "Kill-Switch + Sniper failed: SCORE TOO LOW",
-      "scores": {
-        "4H": 50,
-        "1H": 0,
-        "15m": 0
-      }
-    },
-    {
-      "symbol": "CHZ/USDT",
-      "direction": "SHORT",
-      "best_score": 5,
-      "reason": "Kill-Switch + Sniper failed: SCORE TOO LOW",
-      "scores": {
-        "4H": 5,
-        "1H": 0,
-        "15m": 0
-      }
-    },
-    {
-      "symbol": "PRL/USDT",
+      "symbol": "STO/USDT",
       "direction": "LONG",
       "best_score": 0,
       "reason": "BTC BEAR Regime — LONGs חסומים",
       "scores": {}
     },
     {
-      "symbol": "STO/USDT",
+      "symbol": "AIA/USDT",
+      "direction": "LONG",
+      "best_score": 0,
+      "reason": "BTC BEAR Regime — LONGs חסומים",
+      "scores": {}
+    },
+    {
+      "symbol": "SENT/USDT",
+      "direction": "LONG",
+      "best_score": 0,
+      "reason": "BTC BEAR Regime — LONGs חסומים",
+      "scores": {}
+    },
+    {
+      "symbol": "BSB/USDT",
       "direction": "LONG",
       "best_score": 0,
       "reason": "BTC BEAR Regime — LONGs חסומים",
@@ -59,105 +51,98 @@
     }
   ],
   "system_message": "אף מטבע לא הגיע לציון 90/100. הטוב ביותר: HYPE/USDT עם 65/100",
-  "scan_duration_s": 8.9,
+  "scan_duration_s": 10.5,
   "bubble_watch": [
     {
       "symbol": "CORE/USDT",
-      "change_pct": -52.11,
+      "change_pct": -51.2,
       "direction": "SHORT",
-      "price": 0.0318,
-      "volume_usd": 1144601
-    },
-    {
-      "symbol": "PRL/USDT",
-      "change_pct": 29.89,
-      "direction": "LONG",
-      "price": 0.19961,
-      "volume_usd": 18993478
+      "price": 0.0324,
+      "volume_usd": 1279870
     },
     {
       "symbol": "STO/USDT",
-      "change_pct": 29.07,
+      "change_pct": 32.29,
       "direction": "LONG",
-      "price": 0.14633,
-      "volume_usd": 1366133
-    },
-    {
-      "symbol": "SENT/USDT",
-      "change_pct": 21.91,
-      "direction": "LONG",
-      "price": 0.019561,
-      "volume_usd": 1872290
-    },
-    {
-      "symbol": "COLLECT/USDT",
-      "change_pct": 19.69,
-      "direction": "LONG",
-      "price": 0.05105,
-      "volume_usd": 1893521
-    },
-    {
-      "symbol": "BSB/USDT",
-      "change_pct": 18.02,
-      "direction": "LONG",
-      "price": 0.23391,
-      "volume_usd": 1440693
+      "price": 0.15205,
+      "volume_usd": 1681961
     },
     {
       "symbol": "AIA/USDT",
-      "change_pct": 15.79,
+      "change_pct": 28.78,
       "direction": "LONG",
-      "price": 0.118192,
-      "volume_usd": 2373787
+      "price": 0.133456,
+      "volume_usd": 2907305
     },
     {
-      "symbol": "Q/USDT",
-      "change_pct": 10.43,
+      "symbol": "SENT/USDT",
+      "change_pct": 21.92,
       "direction": "LONG",
-      "price": 0.0097591,
-      "volume_usd": 1370524
+      "price": 0.019898,
+      "volume_usd": 2025725
+    },
+    {
+      "symbol": "BSB/USDT",
+      "change_pct": 15.23,
+      "direction": "LONG",
+      "price": 0.24545,
+      "volume_usd": 1450986
+    },
+    {
+      "symbol": "PRL/USDT",
+      "change_pct": 14.66,
+      "direction": "LONG",
+      "price": 0.18642,
+      "volume_usd": 19402040
+    },
+    {
+      "symbol": "COLLECT/USDT",
+      "change_pct": 14.27,
+      "direction": "LONG",
+      "price": 0.051288,
+      "volume_usd": 1773446
     }
   ],
   "sandbox_analysis": [
     {
       "symbol": "CORE/USDT",
       "direction": "SHORT",
-      "change_24h": -52.11,
-      "price": 0.0318,
-      "rsi_4h": 7.2,
-      "rsi_1h": 10.1,
-      "rsi_15m": 26.0,
+      "change_24h": -51.2,
+      "price": 0.0325,
+      "rsi_4h": 7.3,
+      "rsi_1h": 12.8,
+      "rsi_15m": 34.4,
       "volume_ratio": 29.44,
       "score": 0,
       "verdict": "REJECT ❌",
-      "analysis": "The 3-TF RSI is deeply oversold, indicating the move is overextended.",
-      "ema200_4h": 0.076005,
+      "analysis": "The 3-TF RSI alignment indicates a highly oversold and overextended market condition.",
+      "ema200_4h": 0.076012,
       "fib_500": 0.04785,
       "fib_618": 0.052228,
       "entry_zone": "0.04785 - 0.052228",
-      "entry_reason": "Fib 0.5/0.618 retracement",
-      "rsi_wait": "Wait for RSI 15m to bounce above 30",
+      "entry_reason": "Fibonacci 0.5/0.618 retracement",
+      "rsi_wait": "Wait for RSI 15m to drop below 45",
       "overextended": true
     },
     {
-      "symbol": "PRL/USDT",
+      "symbol": "STO/USDT",
       "direction": "LONG",
-      "change_24h": 29.89,
-      "price": 0.1996,
-      "rsi_4h": 77.0,
-      "rsi_1h": 62.7,
-      "rsi_15m": 54.7,
-      "volume_ratio": 2.41,
+      "change_24h": 32.29,
+      "price": 0.15224,
+      "rsi_4h": 78.6,
+      "rsi_1h": 63.6,
+      "rsi_15m": 46.9,
+      "volume_ratio": 2.49,
       "score": 0,
       "verdict": "REJECT ❌",
-      "analysis": "The 3-TF RSI alignment suggests the move is overextended.",
-      "ema200_4h": "N/A",
-      "fib_500": "N/A",
-      "fib_618": "N/A",
-      "entry_zone": "N/A",
-      "entry_reason": "N/A",
-      "rsi_wait": "N/A",
-      "overextended": false
+      "analysis": "The 3-TF RSI alignment shows the move is overextended, with the 4H RSI in overbought territory.",
+      "ema200_4h": 0.078849,
+      "fib_500": 0.14162,
+      "fib_618": 0.135276,
+      "entry_zone": "0.135276 - 0.14162",
+      "entry_reason": "Fib 0.618 pullback",
+      "rsi_wait": "Wait for RSI 15m to drop below 45",
+      "overextended": true
     }
   ]
 }
