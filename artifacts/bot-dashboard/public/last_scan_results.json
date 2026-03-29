@@ -1,6 +1,6 @@
 {
-  "scan_time": "2026-03-29T09:56:33",
-  "total_scanned": 31,
+  "scan_time": "2026-03-29T19:27:30",
+  "total_scanned": 33,
   "signals_found": 0,
   "active_trades_count": 0,
   "max_trades": 5,
@@ -11,93 +11,146 @@
   "market_sentiment_factor": "Fear & Greed=9 (Extreme Fear) — Kill-Switch הפעיל: כל הסריקות בוטלו",
   "rejected_coins": [
     {
-      "symbol": "PRL/USDT",
-      "direction": "LONG",
-      "best_score": 0,
-      "reason": "Sentiment Kill-Switch: FNG=9 (Extreme Fear < 13)",
-      "scores": {}
+      "symbol": "HYPE/USDT",
+      "direction": "SHORT",
+      "best_score": 65,
+      "reason": "Kill-Switch + Sniper failed: SCORE TOO LOW",
+      "scores": {
+        "4H": 65,
+        "1H": 0,
+        "15m": 0
+      }
     },
     {
-      "symbol": "TRIA/USDT",
-      "direction": "LONG",
-      "best_score": 0,
-      "reason": "Sentiment Kill-Switch: FNG=9 (Extreme Fear < 13)",
-      "scores": {}
+      "symbol": "FET/USDT",
+      "direction": "SHORT",
+      "best_score": 50,
+      "reason": "Kill-Switch + Sniper failed: SCORE TOO LOW",
+      "scores": {
+        "4H": 50,
+        "1H": 0,
+        "15m": 0
+      }
     },
     {
       "symbol": "CHZ/USDT",
+      "direction": "SHORT",
+      "best_score": 5,
+      "reason": "Kill-Switch + Sniper failed: SCORE TOO LOW",
+      "scores": {
+        "4H": 5,
+        "1H": 0,
+        "15m": 0
+      }
+    },
+    {
+      "symbol": "PRL/USDT",
       "direction": "LONG",
       "best_score": 0,
-      "reason": "Sentiment Kill-Switch: FNG=9 (Extreme Fear < 13)",
+      "reason": "BTC BEAR Regime — LONGs חסומים",
       "scores": {}
     },
     {
-      "symbol": "BSB/USDT",
+      "symbol": "STO/USDT",
       "direction": "LONG",
       "best_score": 0,
-      "reason": "Sentiment Kill-Switch: FNG=9 (Extreme Fear < 13)",
-      "scores": {}
-    },
-    {
-      "symbol": "COLLECT/USDT",
-      "direction": "LONG",
-      "best_score": 0,
-      "reason": "Sentiment Kill-Switch: FNG=9 (Extreme Fear < 13)",
+      "reason": "BTC BEAR Regime — LONGs חסומים",
       "scores": {}
     }
   ],
-  "system_message": "אף מטבע לא הגיע לציון 90/100. הטוב ביותר: PRL/USDT עם 0/100",
-  "scan_duration_s": 3.6,
+  "system_message": "אף מטבע לא הגיע לציון 90/100. הטוב ביותר: HYPE/USDT עם 65/100",
+  "scan_duration_s": 8.9,
   "bubble_watch": [
     {
+      "symbol": "CORE/USDT",
+      "change_pct": -52.11,
+      "direction": "SHORT",
+      "price": 0.0318,
+      "volume_usd": 1144601
+    },
+    {
       "symbol": "PRL/USDT",
-      "change_pct": 18.22,
+      "change_pct": 29.89,
       "direction": "LONG",
-      "price": 0.18691,
-      "volume_usd": 8870019
+      "price": 0.19961,
+      "volume_usd": 18993478
     },
     {
-      "symbol": "TRIA/USDT",
-      "change_pct": 14.88,
+      "symbol": "STO/USDT",
+      "change_pct": 29.07,
       "direction": "LONG",
-      "price": 0.03155,
-      "volume_usd": 5432822
+      "price": 0.14633,
+      "volume_usd": 1366133
     },
     {
-      "symbol": "CHZ/USDT",
-      "change_pct": 13.37,
+      "symbol": "SENT/USDT",
+      "change_pct": 21.91,
       "direction": "LONG",
-      "price": 0.04114,
-      "volume_usd": 1254939
-    },
-    {
-      "symbol": "BSB/USDT",
-      "change_pct": 11.99,
-      "direction": "LONG",
-      "price": 0.22265,
-      "volume_usd": 1392551
+      "price": 0.019561,
+      "volume_usd": 1872290
     },
     {
       "symbol": "COLLECT/USDT",
-      "change_pct": 11.64,
+      "change_pct": 19.69,
       "direction": "LONG",
-      "price": 0.051229,
-      "volume_usd": 3014098
+      "price": 0.05105,
+      "volume_usd": 1893521
+    },
+    {
+      "symbol": "BSB/USDT",
+      "change_pct": 18.02,
+      "direction": "LONG",
+      "price": 0.23391,
+      "volume_usd": 1440693
+    },
+    {
+      "symbol": "AIA/USDT",
+      "change_pct": 15.79,
+      "direction": "LONG",
+      "price": 0.118192,
+      "volume_usd": 2373787
+    },
+    {
+      "symbol": "Q/USDT",
+      "change_pct": 10.43,
+      "direction": "LONG",
+      "price": 0.0097591,
+      "volume_usd": 1370524
     }
   ],
   "sandbox_analysis": [
     {
-      "symbol": "PRL/USDT",
-      "direction": "LONG",
-      "change_24h": 18.22,
-      "price": 0.187,
-      "rsi_4h": 75.3,
-      "rsi_1h": 63.4,
-      "rsi_15m": 61.4,
-      "volume_ratio": 1.99,
+      "symbol": "CORE/USDT",
+      "direction": "SHORT",
+      "change_24h": -52.11,
+      "price": 0.0318,
+      "rsi_4h": 7.2,
+      "rsi_1h": 10.1,
+      "rsi_15m": 26.0,
+      "volume_ratio": 29.44,
       "score": 0,
       "verdict": "REJECT ❌",
-      "analysis": "The 3-TF RSI is overbought and the move appears overextended.",
+      "analysis": "The 3-TF RSI is deeply oversold, indicating the move is overextended.",
+      "ema200_4h": 0.076005,
+      "fib_500": 0.04785,
+      "fib_618": 0.052228,
+      "entry_zone": "0.04785 - 0.052228",
+      "entry_reason": "Fib 0.5/0.618 retracement",
+      "rsi_wait": "Wait for RSI 15m to bounce above 30",
+      "overextended": true
+    },
+    {
+      "symbol": "PRL/USDT",
+      "direction": "LONG",
+      "change_24h": 29.89,
+      "price": 0.1996,
+      "rsi_4h": 77.0,
+      "rsi_1h": 62.7,
+      "rsi_15m": 54.7,
+      "volume_ratio": 2.41,
+      "score": 0,
+      "verdict": "REJECT ❌",
+      "analysis": "The 3-TF RSI alignment suggests the move is overextended.",
       "ema200_4h": "N/A",
       "fib_500": "N/A",
       "fib_618": "N/A",
@@ -105,26 +158,6 @@
       "entry_reason": "N/A",
       "rsi_wait": "N/A",
       "overextended": false
-    },
-    {
-      "symbol": "TRIA/USDT",
-      "direction": "LONG",
-      "change_24h": 14.88,
-      "price": 0.03158,
-      "rsi_4h": 52.4,
-      "rsi_1h": 62.5,
-      "rsi_15m": 54.2,
-      "volume_ratio": 0.79,
-      "score": 0,
-      "verdict": "REJECT ❌",
-      "analysis": "The 3-TF RSI alignment is mixed, and the price is overextended above the 0.5 Fib level.",
-      "ema200_4h": 0.027245,
-      "fib_500": 0.030505,
-      "fib_618": 0.030011,
-      "entry_zone": "0.030011 - 0.030505",
-      "entry_reason": "Fib 0.618 pullback",
-      "rsi_wait": "Wait for RSI 15m to drop below 45",
-      "overextended": true
     }
   ]
 }
