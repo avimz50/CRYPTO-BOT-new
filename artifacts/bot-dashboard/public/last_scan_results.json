@@ -1,81 +1,81 @@
 {
-  "scan_time": "2026-03-28T23:19:42",
-  "total_scanned": 28,
+  "scan_time": "2026-03-29T07:33:57",
+  "total_scanned": 27,
   "signals_found": 0,
   "active_trades_count": 0,
   "max_trades": 5,
   "min_score": 90,
   "btc_regime": "BEAR",
-  "fng_value": 12,
+  "fng_value": 9,
   "fng_label": "Extreme Fear",
-  "market_sentiment_factor": "Fear & Greed=12 (Extreme Fear) — Kill-Switch הפעיל: כל הסריקות בוטלו",
+  "market_sentiment_factor": "Fear & Greed=9 (Extreme Fear) — Kill-Switch הפעיל: כל הסריקות בוטלו",
   "rejected_coins": [
-    {
-      "symbol": "TRIA/USDT",
-      "direction": "LONG",
-      "best_score": 0,
-      "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 13)",
-      "scores": {}
-    },
-    {
-      "symbol": "RIVER/USDT",
-      "direction": "LONG",
-      "best_score": 0,
-      "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 13)",
-      "scores": {}
-    },
     {
       "symbol": "PRL/USDT",
       "direction": "LONG",
       "best_score": 0,
-      "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 13)",
+      "reason": "Sentiment Kill-Switch: FNG=9 (Extreme Fear < 13)",
       "scores": {}
     },
     {
-      "symbol": "FET/USDT",
+      "symbol": "TRIA/USDT",
       "direction": "LONG",
       "best_score": 0,
-      "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 13)",
+      "reason": "Sentiment Kill-Switch: FNG=9 (Extreme Fear < 13)",
       "scores": {}
     },
     {
-      "symbol": "CYS/USDT",
+      "symbol": "COLLECT/USDT",
       "direction": "LONG",
       "best_score": 0,
-      "reason": "Sentiment Kill-Switch: FNG=12 (Extreme Fear < 13)",
+      "reason": "Sentiment Kill-Switch: FNG=9 (Extreme Fear < 13)",
+      "scores": {}
+    },
+    {
+      "symbol": "CHZ/USDT",
+      "direction": "LONG",
+      "best_score": 0,
+      "reason": "Sentiment Kill-Switch: FNG=9 (Extreme Fear < 13)",
+      "scores": {}
+    },
+    {
+      "symbol": "KAT/USDT",
+      "direction": "LONG",
+      "best_score": 0,
+      "reason": "Sentiment Kill-Switch: FNG=9 (Extreme Fear < 13)",
       "scores": {}
     }
   ],
-  "system_message": "Kill-Switch Sentiment: FNG=12 (Extreme Fear) — הסריקה בוטלה לבטיחות",
-  "scan_duration_s": 2.4,
+  "system_message": "Kill-Switch Sentiment: FNG=9 (Extreme Fear) — הסריקה בוטלה לבטיחות",
+  "scan_duration_s": 2.9,
   "bubble_watch": [
     {
-      "symbol": "Q/USDT",
-      "change_pct": -27.54,
-      "direction": "SHORT",
-      "price": 0.0087864,
-      "volume_usd": 3194994
+      "symbol": "PRL/USDT",
+      "change_pct": 19.04,
+      "direction": "LONG",
+      "price": 0.18298,
+      "volume_usd": 4247357
     },
     {
       "symbol": "TRIA/USDT",
-      "change_pct": 14.12,
+      "change_pct": 18.28,
       "direction": "LONG",
-      "price": 0.031128,
-      "volume_usd": 5877988
+      "price": 0.03168,
+      "volume_usd": 6015767
     },
     {
-      "symbol": "RIVER/USDT",
-      "change_pct": 12.61,
+      "symbol": "COLLECT/USDT",
+      "change_pct": 13.98,
       "direction": "LONG",
-      "price": 14.3012,
-      "volume_usd": 11182647
+      "price": 0.05277,
+      "volume_usd": 2942503
     },
     {
-      "symbol": "PRL/USDT",
-      "change_pct": 10.92,
+      "symbol": "CHZ/USDT",
+      "change_pct": 11.75,
       "direction": "LONG",
-      "price": 0.16773,
-      "volume_usd": 2672936
+      "price": 0.04033,
+      "volume_usd": 1241852
     }
   ]
 }
