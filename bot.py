@@ -80,6 +80,10 @@ GREED_THRESHOLD        = 70   # Greed Filter: פוזיציה ×60% + BE@+2%
 GREED_EARLY_BE_PCT     = 2.0  # % רווח להפעלת BE מוקדם בחמדנות
 FEAR_EXTRA_SL_PCT      = 1.0  # % נוסף ל-SL בתנאי פחד
 
+# ─── Daily Circuit Breaker ─────────────────────────────────────────────────────
+DAILY_LOSS_LIMIT            = -30.0   # -$30 = 15% מ-$200 יתרת פתיחה
+_daily_circuit_notified: bool = False  # מונע ריבוי הודעות על אותו אירוע
+
 def sentiment_check(context: str = "scan"):
     """
     בודק את מצב הסנטימנט ומדפיס לוג.
@@ -145,15 +149,115 @@ def check_kill_switch_change():
         )
 
 # ═══════════════════════════════════════════════════════════════
+# Daily Circuit Breaker
+# ═══════════════════════════════════════════════════════════════
+
+def check_daily_circuit_breaker() -> bool:
+    """
+    מחזיר True אם הפסד יומי עבר את הסף (DAILY_LOSS_LIMIT = -$30).
+    שולח התראת טלגרם פעם אחת ביום בלבד.
+    מתאפס אוטומטית בחצות (daily_stats מאופס ב-manage_risk).
+    """
+    global _daily_circuit_notified
+    today_pnl = daily_stats.get('total_pnl', 0.0)
+    if today_pnl <= DAILY_LOSS_LIMIT:
+        if not _daily_circuit_notified:
+            print(f"⛔ DAILY CIRCUIT BREAKER: P&L={today_pnl:.2f} ≤ {DAILY_LOSS_LIMIT} — no new trades today")
+            send_msg(
+                f"⛔ *Daily Circuit Breaker Active*\n\n"
+                f"📉 P&L היום: *${today_pnl:.2f}*\n"
+                f"🛑 סף הפסד: *${DAILY_LOSS_LIMIT:.0f}* (15% מיתרת הפתיחה)\n\n"
+                f"_לא ייפתחו עסקאות חדשות עד חצות\\._\n"
+                f"_ניהול עסקאות פעילות נמשך כרגיל\\._"
+            )
+            _daily_circuit_notified = True
+        return True
+    if _daily_circuit_notified:
+        _daily_circuit_notified = False  # שחרור אם התאושש (ניהול ידני)
+    return False
+
+
+# ═══════════════════════════════════════════════════════════════
+# Sector Concentration Guard
+# ═══════════════════════════════════════════════════════════════
+
+SECTOR_MAP: dict[str, str] = {
+    # Layer 1
+    'ETH': 'L1', 'SOL': 'L1', 'AVAX': 'L1', 'APT': 'L1', 'NEAR': 'L1',
+    'SUI': 'L1', 'SEI': 'L1', 'ATOM': 'L1', 'DOT': 'L1', 'ADA': 'L1',
+    'TRX': 'L1', 'TON': 'L1', 'FTM': 'L1', 'ONE': 'L1', 'ALGO': 'L1',
+    # Layer 2
+    'MATIC': 'L2', 'ARB': 'L2', 'OP': 'L2', 'IMX': 'L2', 'ZK': 'L2',
+    'STRK': 'L2', 'MANTA': 'L2', 'BLAST': 'L2', 'METIS': 'L2',
+    # DeFi
+    'UNI': 'DeFi', 'AAVE': 'DeFi', 'CRV': 'DeFi', 'MKR': 'DeFi',
+    'COMP': 'DeFi', 'SNX': 'DeFi', 'BAL': 'DeFi', 'SUSHI': 'DeFi',
+    'JUP': 'DeFi', 'DYDX': 'DeFi', 'GMX': 'DeFi', 'ENA': 'DeFi',
+    # AI & Data
+    'FET': 'AI', 'AGIX': 'AI', 'OCEAN': 'AI', 'RENDER': 'AI', 'TAO': 'AI',
+    'WLD': 'AI', 'ALT': 'AI', 'GRT': 'AI',
+    # Gaming & Metaverse
+    'AXS': 'Gaming', 'SAND': 'Gaming', 'MANA': 'Gaming', 'ENJ': 'Gaming',
+    'GALA': 'Gaming', 'ILV': 'Gaming', 'YGG': 'Gaming',
+    # Meme
+    'DOGE': 'Meme', 'SHIB': 'Meme', 'PEPE': 'Meme', 'FLOKI': 'Meme',
+    'BONK': 'Meme', 'WIF': 'Meme', 'BOME': 'Meme',
+    # Exchange Tokens
+    'BNB': 'CEX', 'OKB': 'CEX', 'CRO': 'CEX', 'KCS': 'CEX', 'GT': 'CEX',
+    'HT': 'CEX', 'BGB': 'CEX',
+    # BTC Ecosystem
+    'BTC': 'BTC', 'WBTC': 'BTC', 'STX': 'BTC', 'ORDI': 'BTC',
+    # Oracle / Data
+    'LINK': 'Oracle', 'BAND': 'Oracle', 'TRB': 'Oracle', 'API3': 'Oracle',
+}
+
+
+def get_sector(symbol: str) -> str:
+    """מחזיר סקטור המטבע לפי SECTOR_MAP, או 'Other' אם לא ידוע."""
+    base = symbol.replace('/USDT', '').replace('USDT', '').upper()
+    return SECTOR_MAP.get(base, 'Other')
+
+
+def check_sector_concentration(symbol: str, direction: str) -> tuple[bool, str]:
+    """
+    בודק אם כבר קיימת עסקה פעילה בסקטור + כיוון זהה.
+    מחזיר (blocked: bool, reason: str).
+    'Other' לא נחסם — מטבעות ללא מיפוי מותרים תמיד.
+    """
+    sector = get_sector(symbol)
+    if sector == 'Other':
+        return False, ""
+    with trades_lock:
+        same = [
+            t for t in active_trades
+            if t.get('direction') == direction
+            and get_sector(t['symbol']) == sector
+            and t['symbol'] != symbol
+        ]
+    if same:
+        existing = same[0]['symbol']
+        reason = f"Sector block: {existing} ({sector} {direction}) already open"
+        return True, reason
+    return False, ""
+
+
+# ═══════════════════════════════════════════════════════════════
 # Claude AI Final Filter — GO / NO-GO per signal
 # ═══════════════════════════════════════════════════════════════
 
-def claude_filter(symbol: str, direction: str, score: int, breakdown: dict,
+def claude_filter(symbol: str, direction: str, score: int, breakdown: str,
                   price: float, timeframe: str, btc_regime: str,
-                  fng_v: int, fng_lbl: str) -> tuple[bool, str]:
+                  fng_v: int, fng_lbl: str,
+                  rsi_4h: float | None = None,
+                  rsi_1h: float | None = None,
+                  rsi_15m: float | None = None,
+                  volume_ratio: float | None = None,
+                  change_24h: float | None = None,
+                  daily_pnl: float = 0.0) -> tuple[bool, str]:
     """
-    מסנן סופי: שולח נתוני האיתות ל-Claude 3.5 Sonnet.
+    מסנן סופי מוסדי: שולח נתוני האיתות ל-Claude 3 Haiku.
     מחזיר (go: bool, reason: str).
+    breakdown הוא STRING (פלט של score_symbol).
     אם המפתח לא מוגדר / שגיאת API → GO כברירת מחדל (לא חוסם עסקאות).
     """
     api_key = os.environ.get('ANTHROPIC_API_KEY', '')
@@ -164,34 +268,49 @@ def claude_filter(symbol: str, direction: str, score: int, breakdown: dict,
     try:
         import anthropic as _anthropic
 
-        # בניית breakdown קצר לפרומפט
-        bd_lines = []
-        for k, v in (breakdown or {}).items():
-            bd_lines.append(f"  {k}: {v}")
-        breakdown_str = "\n".join(bd_lines) if bd_lines else "N/A"
+        # breakdown הוא string מ-score_symbol — משתמשים ישירות
+        breakdown_str = str(breakdown) if breakdown else "N/A"
+
+        # RSI context בכל הטיים-פריימים
+        rsi_parts = []
+        if rsi_4h  is not None: rsi_parts.append(f"4H={rsi_4h:.1f}")
+        if rsi_1h  is not None: rsi_parts.append(f"1H={rsi_1h:.1f}")
+        if rsi_15m is not None: rsi_parts.append(f"15m={rsi_15m:.1f}")
+        rsi_str = "  |  ".join(rsi_parts) if rsi_parts else "N/A"
+
+        vol_str = f"{volume_ratio:.2f}× avg" if volume_ratio is not None else "N/A"
+        chg_str = f"{change_24h:+.2f}%" if change_24h is not None else "N/A"
 
         prompt = (
-            f"You are a crypto trading risk validator. Analyze this signal and decide GO or NO-GO.\n\n"
-            f"Symbol: {symbol}\n"
-            f"Direction: {direction}\n"
-            f"Timeframe: {timeframe}\n"
-            f"Score: {score}/100\n"
-            f"Entry Price: {price}\n"
-            f"BTC Market Regime: {btc_regime}\n"
+            f"You are a senior crypto quant risk validator at a professional trading desk. "
+            f"Make a strict GO/NO-GO decision on this trade signal.\n\n"
+            f"=== SIGNAL ===\n"
+            f"Symbol: {symbol}  |  Direction: {direction}  |  Entry TF: {timeframe}\n"
+            f"Score: {score}/100  |  Entry Price: {price:.6g}\n\n"
+            f"=== MARKET CONTEXT ===\n"
+            f"BTC Regime: {btc_regime}\n"
             f"Fear & Greed Index: {fng_v} ({fng_lbl})\n"
-            f"Score Breakdown:\n{breakdown_str}\n\n"
-            f"Rules:\n"
-            f"- Trade size: $500 notional, $50 margin, 10x leverage\n"
-            f"- SL: 3.5% | TP1: 5.0% | TP Full: 10.5%\n"
-            f"- Risk/Reward must be favorable\n"
-            f"- Avoid chasing overextended moves\n\n"
+            f"24h Price Change: {chg_str}\n"
+            f"Bot P&L today: ${daily_pnl:.2f}  (circuit breaker at -$30)\n\n"
+            f"=== TECHNICAL DATA ===\n"
+            f"Multi-TF RSI: {rsi_str}\n"
+            f"Volume vs 10-bar avg: {vol_str}\n"
+            f"Score Breakdown: {breakdown_str}\n\n"
+            f"=== HARD REJECTION RULES ===\n"
+            f"- Reject if any RSI > 72 on a LONG (overbought confirmation)\n"
+            f"- Reject if any RSI < 28 on a SHORT (oversold confirmation)\n"
+            f"- Reject if 24h change > 15% (chasing a pump/dump)\n"
+            f"- Reject if volume < 0.8× avg (no real participation)\n\n"
+            f"=== RISK PARAMETERS ===\n"
+            f"$500 notional | $50 margin | 10× leverage\n"
+            f"SL: 3.5% | TP1: 5.0% (50% close) | TP Full: 10.5% (RR 1:3)\n\n"
             f"Respond with EXACTLY one line: 'GO: <1 sentence reason>' or 'NO-GO: <1 sentence reason>'"
         )
 
         client = _anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
             model="claude-3-haiku-20240307",
-            max_tokens=80,
+            max_tokens=100,
             messages=[{"role": "user", "content": prompt}]
         )
 
@@ -206,8 +325,8 @@ def claude_filter(symbol: str, direction: str, score: int, breakdown: dict,
             return False, reason
 
     except Exception as e:
-        print(f"  [Claude] שגיאה: {e} — ממשיך ללא פילטר")
-        return True, f"Claude error: {e}"
+        print(f"  [Claude] שגיאה: {e} — ממשיך ללא פילטר (GO)")
+        return True, f"Claude error (fallback GO): {str(e)[:60]}"
 
 
 # --- פרמטרי מינוף (דמו) ---
@@ -1233,13 +1352,14 @@ def track_trades():
     בודק כל עסקה פעילה כל 60 שניות.
     תומך ב-LONG וב-SHORT.
     """
-    global active_trades, daily_stats
+    global active_trades, daily_stats, _daily_circuit_notified
 
     if daily_stats['date'] != date.today():
         daily_stats = {
             'wins': 0, 'losses': 0, 'total_pnl': 0.0, 'date': date.today(),
             'close_reasons': {'TP': 0, 'TP1+Trail': 0, 'Trailing': 0, 'SL': 0, 'BE': 0, 'Manual': 0},
         }
+        _daily_circuit_notified = False  # איפוס Circuit Breaker עם פתיחת יום חדש
 
     # FNG once per manage cycle (avoid spamming API/log)
     fng_v_mgr, _, _ = sentiment_check("manage_risk")
@@ -2230,6 +2350,17 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
         symbol = candidate['symbol']
         if any(t['symbol'] == symbol for t in active_trades):
             continue
+
+        # ── IG-1: Daily Circuit Breaker ─────────────────────────────────────
+        if check_daily_circuit_breaker():
+            rejected_out.append({
+                'symbol': symbol, 'direction': direction, 'best_score': 0,
+                'reason': f'Daily Circuit Breaker: P&L={daily_stats.get("total_pnl",0):.2f} ≤ {DAILY_LOSS_LIMIT}',
+                'scores': {},
+            })
+            continue
+
+        df_15m = None  # אתחול — נטען רק אם 4H+1H לא מספיקים
         try:
             # ── שלב 1: ניסיון על 4H — טרנד ראשי ──
             df_4h  = get_data(symbol, timeframe='4h', limit=250)
@@ -2301,11 +2432,27 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                         })
                         continue
 
-                # ── Claude AI Final Filter ──────────────────────────────────────
+                # ── IG-2: Multi-TF RSI + Volume context for Claude ──────────────
+                try:
+                    _rsi_4h  = ta.rsi(df_4h['close'],  length=14).iloc[-1]
+                    _rsi_1h  = ta.rsi(df_1h['close'],  length=14).iloc[-1]
+                    _rsi_15m = ta.rsi(df_15m['close'], length=14).iloc[-1] if df_15m is not None else None
+                    _vol_avg = chosen_df['volume'].iloc[-12:-2].mean()
+                    _vol_ratio = (chosen_df['volume'].iloc[-2] / _vol_avg
+                                  if _vol_avg > 0 else None)
+                except Exception:
+                    _rsi_4h = _rsi_1h = _rsi_15m = _vol_ratio = None
+
+                _change_24h = candidate.get('change', None)
+
+                # ── Claude AI Final Filter ───────────────────────────────────────
                 claude_go, claude_reason = claude_filter(
                     symbol=symbol, direction=direction, score=score,
                     breakdown=breakdown, price=price, timeframe=chosen_tf,
-                    btc_regime=btc_regime, fng_v=fng_v_scan, fng_lbl=fng_lbl_scan
+                    btc_regime=btc_regime, fng_v=fng_v_scan, fng_lbl=fng_lbl_scan,
+                    rsi_4h=_rsi_4h, rsi_1h=_rsi_1h, rsi_15m=_rsi_15m,
+                    volume_ratio=_vol_ratio, change_24h=_change_24h,
+                    daily_pnl=daily_stats.get('total_pnl', 0.0),
                 )
                 if not claude_go:
                     print(f"  [Claude] ❌ NO-GO: {symbol} {direction} — {claude_reason}")
@@ -2323,6 +2470,24 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                     continue
 
                 print(f"  [Claude] ✅ GO: {symbol} {direction} — {claude_reason}")
+
+                # ── IG-3: Sector Concentration Guard ────────────────────────────
+                sect_blocked, sect_reason = check_sector_concentration(symbol, direction)
+                if sect_blocked:
+                    print(f"  [Sector] 🚫 {symbol} — {sect_reason}")
+                    send_msg(
+                        f"🏛 *Sector Concentration Block*\n\n"
+                        f"{'🟢' if direction == 'LONG' else '🔴'} `{symbol}` {direction}\n"
+                        f"📊 ציון: *{score}/100* ✅ | Claude ✅\n"
+                        f"🚫 _{sect_reason}_"
+                    )
+                    rejected_out.append({
+                        'symbol': symbol, 'direction': direction, 'best_score': score,
+                        'reason': sect_reason[:80],
+                        'scores': {'4H': score_4h, '1H': score_1h, '15m': score_15m},
+                    })
+                    continue
+
                 # ── פתיחת עסקה ──────────────────────────────────────────────────
                 open_demo_trade(
                     symbol, price, breakdown,
