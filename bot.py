@@ -8,13 +8,17 @@ import threading
 import pandas as pd
 import pandas_ta as ta
 from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
 from keep_alive import keep_alive, app as flask_app
 from flask import jsonify as flask_jsonify
 import gdrive_reporter
 
-# ── אזור זמן ישראל (UTC+2/+3 לפי שעון קיץ) ──
-os.environ['TZ'] = 'Asia/Jerusalem'
-time.tzset()
+# ── אזור זמן ישראל — ZoneInfo עובד גם ב-Production ──
+_IL_TZ = ZoneInfo('Asia/Jerusalem')
+
+def now_il() -> datetime:
+    """מחזיר datetime נוכחי בשעון ישראל — עובד ב-dev וב-production."""
+    return datetime.now(_IL_TZ)
 
 # ספריות גרף — fallback אם לא קיימות
 try:
@@ -763,7 +767,7 @@ def save_scan_results(
         sentiment_note = f"Fear & Greed={fng_value} ({fng_label}) — מצב ניטרלי, אין השפעה על פתיחות"
 
     report = {
-        'scan_time':               datetime.now().isoformat(timespec='seconds'),
+        'scan_time':               now_il().isoformat(timespec='seconds'),
         'total_scanned':           total_scanned,
         'signals_found':           signals_found,
         'active_trades_count':     len(active_trades),
@@ -803,7 +807,7 @@ def api_trades():
     with trades_lock:
         snapshot = list(active_trades)
     return flask_jsonify({
-        'updated': datetime.now().strftime('%H:%M:%S'),
+        'updated': now_il().strftime('%H:%M:%S'),
         'count':   len(snapshot),
         'trades':  snapshot,
     })
@@ -842,7 +846,7 @@ def _get_equity():
 
 def _append_equity_point():
     hist = wallet.setdefault('equity_history', [])
-    hist.append({'t': datetime.now().strftime('%m/%d %H:%M'), 'eq': _get_equity()})
+    hist.append({'t': now_il().strftime('%m/%d %H:%M'), 'eq': _get_equity()})
     if len(hist) > 120:          # שמירת 120 נקודות (≈10 ימים בסריקה שעתית)
         wallet['equity_history'] = hist[-120:]
 
@@ -858,7 +862,7 @@ def load_wallet():
             'starting':       STARTING_BALANCE,
             'total_pnl':      0.0,
             'trades_opened':  0,
-            'equity_history': [{'t': datetime.now().strftime('%m/%d %H:%M'), 'eq': STARTING_BALANCE}],
+            'equity_history': [{'t': now_il().strftime('%m/%d %H:%M'), 'eq': STARTING_BALANCE}],
         }
         save_wallet()
         print(f"Wallet created fresh: ${STARTING_BALANCE}")
@@ -916,11 +920,11 @@ def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_pric
         'close_reason': close_reason,
         'pnl_usd':      round(pnl_usd, 2),
         'opened_at':    trade.get('opened_at', ''),
-        'closed_at':    datetime.now().isoformat(timespec='seconds'),
+        'closed_at':    now_il().isoformat(timespec='seconds'),
     }
     closed_trades_log.append(record)
     # שמור רק 48 שעות אחרונות
-    cutoff = datetime.now().timestamp() - 48 * 3600
+    cutoff = now_il().timestamp() - 48 * 3600
     closed_trades_log = [
         t for t in closed_trades_log
         if datetime.fromisoformat(t['closed_at']).timestamp() >= cutoff
@@ -1138,7 +1142,7 @@ def get_hot_candidates():
 
         # שמירה לדאשבורד (גיינרים)
         data = {
-            'updated':    datetime.now().strftime('%H:%M:%S'),
+            'updated':    now_il().strftime('%H:%M:%S'),
             'count':      len(top_gainers),
             'candidates': top_gainers
         }
@@ -1161,7 +1165,7 @@ def save_active_trades():
         with trades_lock:
             snapshot = list(active_trades)
         data = {
-            'updated': datetime.now().strftime('%H:%M:%S'),
+            'updated': now_il().strftime('%H:%M:%S'),
             'count':   len(snapshot),
             'trades':  snapshot,
         }
@@ -1621,7 +1625,7 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         'rsi':             round(rsi, 2) if rsi is not None else None,
         'ema200':          round(ema200, 6) if ema200 is not None else None,
         'score_breakdown': reason,
-        'opened_at':       datetime.now().isoformat(timespec='seconds'),
+        'opened_at':       now_il().isoformat(timespec='seconds'),
         'pos_size':        pos_size,        # נשמר לחישובי P&L בניהול עסקאות
         'margin':          effective_margin, # מרג'ין בפועל ($50 רגיל / $25 Sniper)
         'fng_at_entry':    fng_v,           # FNG בזמן הכניסה
@@ -1954,7 +1958,7 @@ def check_api_connection():
         return False
 
 def send_daily_report():
-    now = datetime.now().strftime('%d/%m/%Y %H:%M')
+    now = now_il().strftime('%d/%m/%Y %H:%M')
     total_closed = daily_stats['wins'] + daily_stats['losses']
     win_rate = (daily_stats['wins'] / total_closed * 100) if total_closed > 0 else 0
     api_ok = check_api_connection()
@@ -2020,7 +2024,7 @@ def send_heartbeat():
     if not trades_snapshot:
         return
 
-    now_str   = datetime.now().strftime('%H:%M')
+    now_str   = now_il().strftime('%H:%M')
     pnl_today = round(daily_stats.get('total_pnl', 0), 2)
     pnl_icon  = "📈" if pnl_today >= 0 else "📉"
 
@@ -2122,7 +2126,7 @@ def check_heartbeat():
 
 def check_daily_report():
     global last_daily_report_date
-    now = datetime.now()
+    now = now_il()
     today = date.today()
 
     if now.hour == 12 and now.minute < 15:
@@ -2346,7 +2350,7 @@ def handle_report(message):
 
 @bot.message_handler(commands=['ping'])
 def handle_ping(message):
-    now        = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+    now        = now_il().strftime('%d/%m/%Y %H:%M:%S')
     uptime_msg = f"🟢 *הבוט פעיל!*\n\n"
     uptime_msg += f"🕐 שעה: `{now}`\n"
     uptime_msg += f"📊 עסקאות פעילות: *{len(active_trades)}*\n"
@@ -2608,7 +2612,7 @@ def handle_scan(message):
         global _scan_running
         _scan_running = True
         try:
-            now_str    = datetime.now().strftime('%H:%M:%S')
+            now_str    = now_il().strftime('%H:%M:%S')
             btc_regime = get_btc_regime()
             regime_emoji = "🟢" if btc_regime == 'BULL' else ("🔴" if btc_regime == 'BEAR' else "🟡")
             regime_note  = (
@@ -2990,7 +2994,7 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
 def _maybe_run_drive_audit():
     """מפעיל דוח יומי כולל ב-12:00 — פעם אחת ביום."""
     global _last_audit_hour
-    now_hour = datetime.now().hour
+    now_hour = now_il().hour
     if now_hour in AUDIT_HOURS and now_hour != _last_audit_hour:
         _last_audit_hour = now_hour
         try:
@@ -3022,7 +3026,7 @@ def scan_loop():
     while True:
         try:
             check_daily_report()
-            now_str = datetime.now().strftime('%H:%M:%S')
+            now_str = now_il().strftime('%H:%M:%S')
             scan_start_ts = time.time()
 
             # ── שלב 1: BTC Market Regime ──
@@ -3078,8 +3082,8 @@ def scan_loop():
                     print(f"[Sandbox] Analysis complete: {len(sandbox_results)} coin(s) analyzed")
 
             # ── סיכום סריקה ──
-            now       = datetime.now().strftime('%H:%M')
-            next_scan = (datetime.now() + timedelta(hours=1)).strftime('%H:%M')
+            now       = now_il().strftime('%H:%M')
+            next_scan = (now_il() + timedelta(hours=1)).strftime('%H:%M')
             pnl_today = round(daily_stats.get('total_pnl', 0), 2)
             pnl_icon  = "📈" if pnl_today >= 0 else "📉"
 
