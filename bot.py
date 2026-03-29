@@ -417,6 +417,107 @@ def build_bubble_watch(gainers: list, losers: list, threshold: float = 10.0) -> 
     return bubbles[:10]
 
 
+def claude_sandbox_analysis(bubble_watch_list: list, btc_regime: str,
+                            fng_v: int, fng_lbl: str) -> list:
+    """
+    Sandbox Mode — ניתוח חינוכי בלבד כשה-Kill-Switch פעיל.
+    לוקח 2 המטבעות הבולטים מ-Bubble Watch, מושך נתוני 3 TF,
+    ושואל את Claude: 'אם ה-Kill-Switch היה כבוי, היית מאשר?'
+    לא פותח עסקאות בשום מקרה.
+    """
+    api_key = os.environ.get('ANTHROPIC_API_KEY', '')
+    if not api_key or not bubble_watch_list:
+        return []
+
+    results = []
+    top2 = bubble_watch_list[:2]  # Top 2 לפי שינוי מוחלט (כבר ממוין)
+
+    for coin in top2:
+        symbol    = coin['symbol']
+        direction = coin['direction']
+        change_24 = coin.get('change_pct', 0)
+
+        try:
+            import anthropic as _anthropic
+
+            df_4h  = get_data(symbol, timeframe='4h',  limit=250)
+            df_1h  = get_data(symbol, timeframe='1h',  limit=250)
+            df_15m = get_data(symbol, timeframe='15m', limit=250)
+            if df_4h is None or df_1h is None or df_15m is None:
+                print(f"  [Sandbox] {symbol}: נתונים חסרים — מדלג")
+                continue
+
+            price = df_4h['close'].iloc[-1]
+
+            # RSI על כל טיים-פריים
+            rsi_4h  = ta.rsi(df_4h['close'],  length=14).iloc[-1]
+            rsi_1h  = ta.rsi(df_1h['close'],  length=14).iloc[-1]
+            rsi_15m = ta.rsi(df_15m['close'], length=14).iloc[-1]
+
+            # Volume ratio ב-4H
+            vol_avg   = df_4h['volume'].iloc[-12:-2].mean()
+            vol_ratio = df_4h['volume'].iloc[-2] / vol_avg if vol_avg > 0 else 0.0
+
+            # ניקוד טכני — לצורך הקשר בלבד (לא לפתיחת עסקה!)
+            score, breakdown, _atr = score_symbol(df_4h, df_1h, symbol, direction)
+
+            prompt = (
+                f"You are analyzing a crypto trade signal for EDUCATIONAL PURPOSES ONLY.\n"
+                f"The trading bot's Kill-Switch is ACTIVE due to Extreme Fear "
+                f"(Fear & Greed = {fng_v} / 100). No real trades are being opened.\n"
+                f"This is a hypothetical sandbox exercise.\n\n"
+                f"=== COIN OVERVIEW ===\n"
+                f"Symbol: {symbol}  |  Direction: {direction}\n"
+                f"24h Change: {change_24:+.1f}%  |  Current Price: {price:.6g}\n\n"
+                f"=== MULTI-TIMEFRAME TECHNICAL DATA ===\n"
+                f"RSI  4H : {rsi_4h:.1f}\n"
+                f"RSI  1H : {rsi_1h:.1f}\n"
+                f"RSI 15m : {rsi_15m:.1f}\n"
+                f"Volume vs 10-bar avg: {vol_ratio:.2f}×\n"
+                f"Technical Score (if eligible): {score}/100\n"
+                f"Score Breakdown: {breakdown}\n\n"
+                f"=== MARKET CONTEXT ===\n"
+                f"BTC Market Regime: {btc_regime}\n"
+                f"Fear & Greed Index: {fng_v} ({fng_lbl}) — Extreme Fear\n\n"
+                f"=== YOUR TASK ===\n"
+                f"If the Kill-Switch was OFF and this coin was presented as a live signal:\n"
+                f"1. Start with APPROVE or REJECT (single word on line 1)\n"
+                f"2. Explain your logic based on the 3 timeframes and RSI alignment\n"
+                f"3. Comment on what the BTC {btc_regime} regime means for this setup\n"
+                f"4. Note any key risk in 1 sentence\n\n"
+                f"Keep your full response to 4 sentences maximum."
+            )
+
+            client   = _anthropic.Anthropic(api_key=api_key)
+            response = client.messages.create(
+                model="claude-3-haiku-20240307",
+                max_tokens=220,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            analysis = response.content[0].text.strip()
+            verdict  = "APPROVE ✅" if analysis.upper().startswith("APPROVE") else "REJECT ❌"
+            print(f"  [Sandbox] {symbol} {direction}: {verdict.split()[0]}")
+
+            results.append({
+                'symbol':       symbol,
+                'direction':    direction,
+                'change_24h':   round(change_24, 2),
+                'price':        round(price, 6),
+                'rsi_4h':       round(rsi_4h, 1),
+                'rsi_1h':       round(rsi_1h, 1),
+                'rsi_15m':      round(rsi_15m, 1),
+                'volume_ratio': round(vol_ratio, 2),
+                'score':        score,
+                'verdict':      verdict,
+                'analysis':     analysis,
+            })
+
+        except Exception as e:
+            print(f"  [Sandbox] שגיאה ב-{symbol}: {e}")
+
+    return results
+
+
 def save_scan_results(
     total_scanned: int,
     signals_found: int,
@@ -427,6 +528,7 @@ def save_scan_results(
     system_message: str,
     scan_start_ts: float,
     bubble_watch: list = None,
+    sandbox_analysis: list = None,
 ):
     """שומר last_scan_results.json לאחר כל סריקה."""
     import time as _t
@@ -462,6 +564,7 @@ def save_scan_results(
         'system_message':          system_message,
         'scan_duration_s':         duration,
         'bubble_watch':            bubble_watch or [],
+        'sandbox_analysis':        sandbox_analysis or [],
     }
     try:
         with open(SCAN_REPORT_FILE, 'w', encoding='utf-8') as f:
@@ -2153,7 +2256,63 @@ def handle_scanreport(message):
         msg += f"\n{'─' * 28}\n"
         msg += f"🫧 *Bubble Watch:* _אין מטבעות עם שינוי >10% ב-24h_\n"
 
+    # הוסף רמז ל-Sandbox אם קיים
+    sandbox = d.get('sandbox_analysis', [])
+    if sandbox:
+        msg += f"\n{'─' * 28}\n"
+        msg += f"🧪 *Sandbox Analysis זמין* — {len(sandbox)} מטבע/ות\n"
+        msg += f"_פרטים ממשיכים בהודעה הבאה_"
+    elif fng_v < EXTREME_FEAR_THRESHOLD:
+        msg += f"\n{'─' * 28}\n"
+        msg += f"🧪 *Claude Sandbox:* _Kill\\-Switch פעיל · אין מטבעות Bubble Watch לניתוח_"
+
     send_msg(msg)
+
+    # ── הודעה נפרדת: Sandbox Analysis (חינוכי בלבד) ────────────────────────────
+    if sandbox:
+        sandbox_msg  = f"🧪 *Claude's Sandbox Analysis*\n"
+        sandbox_msg += f"\\(Educational Only — Kill\\-Switch Active\\)\n"
+        sandbox_msg += f"_ניתוח היפותטי בלבד · אין עסקאות נפתחות · לצורכי לימוד_\n"
+        sandbox_msg += f"{'─' * 28}\n\n"
+
+        for i, s in enumerate(sandbox, 1):
+            sym      = s.get('symbol', '?')
+            dir_     = s.get('direction', '')
+            chg      = s.get('change_24h', 0)
+            verdict  = s.get('verdict', '?')
+            analysis = s.get('analysis', '')
+            r4h      = s.get('rsi_4h')
+            r1h      = s.get('rsi_1h')
+            r15      = s.get('rsi_15m')
+            vol      = s.get('volume_ratio')
+            score    = s.get('score', 0)
+            dir_e    = "🟢" if dir_ == 'LONG' else "🔴"
+            chg_str  = f"{chg:+.1f}%" if chg is not None else "N/A"
+            rsi_str  = (
+                f"4H={r4h:.0f} · 1H={r1h:.0f} · 15m={r15:.0f}"
+                if None not in (r4h, r1h, r15) else "N/A"
+            )
+            vol_str = f"{vol:.2f}×" if vol is not None else "N/A"
+
+            sandbox_msg += f"*{i}\\. {dir_e} `{sym}`*\n"
+            sandbox_msg += f"📈 שינוי 24h: *{chg_str}*\n"
+            sandbox_msg += f"📊 RSI \\(3 TF\\): `{rsi_str}`\n"
+            sandbox_msg += f"📦 Volume: `{vol_str}` avg\n"
+            sandbox_msg += f"🎯 Score \\(if eligible\\): `{score}/100`\n"
+
+            # Verdict bold
+            sandbox_msg += f"🤖 *Claude: {verdict}*\n\n"
+
+            # Claude analysis — escape all Markdown special chars
+            analysis_clean = (analysis[:400] + "…") if len(analysis) > 400 else analysis
+            for ch in r'_*[]()~`>#+-=|{}.!':
+                analysis_clean = analysis_clean.replace(ch, f'\\{ch}')
+            sandbox_msg += f"💬 _{analysis_clean}_\n"
+
+            if i < len(sandbox):
+                sandbox_msg += f"\n{'─' * 28}\n\n"
+
+        send_msg(sandbox_msg)
 
 
 @bot.message_handler(commands=['scan'])
@@ -2202,6 +2361,14 @@ def handle_scan(message):
             energy_candidates = [{'symbol': s} for s in ENERGY_GEO]
             signals_found += _scan_batch(energy_candidates, 'LONG', btc_regime, all_rejections_m)
 
+            # ── Sandbox Mode (Kill-Switch פעיל) ───────────────────────────────
+            sandbox_m = []
+            if fng_v_m < EXTREME_FEAR_THRESHOLD and bubble_watch_m:
+                print(f"[Sandbox] Running educational analysis (manual scan)...")
+                sandbox_m = claude_sandbox_analysis(
+                    bubble_watch_m, btc_regime, fng_v_m, fng_lbl_m
+                )
+
             pnl_today = round(daily_stats.get('total_pnl', 0), 2)
             bub_note = ""
             if bubble_watch_m:
@@ -2234,7 +2401,8 @@ def handle_scan(message):
                 sys_msg_m = f"{signals_found} עסקה/ות נפתחו — סריקה ידנית"
             save_scan_results(total_scanned, signals_found, fng_v_m, fng_lbl_m,
                               btc_regime, all_rejections_m, sys_msg_m, scan_start_m,
-                              bubble_watch=bubble_watch_m)
+                              bubble_watch=bubble_watch_m,
+                              sandbox_analysis=sandbox_m)
         except Exception as e:
             send_msg(f"❌ שגיאה בסריקה: {e}")
         finally:
@@ -2587,6 +2755,16 @@ def scan_loop():
 
             print(f"Scan done — {signals_found} signal(s) / {total_scanned} scanned")
 
+            # ── Claude Sandbox Mode (Kill-Switch פעיל בלבד) ─────────────────
+            sandbox_results = []
+            if fng_v_loop < EXTREME_FEAR_THRESHOLD and bubble_watch_list:
+                print(f"[Sandbox] Kill-Switch active (FNG={fng_v_loop}) — running educational Claude analysis...")
+                sandbox_results = claude_sandbox_analysis(
+                    bubble_watch_list, btc_regime, fng_v_loop, fng_lbl_loop
+                )
+                if sandbox_results:
+                    print(f"[Sandbox] Analysis complete: {len(sandbox_results)} coin(s) analyzed")
+
             # ── סיכום סריקה ──
             now       = datetime.now().strftime('%H:%M')
             next_scan = (datetime.now() + timedelta(hours=1)).strftime('%H:%M')
@@ -2639,15 +2817,16 @@ def scan_loop():
                 sys_msg = f"{signals_found} עסקה/ות נפתחו בהצלחה — Professional Score ≥ {MIN_SCORE}/100"
 
             save_scan_results(
-                total_scanned  = total_scanned,
-                signals_found  = signals_found,
-                fng_value      = fng_v_loop,
-                fng_label      = fng_lbl_loop,
-                btc_regime     = btc_regime,
-                all_rejections = all_rejections,
-                system_message = sys_msg,
-                scan_start_ts  = scan_start_ts,
-                bubble_watch   = bubble_watch_list,
+                total_scanned    = total_scanned,
+                signals_found    = signals_found,
+                fng_value        = fng_v_loop,
+                fng_label        = fng_lbl_loop,
+                btc_regime       = btc_regime,
+                all_rejections   = all_rejections,
+                system_message   = sys_msg,
+                scan_start_ts    = scan_start_ts,
+                bubble_watch     = bubble_watch_list,
+                sandbox_analysis = sandbox_results,
             )
 
             # ── דוח Drive ב-12:00 ──

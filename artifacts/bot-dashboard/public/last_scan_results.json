@@ -1,6 +1,6 @@
 {
-  "scan_time": "2026-03-29T07:48:55",
-  "total_scanned": 27,
+  "scan_time": "2026-03-29T07:57:57",
+  "total_scanned": 26,
   "signals_found": 0,
   "active_trades_count": 0,
   "max_trades": 5,
@@ -47,35 +47,63 @@
     }
   ],
   "system_message": "Kill-Switch Sentiment: FNG=9 (Extreme Fear) — הסריקה בוטלה לבטיחות",
-  "scan_duration_s": 3.1,
+  "scan_duration_s": 8.1,
   "bubble_watch": [
     {
       "symbol": "PRL/USDT",
-      "change_pct": 17.69,
+      "change_pct": 16.48,
       "direction": "LONG",
-      "price": 0.18299,
-      "volume_usd": 4254001
+      "price": 0.18179,
+      "volume_usd": 4277699
     },
     {
       "symbol": "TRIA/USDT",
-      "change_pct": 17.64,
+      "change_pct": 16.43,
       "direction": "LONG",
-      "price": 0.031593,
-      "volume_usd": 5951415
+      "price": 0.031458,
+      "volume_usd": 5922972
     },
     {
       "symbol": "COLLECT/USDT",
-      "change_pct": 15.76,
+      "change_pct": 13.9,
       "direction": "LONG",
-      "price": 0.053005,
-      "volume_usd": 2945947
+      "price": 0.052425,
+      "volume_usd": 2949585
     },
     {
       "symbol": "CHZ/USDT",
-      "change_pct": 11.89,
+      "change_pct": 12.5,
       "direction": "LONG",
-      "price": 0.04036,
-      "volume_usd": 1240319
+      "price": 0.04041,
+      "volume_usd": 1235836
+    }
+  ],
+  "sandbox_analysis": [
+    {
+      "symbol": "PRL/USDT",
+      "direction": "LONG",
+      "change_24h": 16.48,
+      "price": 0.18175,
+      "rsi_4h": 74.6,
+      "rsi_1h": 60.1,
+      "rsi_15m": 58.3,
+      "volume_ratio": 1.99,
+      "score": 0,
+      "verdict": "REJECT ❌",
+      "analysis": "REJECT\nThe 4-hour RSI of 74.6 indicates the coin is overbought, while the 1-hour and 15-minute RSI show the momentum is cooling down. The high volume further suggests the recent rally may be unsustainable. Given the BTC bear market regime and Extreme Fear sentiment, the risk of a swift pullback is elevated."
+    },
+    {
+      "symbol": "TRIA/USDT",
+      "direction": "LONG",
+      "change_24h": 16.43,
+      "price": 0.031377,
+      "rsi_4h": 51.7,
+      "rsi_1h": 62.7,
+      "rsi_15m": 55.4,
+      "volume_ratio": 0.79,
+      "score": 0,
+      "verdict": "REJECT ❌",
+      "analysis": "REJECT\nThe RSI alignment across the 4H, 1H, and 15m timeframes is not ideal, with the 1H RSI in overbought territory at 62.7. The technical score of 0/100 and the coin being 15.2% above the EMA200 further suggest this is not a strong setup. Given the current BTC BEAR regime, this LONG trade setup carries increased risk and is not advisable."
     }
   ]
 }
