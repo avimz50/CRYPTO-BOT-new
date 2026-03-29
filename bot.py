@@ -329,6 +329,12 @@ def claude_filter(symbol: str, direction: str, score: int, breakdown: str,
         return True, f"Claude error (fallback GO): {str(e)[:60]}"
 
 
+# --- זיהוי סביבה (Dev vs Production) ---
+# ב-Replit Deployments מוגדר REPLIT_DEPLOYMENT=1 אוטומטית.
+# בסביבת הפיתוח (workspace) הוא לא מוגדר → IS_DEPLOYED=False.
+# כך הסריקה האוטומטית רצה רק ב-prod, ואין הודעות כפולות בטלגרם.
+IS_DEPLOYED = bool(os.environ.get('REPLIT_DEPLOYMENT', ''))
+
 # --- פרמטרי מינוף (דמו) ---
 LEVERAGE       = 10          # מינוף 10x
 MARGIN         = 50          # בטחון ($) לכל עסקה
@@ -2864,7 +2870,13 @@ def scan_loop():
     רץ בThread נפרד.
     סורק Top 15 Gainers (LONG) + Top 15 Losers (SHORT) פעם בשעה.
     מפעיל Professional Scoring System — מינימום 85 נקודות לאיתות.
+    רץ רק ב-Production Deployment. בסביבת הפיתוח — /scan ידני בלבד.
     """
+    if not IS_DEPLOYED:
+        print("⚠️  [DEV] Auto-scan loop DISABLED (IS_DEPLOYED=False).")
+        print("    Use /scan in Telegram or test manually. Prod bot handles automated scans.")
+        return   # יוצא מהפונקציה — אין לולאה אוטומטית ב-dev
+
     print("Scan loop started — scanning every 60 minutes")
     while True:
         try:
@@ -3015,14 +3027,25 @@ def main():
     scan_thread = threading.Thread(target=scan_loop, daemon=True)
     scan_thread.start()
 
-    send_msg(
-        "🤖 *הבוט התחיל ב-Replit!*\n\n"
-        "⚙️ *מצב הלולאות:*\n"
-        "🔍 סריקת איתותים: כל *60 דקות*\n"
-        "📍 מעקב SL/TP:    כל *60 שניות*\n\n"
-        f"📋 /home — תפריט ראשי עם כל הפקודות\n"
-        f"🖥 [פתח דאשבורד]({DASHBOARD_URL})"
-    )
+    if IS_DEPLOYED:
+        send_msg(
+            "🚀 *הבוט הופעל — Production*\n\n"
+            "⚙️ *מצב הלולאות:*\n"
+            "🔍 סריקת איתותים: כל *60 דקות* ✅\n"
+            "📍 מעקב SL/TP:    כל *60 שניות* ✅\n\n"
+            f"📋 /home — תפריט ראשי\n"
+            f"🖥 [פתח דאשבורד]({DASHBOARD_URL})"
+        )
+    else:
+        send_msg(
+            "🛠 *הבוט הופעל — Development Mode*\n\n"
+            "⚙️ *מצב הלולאות:*\n"
+            "🔍 סריקה אוטומטית: *מושבתת* \\(רק /scan ידני\\)\n"
+            "📍 מעקב SL/TP:    כל *60 שניות* ✅\n\n"
+            "_כדי לא לקבל הודעות כפולות עם הבוט הפרוס_\n"
+            f"📋 /home — תפריט ראשי\n"
+            f"🖥 [פתח דאשבורד]({DASHBOARD_URL})"
+        )
 
     # Thread הראשי נשאר ער
     while True:
