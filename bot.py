@@ -423,18 +423,32 @@ def _sandbox_value_levels(df_4h, df_1h, price: float, direction: str) -> dict:
     - EMA200 ב-4H (תמיכה/התנגדות מרכזית)
     - Fibonacci 0.5 ו-0.618 מהתנועה האחרונה (20 נרות 1H)
     מחזיר dict שנשלח ל-Claude כהקשר.
+    מחזיר {} ריק ומדפיס אזהרה אם הנתונים אינם מספיקים.
     """
     try:
-        ema200_4h = float(ta.ema(df_4h['close'], length=200).iloc[-1])
-        ema200_1h = float(ta.ema(df_1h['close'], length=200).iloc[-1])
+        # ── EMA 200 על 4H ────────────────────────────────────────────────────
+        ema_4h_series = ta.ema(df_4h['close'], length=200)
+        if ema_4h_series is None or len(ema_4h_series) < 1:
+            print(f"  [Sandbox] _sandbox_value_levels: EMA200 4H חסר (נתונים לא מספיקים)")
+            return {}
+        ema200_4h = float(ema_4h_series.iloc[-1])
 
-        # Swing High/Low מ-20 הנרות האחרונים ב-1H (~20 שעות של תנועה)
-        recent     = df_1h.iloc[-20:]
+        # ── EMA 200 על 1H (אם df_1h זמין) ────────────────────────────────────
+        ema200_1h = None
+        swing_df  = df_4h      # fallback: נשתמש ב-4H אם 1H לא זמין
+        if df_1h is not None and len(df_1h) >= 20:
+            ema_1h_series = ta.ema(df_1h['close'], length=200)
+            if ema_1h_series is not None and len(ema_1h_series) >= 1:
+                ema200_1h = float(ema_1h_series.iloc[-1])
+            swing_df = df_1h   # עדיפות ל-1H לחישוב swing
+
+        # ── Swing High/Low מ-20 הנרות האחרונים ────────────────────────────────
+        recent     = swing_df.iloc[-20:]
         swing_high = float(recent['high'].max())
         swing_low  = float(recent['low'].min())
         rng        = swing_high - swing_low
 
-        if rng <= 0:
+        if rng <= 0 or swing_low <= 0:
             return {'ema200_4h': round(ema200_4h, 6)}
 
         if direction == 'LONG':
@@ -446,15 +460,18 @@ def _sandbox_value_levels(df_4h, df_1h, price: float, direction: str) -> dict:
             fib_500 = round(swing_low + rng * 0.500, 6)
             fib_618 = round(swing_low + rng * 0.618, 6)
 
-        return {
-            'ema200_4h':   round(ema200_4h, 6),
-            'ema200_1h':   round(ema200_1h, 6),
-            'fib_500':     fib_500,
-            'fib_618':     fib_618,
-            'swing_high':  round(swing_high, 6),
-            'swing_low':   round(swing_low, 6),
-            'range_pct':   round(rng / swing_low * 100, 2),
+        result = {
+            'ema200_4h':  round(ema200_4h, 6),
+            'fib_500':    fib_500,
+            'fib_618':    fib_618,
+            'swing_high': round(swing_high, 6),
+            'swing_low':  round(swing_low, 6),
+            'range_pct':  round(rng / swing_low * 100, 2),
         }
+        if ema200_1h is not None:
+            result['ema200_1h'] = round(ema200_1h, 6)
+        return result
+
     except Exception as e:
         print(f"  [Sandbox] _sandbox_value_levels error: {e}")
         return {}
@@ -2516,7 +2533,7 @@ def handle_scan(message):
             if bubble_watch_m:
                 bub_names = ", ".join(
                     f"{b['symbol'].replace('/USDT','')} ({b['change_pct']:+.1f}%)"
-                    for b in bubble_watch_m[:4]
+                    for b in bubble_watch_m           # כל המטבעות — ללא חיתוך
                 )
                 bub_note = f"\n🫧 *Bubble Watch ({len(bubble_watch_m)}):* {bub_names}"
             send_msg(
@@ -2929,7 +2946,7 @@ def scan_loop():
             if bubble_watch_list:
                 bub_str = ", ".join(
                     f"{b['symbol'].replace('/USDT','')} ({b['change_pct']:+.1f}%)"
-                    for b in bubble_watch_list[:5]
+                    for b in bubble_watch_list          # כל המטבעות — ללא חיתוך
                 )
                 summary += f"🫧 *Bubble Watch ({len(bubble_watch_list)}):* {bub_str}\n"
             summary += f"⏰ סריקה הבאה: `{next_scan}`\n"
