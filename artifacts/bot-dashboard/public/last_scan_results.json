@@ -1,6 +1,6 @@
 {
-  "scan_time": "2026-03-29T09:52:07",
-  "total_scanned": 32,
+  "scan_time": "2026-03-29T09:56:33",
+  "total_scanned": 31,
   "signals_found": 0,
   "active_trades_count": 0,
   "max_trades": 5,
@@ -25,14 +25,14 @@
       "scores": {}
     },
     {
-      "symbol": "BSB/USDT",
+      "symbol": "CHZ/USDT",
       "direction": "LONG",
       "best_score": 0,
       "reason": "Sentiment Kill-Switch: FNG=9 (Extreme Fear < 13)",
       "scores": {}
     },
     {
-      "symbol": "CHZ/USDT",
+      "symbol": "BSB/USDT",
       "direction": "LONG",
       "best_score": 0,
       "reason": "Sentiment Kill-Switch: FNG=9 (Extreme Fear < 13)",
@@ -46,58 +46,58 @@
       "scores": {}
     }
   ],
-  "system_message": "Kill-Switch Sentiment: FNG=9 (Extreme Fear) — הסריקה בוטלה לבטיחות",
-  "scan_duration_s": 6.0,
+  "system_message": "אף מטבע לא הגיע לציון 90/100. הטוב ביותר: PRL/USDT עם 0/100",
+  "scan_duration_s": 3.6,
   "bubble_watch": [
     {
       "symbol": "PRL/USDT",
-      "change_pct": 16.15,
+      "change_pct": 18.22,
       "direction": "LONG",
-      "price": 0.18365,
-      "volume_usd": 8644077
+      "price": 0.18691,
+      "volume_usd": 8870019
     },
     {
       "symbol": "TRIA/USDT",
-      "change_pct": 14.85,
+      "change_pct": 14.88,
       "direction": "LONG",
-      "price": 0.031512,
-      "volume_usd": 5442088
-    },
-    {
-      "symbol": "BSB/USDT",
-      "change_pct": 14.77,
-      "direction": "LONG",
-      "price": 0.22167,
-      "volume_usd": 1394113
+      "price": 0.03155,
+      "volume_usd": 5432822
     },
     {
       "symbol": "CHZ/USDT",
-      "change_pct": 13.1,
+      "change_pct": 13.37,
       "direction": "LONG",
-      "price": 0.04102,
-      "volume_usd": 1255285
+      "price": 0.04114,
+      "volume_usd": 1254939
+    },
+    {
+      "symbol": "BSB/USDT",
+      "change_pct": 11.99,
+      "direction": "LONG",
+      "price": 0.22265,
+      "volume_usd": 1392551
     },
     {
       "symbol": "COLLECT/USDT",
-      "change_pct": 10.82,
+      "change_pct": 11.64,
       "direction": "LONG",
-      "price": 0.051127,
-      "volume_usd": 3013032
+      "price": 0.051229,
+      "volume_usd": 3014098
     }
   ],
   "sandbox_analysis": [
     {
       "symbol": "PRL/USDT",
       "direction": "LONG",
-      "change_24h": 16.15,
-      "price": 0.18365,
-      "rsi_4h": 74.8,
-      "rsi_1h": 61.3,
-      "rsi_15m": 57.3,
+      "change_24h": 18.22,
+      "price": 0.187,
+      "rsi_4h": 75.3,
+      "rsi_1h": 63.4,
+      "rsi_15m": 61.4,
       "volume_ratio": 1.99,
       "score": 0,
       "verdict": "REJECT ❌",
-      "analysis": "The 3-TF RSI is overbought, indicating the move may be overextended.",
+      "analysis": "The 3-TF RSI is overbought and the move appears overextended.",
       "ema200_4h": "N/A",
       "fib_500": "N/A",
       "fib_618": "N/A",
@@ -109,15 +109,15 @@
     {
       "symbol": "TRIA/USDT",
       "direction": "LONG",
-      "change_24h": 14.85,
-      "price": 0.031505,
-      "rsi_4h": 52.1,
-      "rsi_1h": 61.7,
-      "rsi_15m": 52.3,
+      "change_24h": 14.88,
+      "price": 0.03158,
+      "rsi_4h": 52.4,
+      "rsi_1h": 62.5,
+      "rsi_15m": 54.2,
       "volume_ratio": 0.79,
       "score": 0,
-      "verdict": "APPROVE ✅",
-      "analysis": "The multi-timeframe RSI shows mixed signals, with the 1H RSI being overbought, but the 4H and 15m RSI in more neutral territory, indicating the move may be overextended.",
+      "verdict": "REJECT ❌",
+      "analysis": "The 3-TF RSI alignment is mixed, and the price is overextended above the 0.5 Fib level.",
       "ema200_4h": 0.027245,
       "fib_500": 0.030505,
       "fib_618": 0.030011,
