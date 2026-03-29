@@ -190,7 +190,7 @@ def claude_filter(symbol: str, direction: str, score: int, breakdown: dict,
 
         client = _anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
-            model="claude-3-5-sonnet-20241022",
+            model="claude-3-haiku-20240307",
             max_tokens=80,
             messages=[{"role": "user", "content": prompt}]
         )

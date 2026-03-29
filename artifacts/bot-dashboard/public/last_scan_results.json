@@ -1,5 +1,5 @@
 {
-  "scan_time": "2026-03-29T07:36:38",
+  "scan_time": "2026-03-29T07:39:16",
   "total_scanned": 29,
   "signals_found": 0,
   "active_trades_count": 0,
@@ -47,35 +47,35 @@
     }
   ],
   "system_message": "Kill-Switch Sentiment: FNG=9 (Extreme Fear) — הסריקה בוטלה לבטיחות",
-  "scan_duration_s": 3.1,
+  "scan_duration_s": 3.0,
   "bubble_watch": [
     {
       "symbol": "PRL/USDT",
-      "change_pct": 19.25,
+      "change_pct": 19.04,
       "direction": "LONG",
-      "price": 0.18393,
-      "volume_usd": 4250660
+      "price": 0.1831,
+      "volume_usd": 4251188
     },
     {
       "symbol": "TRIA/USDT",
-      "change_pct": 17.14,
+      "change_pct": 16.72,
       "direction": "LONG",
-      "price": 0.031521,
-      "volume_usd": 6008973
+      "price": 0.031404,
+      "volume_usd": 6002639
     },
     {
       "symbol": "COLLECT/USDT",
-      "change_pct": 14.0,
+      "change_pct": 14.7,
       "direction": "LONG",
-      "price": 0.052597,
-      "volume_usd": 2943196
+      "price": 0.052546,
+      "volume_usd": 2944355
     },
     {
       "symbol": "CHZ/USDT",
-      "change_pct": 12.57,
+      "change_pct": 12.41,
       "direction": "LONG",
-      "price": 0.04048,
-      "volume_usd": 1242597
+      "price": 0.04039,
+      "volume_usd": 1242423
     }
   ]
 }
