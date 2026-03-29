@@ -144,6 +144,72 @@ def check_kill_switch_change():
             f"_סריקה הבאה: עד שעה_"
         )
 
+# ═══════════════════════════════════════════════════════════════
+# Claude AI Final Filter — GO / NO-GO per signal
+# ═══════════════════════════════════════════════════════════════
+
+def claude_filter(symbol: str, direction: str, score: int, breakdown: dict,
+                  price: float, timeframe: str, btc_regime: str,
+                  fng_v: int, fng_lbl: str) -> tuple[bool, str]:
+    """
+    מסנן סופי: שולח נתוני האיתות ל-Claude 3.5 Sonnet.
+    מחזיר (go: bool, reason: str).
+    אם המפתח לא מוגדר / שגיאת API → GO כברירת מחדל (לא חוסם עסקאות).
+    """
+    api_key = os.environ.get('ANTHROPIC_API_KEY', '')
+    if not api_key:
+        print(f"  [Claude] ANTHROPIC_API_KEY לא מוגדר — דילוג על פילטר")
+        return True, "Claude filter skipped (no API key)"
+
+    try:
+        import anthropic as _anthropic
+
+        # בניית breakdown קצר לפרומפט
+        bd_lines = []
+        for k, v in (breakdown or {}).items():
+            bd_lines.append(f"  {k}: {v}")
+        breakdown_str = "\n".join(bd_lines) if bd_lines else "N/A"
+
+        prompt = (
+            f"You are a crypto trading risk validator. Analyze this signal and decide GO or NO-GO.\n\n"
+            f"Symbol: {symbol}\n"
+            f"Direction: {direction}\n"
+            f"Timeframe: {timeframe}\n"
+            f"Score: {score}/100\n"
+            f"Entry Price: {price}\n"
+            f"BTC Market Regime: {btc_regime}\n"
+            f"Fear & Greed Index: {fng_v} ({fng_lbl})\n"
+            f"Score Breakdown:\n{breakdown_str}\n\n"
+            f"Rules:\n"
+            f"- Trade size: $500 notional, $50 margin, 10x leverage\n"
+            f"- SL: 3.5% | TP1: 5.0% | TP Full: 10.5%\n"
+            f"- Risk/Reward must be favorable\n"
+            f"- Avoid chasing overextended moves\n\n"
+            f"Respond with EXACTLY one line: 'GO: <1 sentence reason>' or 'NO-GO: <1 sentence reason>'"
+        )
+
+        client = _anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=80,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        raw = response.content[0].text.strip()
+        print(f"  [Claude] {symbol} {direction}: {raw}")
+
+        if raw.upper().startswith("GO"):
+            reason = raw.split(":", 1)[1].strip() if ":" in raw else raw
+            return True, reason
+        else:
+            reason = raw.split(":", 1)[1].strip() if ":" in raw else raw
+            return False, reason
+
+    except Exception as e:
+        print(f"  [Claude] שגיאה: {e} — ממשיך ללא פילטר")
+        return True, f"Claude error: {e}"
+
+
 # --- פרמטרי מינוף (דמו) ---
 LEVERAGE       = 10          # מינוף 10x
 MARGIN         = 50          # בטחון ($) לכל עסקה
@@ -2235,6 +2301,29 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                         })
                         continue
 
+                # ── Claude AI Final Filter ──────────────────────────────────────
+                claude_go, claude_reason = claude_filter(
+                    symbol=symbol, direction=direction, score=score,
+                    breakdown=breakdown, price=price, timeframe=chosen_tf,
+                    btc_regime=btc_regime, fng_v=fng_v_scan, fng_lbl=fng_lbl_scan
+                )
+                if not claude_go:
+                    print(f"  [Claude] ❌ NO-GO: {symbol} {direction} — {claude_reason}")
+                    send_msg(
+                        f"🤖 *Claude AI — NO\\-GO*\n\n"
+                        f"{'🟢' if direction == 'LONG' else '🔴'} `{symbol}` {direction} · {chosen_tf}\n"
+                        f"📊 ציון: *{score}/100* ✅ עבר\n"
+                        f"🚫 *Claude חסם:* _{claude_reason}_"
+                    )
+                    rejected_out.append({
+                        'symbol': symbol, 'direction': direction, 'best_score': score,
+                        'reason': f'Claude NO-GO: {claude_reason[:60]}',
+                        'scores': {'4H': score_4h, '1H': score_1h, '15m': score_15m},
+                    })
+                    continue
+
+                print(f"  [Claude] ✅ GO: {symbol} {direction} — {claude_reason}")
+                # ── פתיחת עסקה ──────────────────────────────────────────────────
                 open_demo_trade(
                     symbol, price, breakdown,
                     chosen_df, direction=direction,

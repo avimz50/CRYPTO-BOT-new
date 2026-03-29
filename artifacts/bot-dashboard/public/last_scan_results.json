@@ -1,6 +1,6 @@
 {
-  "scan_time": "2026-03-29T07:33:57",
-  "total_scanned": 27,
+  "scan_time": "2026-03-29T07:36:38",
+  "total_scanned": 29,
   "signals_found": 0,
   "active_trades_count": 0,
   "max_trades": 5,
@@ -39,7 +39,7 @@
       "scores": {}
     },
     {
-      "symbol": "KAT/USDT",
+      "symbol": "WLD/USDT",
       "direction": "LONG",
       "best_score": 0,
       "reason": "Sentiment Kill-Switch: FNG=9 (Extreme Fear < 13)",
@@ -47,35 +47,35 @@
     }
   ],
   "system_message": "Kill-Switch Sentiment: FNG=9 (Extreme Fear) — הסריקה בוטלה לבטיחות",
-  "scan_duration_s": 2.9,
+  "scan_duration_s": 3.1,
   "bubble_watch": [
     {
       "symbol": "PRL/USDT",
-      "change_pct": 19.04,
+      "change_pct": 19.25,
       "direction": "LONG",
-      "price": 0.18298,
-      "volume_usd": 4247357
+      "price": 0.18393,
+      "volume_usd": 4250660
     },
     {
       "symbol": "TRIA/USDT",
-      "change_pct": 18.28,
+      "change_pct": 17.14,
       "direction": "LONG",
-      "price": 0.03168,
-      "volume_usd": 6015767
+      "price": 0.031521,
+      "volume_usd": 6008973
     },
     {
       "symbol": "COLLECT/USDT",
-      "change_pct": 13.98,
+      "change_pct": 14.0,
       "direction": "LONG",
-      "price": 0.05277,
-      "volume_usd": 2942503
+      "price": 0.052597,
+      "volume_usd": 2943196
     },
     {
       "symbol": "CHZ/USDT",
-      "change_pct": 11.75,
+      "change_pct": 12.57,
       "direction": "LONG",
-      "price": 0.04033,
-      "volume_usd": 1241852
+      "price": 0.04048,
+      "volume_usd": 1242597
     }
   ]
 }
