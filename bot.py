@@ -2377,6 +2377,134 @@ def handle_dashboard(message):
         f"_תראה שם: Top 15 מועמדים חמים, גיינרים, ווליום ועוד_"
     )
 
+def evening_sol_analysis() -> str:
+    """
+    Evening SOL Strategy — ניתוח חי של SOL/USDT.
+    מחזיר הודעת טלגרם מעוצבת עם EXECUTE / WAIT / ABORT + רמות דינמיות.
+    """
+    # ── שליפת נתונים חיים ──────────────────────────────────────────────────
+    df_sol_4h = get_data('SOL/USDT', timeframe='4h', limit=60)
+    df_sol_1h = get_data('SOL/USDT', timeframe='1h', limit=60)
+    df_btc_4h = get_data('BTC/USDT', timeframe='4h', limit=20)
+
+    price_sol = float(df_sol_4h['close'].iloc[-1])
+    price_btc = float(df_btc_4h['close'].iloc[-1])
+
+    # ── פילטר 1: BTC Safety ───────────────────────────────────────────────
+    BTC_MIN = 66_500
+    if price_btc < BTC_MIN:
+        return (
+            f"🔴 *Evening SOL — ABORT*\n\n"
+            f"⛔ BTC לא עומד בתנאי הבטיחות\n"
+            f"BTC נוכחי: `${price_btc:,.0f}` < `${BTC_MIN:,.0f}`\n\n"
+            f"_שוק מסוכן מדי לכניסה ב-SOL_"
+        )
+
+    # ── פילטר 2: EMA20 על 1H ──────────────────────────────────────────────
+    ema20_1h_s = ta.ema(df_sol_1h['close'], length=20)
+    ema20_1h   = float(ema20_1h_s.iloc[-1]) if ema20_1h_s is not None else None
+    above_ema  = (ema20_1h is not None and price_sol > ema20_1h)
+
+    # ── פילטר 3: RSI 14 על 4H (40–62) ────────────────────────────────────
+    rsi_4h_s = ta.rsi(df_sol_4h['close'], length=14)
+    rsi_4h   = float(rsi_4h_s.iloc[-1]) if rsi_4h_s is not None else None
+    rsi_ok   = (rsi_4h is not None and 40 <= rsi_4h <= 62)
+
+    # ── פילטר 4: Volume > 1.15x SMA10 ────────────────────────────────────
+    vol_sma10  = df_sol_4h['volume'].iloc[-11:-1].mean()
+    vol_curr   = float(df_sol_4h['volume'].iloc[-1])
+    vol_ratio  = round(vol_curr / vol_sma10, 2) if vol_sma10 > 0 else 0.0
+    vol_ok     = vol_ratio >= 1.15
+
+    # ── חישוב רמות דינמיות ────────────────────────────────────────────────
+    entry = price_sol
+    sl    = round(entry * (1 - 0.035), 4)   # -3.5%
+    tp1   = round(entry * (1 + 0.045), 4)   # +4.5%
+    tp2   = round(entry * (1 + 0.090), 4)   # +9.0%
+    trail_activation = round(entry * (1 + 0.025), 4)  # +2.5%
+
+    # ── החלטה ─────────────────────────────────────────────────────────────
+    reasons_wait = []
+    if not above_ema:
+        reasons_wait.append(f"מחיר מתחת EMA20 1H \\({ema20_1h:.2f}\\)")
+    if not rsi_ok:
+        rsi_str = f"{rsi_4h:.1f}" if rsi_4h else "N/A"
+        reasons_wait.append(f"RSI 4H={rsi_str} מחוץ לטווח 40\\-62")
+    if not vol_ok:
+        reasons_wait.append(f"Volume {vol_ratio:.2f}× \\< 1\\.15×")
+
+    all_pass = above_ema and rsi_ok and vol_ok
+    decision = "EXECUTE" if all_pass else "WAIT"
+    dec_emoji = "✅" if all_pass else "⏳"
+    dec_color = "🟢" if all_pass else "🟡"
+
+    # ── פרמטרים לתצוגה ────────────────────────────────────────────────────
+    sl_pct   = round((entry - sl) / entry * 100, 2)
+    tp1_pct  = round((tp1 - entry) / entry * 100, 2)
+    tp2_pct  = round((tp2 - entry) / entry * 100, 2)
+    ema_dist = round(abs(price_sol - ema20_1h) / ema20_1h * 100, 2) if ema20_1h else 0
+
+    btc_ok_str = f"`${price_btc:,.0f}` ✅" if price_btc >= BTC_MIN else f"`${price_btc:,.0f}` ❌"
+    ema_ok_str = f"`{ema20_1h:.2f}` {'✅' if above_ema else '❌'}"
+    rsi_ok_str = f"`{rsi_4h:.1f}` {'✅' if rsi_ok else '❌'}" if rsi_4h else "N/A"
+    vol_ok_str = f"`{vol_ratio:.2f}×` {'✅' if vol_ok else '❌'}"
+
+    msg = (
+        f"{dec_color} *Evening SOL Strategy — {decision}* {dec_emoji}\n"
+        f"{'─' * 28}\n\n"
+        f"📊 *פילטרים*\n"
+        f"  BTC Safety \\(>66,500\\):   {btc_ok_str}\n"
+        f"  EMA20 1H \\({ema_dist:+.1f}%\\):    {ema_ok_str}\n"
+        f"  RSI 4H \\(40\\-62\\):        {rsi_ok_str}\n"
+        f"  Volume \\(>1\\.15×\\):       {vol_ok_str}\n\n"
+        f"{'─' * 28}\n"
+        f"💰 *מחיר נוכחי: `${entry:.4f}`*\n\n"
+    )
+
+    if all_pass:
+        msg += (
+            f"📐 *רמות עסקה — Live*\n"
+            f"  🟢 כניסה:   `${entry:.4f}`\n"
+            f"  🛑 SL:       `${sl:.4f}` \\(\\-{sl_pct}%\\)\n"
+            f"  🎯 TP1 50%: `${tp1:.4f}` \\(\\+{tp1_pct}%\\)\n"
+            f"  🎯 TP2 25%: `${tp2:.4f}` \\(\\+{tp2_pct}%\\)\n"
+            f"  📍 Trailing: פעיל מ\\-`${trail_activation:.4f}` \\(\\+2\\.5%\\) | Callback 1\\.2%\n\n"
+            f"_כל הפילטרים עברו — עסקה מאושרת לפי האסטרטגיה_"
+        )
+    else:
+        wait_lines = "\n".join(f"  • {r}" for r in reasons_wait)
+        msg += (
+            f"⏳ *ממתין לתנאים:*\n{wait_lines}\n\n"
+            f"📐 *רמות מחושבות \\(כשיאושר\\)*\n"
+            f"  🛑 SL:       `${sl:.4f}` \\(\\-{sl_pct}%\\)\n"
+            f"  🎯 TP1 50%: `${tp1:.4f}` \\(\\+{tp1_pct}%\\)\n"
+            f"  🎯 TP2 25%: `${tp2:.4f}` \\(\\+{tp2_pct}%\\)\n"
+            f"  📍 Trailing: מ\\-`${trail_activation:.4f}` | Callback 1\\.2%\n\n"
+            f"_השתמש /watch SOL LONG לקבלת עדכון כשהתנאים ישתנו_"
+        )
+
+    return msg
+
+
+@bot.message_handler(commands=['sol'])
+def handle_sol(message):
+    """
+    /sol — ניתוח חי של SOL/USDT לפי Evening SOL Strategy.
+    בודק BTC Safety, EMA20 1H, RSI 4H, Volume ומחזיר EXECUTE/WAIT/ABORT.
+    """
+    send_msg("🔭 *Evening SOL Strategy* — מריץ ניתוח חי\\.\\.\\.")
+
+    def _run():
+        try:
+            result = evening_sol_analysis()
+            send_msg(result)
+        except Exception as e:
+            print(f"[/sol] error: {e}")
+            send_msg(f"⚠️ שגיאה בניתוח SOL: `{str(e)[:80]}`")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 @bot.message_handler(commands=['watch'])
 def handle_watch(message):
     """
@@ -2499,6 +2627,8 @@ def handle_home(message):
         f"  /watch SOL SHORT   — מעקב SHORT\n"
         f"  /watch             — רשימת מעקב פעילה\n"
         f"  /unwatch SOL       — הפסקת מעקב\n\n"
+        f"🌙 *Evening SOL Strategy*\n"
+        f"  /sol — ניתוח SOL חי: BTC\\+EMA\\+RSI\\+Volume → EXECUTE/WAIT/ABORT\n\n"
         f"🖥 *דאשבורד*\n"
         f"  /dashboard — קבל קישור לדאשבורד\n"
         f"  [👉 פתח דאשבורד]({DASHBOARD_URL})\n\n"
