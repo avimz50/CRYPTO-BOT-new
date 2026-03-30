@@ -3202,7 +3202,8 @@ def start_telegram_polling():
     Polling הטלגרם:
     - DEV mode: לא מפעיל polling בכלל — Production bot מטפל בפקודות.
       send_msg() עובד תמיד (HTTP POST ישיר, לא דורש polling).
-    - PROD mode: polling עם retry עד 5 דקות על 409 (Autoscale).
+    - PROD mode: המתנה של 70 שניות + delete_webhook לפני polling,
+      כדי להבטיח שה-instance הישן הסתיים לפני שמתחילים.
     """
     is_deployed = bool(os.environ.get('REPLIT_DEPLOYMENT', ''))
 
@@ -3213,7 +3214,21 @@ def start_telegram_polling():
         )
         return   # לא מתחיל polling ב-dev — אין קונפליקט 409
 
-    print("Telegram polling started... [PROD]")
+    # ── המתן 70 שניות לפני הפיסגה ──────────────────────────────────────
+    # Replit Autoscale מפעיל instance חדש לפני שהישן מוגמר.
+    # 409 = שני instances מנסים לפול בו-זמנית.
+    # המתנה נותנת לישן זמן לסיים ולשחרר את session הטלגרם.
+    print("[PROD] Telegram polling: waiting 70s for old instance to terminate...")
+    time.sleep(70)
+
+    # נקה כל webhook קיים ו-pending updates
+    try:
+        bot.delete_webhook(drop_pending_updates=True)
+        print("[PROD] Webhook cleared, pending updates dropped.")
+    except Exception as e:
+        print(f"[PROD] delete_webhook error (non-fatal): {e}")
+
+    print("[PROD] Starting Telegram polling now...")
     consecutive_409 = 0
 
     while True:
