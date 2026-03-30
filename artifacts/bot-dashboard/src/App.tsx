@@ -239,6 +239,12 @@ interface WalletData {
   total_pnl: number;
   trades_opened: number;
   equity_history: EquityPoint[];
+  // ── new fields from api_wallet() ──
+  available_balance?: number;
+  locked_balance?: number;
+  unrealized_pnl?: number;
+  equity?: number;
+  active_count?: number;
 }
 
 function useClock() {
@@ -706,8 +712,9 @@ export default function App() {
 
   const MARGIN = 50;
 
-  // Floating P&L — calculated from live current_price stored per trade
-  const floating = trades.reduce((sum, t) => {
+  // Floating P&L — prefer authoritative value from API, fall back to client-side calc
+  const floatingAPI = walletData?.unrealized_pnl;
+  const floatingCalc = trades.reduce((sum, t) => {
     const cp  = t.current_price ?? t.entry;
     const raw = (cp - t.entry) / t.entry * 100;
     const pct = t.direction === "LONG" ? raw : -raw;
@@ -716,10 +723,16 @@ export default function App() {
       : 500 * pct / 100;
     return sum + usd;
   }, 0);
+  const floating = floatingAPI ?? floatingCalc;
 
-  const totalBalance = starting + realized + floating;
-  // Free cash = everything not locked in open trades (computed, never from stale file balance)
-  const freeCash = Math.max(0, starting - (trades.length * MARGIN) + realized + Math.min(0, floating));
+  // Equity — prefer API value (includes unrealized), fall back to local sum
+  const totalBalance = walletData?.equity ?? (starting + realized + floating);
+  // Free cash — prefer API available_balance, fall back to estimated
+  const freeCash  = walletData?.available_balance
+    ?? Math.max(0, starting - (trades.length * MARGIN) + realized + Math.min(0, floating));
+  // Locked margin — prefer API locked_balance
+  const lockedBal = walletData?.locked_balance ?? (trades.length * MARGIN);
+
   const totalPct     = starting > 0 ? ((totalBalance - starting) / starting * 100) : 0;
   const floatPos     = floating >= 0;
   const realizedPos  = realized >= 0;
@@ -792,24 +805,28 @@ export default function App() {
             </p>
           </div>
 
-          {/* Row 2: Realized | Floating | Free Cash */}
-          <div className="grid grid-cols-3 divide-x divide-gray-800 text-center">
+          {/* Row 2: Realized | Floating | Available | Locked */}
+          <div className="grid grid-cols-4 divide-x divide-gray-800 text-center">
             <div className="p-4">
-              <p className={`text-xl font-bold ${realizedPos ? "text-emerald-400" : "text-red-400"}`}>
+              <p className={`text-lg font-bold ${realizedPos ? "text-emerald-400" : "text-red-400"}`}>
                 {realizedPos ? "+" : ""}{realized.toFixed(2)}$
               </p>
               <p className="text-xs text-gray-500 mt-1">Realized P&L</p>
             </div>
             <div className="p-4">
-              <p className={`text-xl font-bold ${floatPos ? "text-[#39ff14]" : "text-red-500"}`}
+              <p className={`text-lg font-bold ${floatPos ? "text-[#39ff14]" : "text-red-500"}`}
                  style={{ textShadow: floatPos ? "0 0 8px #39ff1460" : "none" }}>
                 {floatPos ? "+" : ""}{floating.toFixed(2)}$
               </p>
-              <p className="text-xs text-gray-500 mt-1">Floating P&L</p>
+              <p className="text-xs text-gray-500 mt-1">Unrealized P&L</p>
             </div>
             <div className="p-4">
-              <p className="text-xl font-bold text-blue-400">${freeCash.toFixed(2)}</p>
-              <p className="text-xs text-gray-500 mt-1">יתרה פנויה</p>
+              <p className="text-lg font-bold text-blue-400">${freeCash.toFixed(2)}</p>
+              <p className="text-xs text-gray-500 mt-1">💰 פנוי</p>
+            </div>
+            <div className="p-4">
+              <p className="text-lg font-bold text-amber-400">${lockedBal.toFixed(2)}</p>
+              <p className="text-xs text-gray-500 mt-1">🔒 נעול</p>
             </div>
           </div>
 

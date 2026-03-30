@@ -820,7 +820,13 @@ def api_trades():
 @flask_app.route('/api/wallet')
 def api_wallet():
     data = dict(wallet)
-    data['equity'] = _get_equity()
+    locked              = sum(t.get('margin', MARGIN) for t in active_trades)
+    unrealized          = _get_unrealized_pnl()
+    data['equity']          = _get_equity()
+    data['available_balance']= round(wallet.get('balance', STARTING_BALANCE), 2)
+    data['locked_balance']  = round(locked, 2)
+    data['unrealized_pnl']  = unrealized
+    data['active_count']    = len(active_trades)
     return flask_jsonify(data)
 
 @flask_app.route('/api/hot')
@@ -852,10 +858,26 @@ def send_msg(text):
 
 wallet: dict = {}
 
+def _get_unrealized_pnl() -> float:
+    """Floating P&L של כל העסקאות הפתוחות לפי current_price."""
+    total = 0.0
+    for t in active_trades:
+        curr  = t.get('current_price', t.get('entry', 0))
+        entry = t.get('entry', 0)
+        pos   = t.get('pos_size', POSITION_SIZE)
+        if entry <= 0:
+            continue
+        if t.get('direction') == 'LONG':
+            total += (curr - entry) / entry * pos
+        else:
+            total += (entry - curr) / entry * pos
+    return round(total, 2)
+
 def _get_equity():
-    """Total equity = cash balance + actual margin locked in open trades (Sniper uses half)."""
-    locked = sum(t.get('margin', MARGIN) for t in active_trades)
-    return round(wallet.get('balance', STARTING_BALANCE) + locked, 2)
+    """Total equity = available_balance + locked_margin + unrealized_pnl."""
+    locked     = sum(t.get('margin', MARGIN) for t in active_trades)
+    unrealized = _get_unrealized_pnl()
+    return round(wallet.get('balance', STARTING_BALANCE) + locked + unrealized, 2)
 
 def _append_equity_point():
     hist = wallet.setdefault('equity_history', [])
@@ -917,6 +939,50 @@ def wallet_credit(pnl_usd: float, amount: float = MARGIN):
     _append_equity_point()
     save_wallet()
 
+
+# ─────────────────────────────────────────────────────────────────
+#  place_order() — פונקציה מאוחדת לרישום עסקה
+#  כל נתיבי הפתיחה (Auto / Manual / Scalp / SOL) מדווחים דרכה.
+# ─────────────────────────────────────────────────────────────────
+def place_order(trade: dict, margin: float = MARGIN) -> bool:
+    """
+    רושם עסקה חדשה:
+      • מוסיף ל-active_trades (עם trades_lock)
+      • מנכה מרג'ין מהארנק (wallet_deduct)
+      • שומר active_trades ל-disk (save_active_trades)
+    מחזיר True בהצלחה.
+    הבודק-יתרה ובדיקת-כפילות הם אחריות הקורא לפני הקריאה.
+    """
+    with trades_lock:
+        active_trades.append(trade)
+    wallet_deduct(margin)
+    save_active_trades()
+    available = wallet.get('balance', STARTING_BALANCE)
+    locked    = sum(t.get('margin', MARGIN) for t in active_trades)
+    equity    = _get_equity()
+    print(
+        f"[place_order] ✅ {trade['symbol']} {trade['direction']} "
+        f"@ {trade.get('entry', 0):.6g} | margin=${margin:.0f} "
+        f"| available=${available:.2f} locked=${locked:.2f} equity=${equity:.2f}"
+    )
+    return True
+
+
+def _wallet_opened_summary() -> str:
+    """שורת ארנק אחידה לכל הודעת אישור פתיחת עסקה."""
+    available  = wallet.get('balance', STARTING_BALANCE)
+    locked     = sum(t.get('margin', MARGIN) for t in active_trades)
+    unrealized = _get_unrealized_pnl()
+    equity     = _get_equity()
+    upnl_icon  = "📈" if unrealized >= 0 else "📉"
+    return (
+        f"📊 *ארנק לאחר פתיחה:*\n"
+        f"💰 פנוי:      `${available:.2f}`\n"
+        f"🔒 נעול:      `${locked:.2f}`\n"
+        f"{upnl_icon} Unrealized: `${unrealized:+.2f}`\n"
+        f"⚖️ Equity:    `${equity:.2f}`"
+    )
+
 def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_price: float = None):
     """מוסיף עסקה סגורה ל-closed_trades_log לשימוש בדוח Drive."""
     global closed_trades_log
@@ -944,20 +1010,23 @@ def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_pric
     ]
 
 def wallet_status_text() -> str:
-    """מחזיר מחרוזת סטטוס ארנק לטלגרם."""
-    bal     = wallet.get('balance', STARTING_BALANCE)
-    start   = wallet.get('starting', STARTING_BALANCE)
-    pnl     = wallet.get('total_pnl', 0.0)
-    equity  = _get_equity()
-    pnl_pct = round((equity - start) / start * 100, 1)
-    locked  = sum(t.get('margin', MARGIN) for t in active_trades)
-    icon    = "📈" if pnl >= 0 else "📉"
+    """מחזיר מחרוזת סטטוס ארנק לטלגרם — כולל Unrealized PnL."""
+    available  = wallet.get('balance', STARTING_BALANCE)
+    start      = wallet.get('starting', STARTING_BALANCE)
+    realized   = wallet.get('total_pnl', 0.0)
+    locked     = sum(t.get('margin', MARGIN) for t in active_trades)
+    unrealized = _get_unrealized_pnl()
+    equity     = _get_equity()   # available + locked + unrealized
+    eq_pct     = round((equity - start) / start * 100, 1)
+    r_icon     = "📈" if realized  >= 0 else "📉"
+    u_icon     = "📈" if unrealized >= 0 else "📉"
     return (
         f"💼 *ארנק וירטואלי*\n"
-        f"יתרה פנויה:   `${bal:.2f}`\n"
-        f"נעול בעסקאות: `${locked}`\n"
-        f"Total Equity:  `${equity:.2f}`\n"
-        f"{icon} P&L כולל: `${pnl:+.2f}` ({pnl_pct:+.1f}% מ-${start:.0f})"
+        f"💰 פנוי:         `${available:.2f}`\n"
+        f"🔒 נעול:         `${locked:.2f}`\n"
+        f"{u_icon} Unrealized:  `${unrealized:+.2f}`\n"
+        f"⚖️ Total Equity: `${equity:.2f}` ({eq_pct:+.1f}%)\n"
+        f"{r_icon} Realized P&L: `${realized:+.2f}`"
     )
 
 
@@ -1659,10 +1728,7 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         'fng_at_entry':    fng_v,           # FNG בזמן הכניסה
         'sniper':          sniper_mode,     # האם נפתח כ-Sniper Exception
     }
-    with trades_lock:
-        active_trades.append(trade)
-    wallet_deduct(effective_margin)   # ← נועל מרג'ין בפועל בארנק
-    save_active_trades()
+    place_order(trade, effective_margin)
 
     dir_header = get_direction_header(direction)
     tip        = get_momentum_tip(direction)
@@ -1673,8 +1739,6 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     if not tf_reason:
         tf_reason = f"טרנד חזק ב-{timeframe}" if timeframe == '4H' else f"פריצה ב-{timeframe} (4H חלש)"
     tf_icon = "📊" if timeframe == '4H' else ("⏱️" if timeframe == '1H' else "⚡")
-
-    equity_after = _get_equity()
 
     msg  = f"{dir_header}\n\n"
     msg += f"{'─' * 26}\n"
@@ -1702,7 +1766,7 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     msg += f"❌ Est\\. Loss at SL:   *\\-${est_loss_sl}*\n"
     msg += f"⚖️ Risk / Reward: *1 : {rr_ratio}*\n"
     msg += f"{'─' * 26}\n"
-    msg += f"💼 Equity: `${equity_after:.2f}` | יתרה: `${wallet.get('balance', 0):.2f}`\n\n"
+    msg += _wallet_opened_summary() + "\n\n"
     msg += tip
 
     chart_buf = generate_chart(df_3h, symbol, price, sl_price, tp_price, direction) \
@@ -2516,13 +2580,8 @@ def handle_addtrade(message):
             'scalp':           False,
             'manual':          True,
         }
-        with trades_lock:
-            active_trades.append(trade)
-        wallet_deduct(MARGIN)
-        save_active_trades()
+        place_order(trade, MARGIN)
 
-        eq    = _get_equity()
-        emoji = "🟢" if direction == 'LONG' else "🔴"
         dir_label = "🟢 LONG" if direction == 'LONG' else "🔴 SHORT"
         send_msg(
             f"✅ *עסקה נרשמה ידנית*\n"
@@ -2530,9 +2589,9 @@ def handle_addtrade(message):
             f"💵 כניסה: `{entry_price:.6g}`\n"
             f"🛑 SL: `{sl_price:.6g}` (-{sl_pct}%)\n"
             f"🎯 TP: `{tp_price:.6g}` (+{tp_pct}%)\n"
-            f"💼 {LEVERAGE}x · {MARGIN:.0f}$ מרג'ין · {POSITION_SIZE:.0f}$ נשלט\n"
-            f"📊 Equity: `{eq:.2f}$` | יתרה: `{wallet.get('balance', 0):.2f}$`\n\n"
-            f"_מעקב SL/TP/Trailing פעיל_"
+            f"💼 {LEVERAGE}x · ${MARGIN:.0f} מרג'ין · ${POSITION_SIZE:.0f} נשלט\n\n"
+            + _wallet_opened_summary() + "\n\n"
+            + "_מעקב SL/TP/Trailing פעיל_"
         )
         print(f"[/addtrade] Registered: {symbol} {direction} @ {entry_price}")
 
@@ -2739,19 +2798,15 @@ def _register_sol_trade(price: float, sl: float, tp: float, rsi: float | None):
         'scalp':           False,
         'sol_strategy':    True,
     }
-    with trades_lock:
-        active_trades.append(trade)
-    wallet_deduct(MARGIN)
-    save_active_trades()
-    eq = _get_equity()
+    place_order(trade, MARGIN)
     send_msg(
         f"✅ *SOL/USDT נרשמה כעסקה פעילה* 🟢\n\n"
-        f"💵 כניסה: `${price:.3f}`\n"
-        f"🛑 SL: `${sl:.3f}` \\(\\-{sl_pct}%\\)\n"
-        f"🎯 TP: `${tp:.3f}` \\(\\+{tp_pct}%\\)\n"
-        f"💼 {LEVERAGE}x · ${MARGIN} מרג'ין · ${POSITION_SIZE} נשלט\n"
-        f"📊 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance', 0):.2f}`\n\n"
-        f"_מעקב SL/TP פעיל — יתרה תעודכן אוטומטית_"
+        f"💵 כניסה: `{price:.3f}`\n"
+        f"🛑 SL: `{sl:.3f}` (-{sl_pct}%)\n"
+        f"🎯 TP: `{tp:.3f}` (+{tp_pct}%)\n"
+        f"💼 {LEVERAGE}x · ${MARGIN:.0f} מרג'ין · ${POSITION_SIZE:.0f} נשלט\n\n"
+        + _wallet_opened_summary() + "\n\n"
+        + "_מעקב SL/TP פעיל — יתרה תעודכן אוטומטית_"
     )
     print(f"[SOL] Trade registered: entry={price} SL={sl} TP={tp} RSI={rsi}")
 
@@ -3771,22 +3826,20 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
         'scalp':           True,
         'scalp_opened_ts': time.time(),
     }
-    with trades_lock:
-        active_trades.append(trade)
-    wallet_deduct(SCALP_MARGIN)
-    save_active_trades()
+    place_order(trade, SCALP_MARGIN)
 
     emoji     = "🟢" if direction == 'LONG' else "🔴"
-    dir_label = "Quick\\-Long \\(Dip Buy\\)" if direction == 'LONG' else "Scalp\\-Short \\(Bubble\\)"
+    dir_label = "Quick-Long (Dip Buy)" if direction == 'LONG' else "Scalp-Short (Bubble)"
     send_msg(
         f"⚡ *{dir_label}: {symbol.replace('/USDT', '')} {emoji}*\n"
         f"_High Volatility Mode — Mean Reversion_\n\n"
         f"💵 כניסה: `{price:.6g}`\n"
-        f"🛑 SL: `{sl_price:.6g}` \\(\\-{SCALP_SL_PCT}%\\)\n"
-        f"🎯 TP: `{tp_price:.6g}` \\(\\+{SCALP_TP_PCT}%\\)\n"
+        f"🛑 SL: `{sl_price:.6g}` (-{SCALP_SL_PCT}%)\n"
+        f"🎯 TP: `{tp_price:.6g}` (+{SCALP_TP_PCT}%)\n"
         f"⏱ תוקף: {SCALP_MAX_DURATION_MIN} דקות\n"
         f"💼 {SCALP_LEVERAGE}x · ${SCALP_MARGIN:.0f} מרג'ין · ${SCALP_POS_SIZE:.0f} נשלט\n\n"
-        f"📋 _{reason}_"
+        + _wallet_opened_summary() + "\n\n"
+        + f"📋 _{reason}_"
     )
     print(f"SCALP {direction}: {symbol} @ {price:.6g} | SL={sl_price:.6g} TP={tp_price:.6g} | {reason}")
 
