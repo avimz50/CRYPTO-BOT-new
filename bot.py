@@ -2379,91 +2379,116 @@ def handle_dashboard(message):
 
 def evening_sol_analysis() -> str:
     """
-    SOL LONG Strategy — פריצת התנגדות 4H.
-    כניסה רק אם המחיר החי פורץ מעל ההתנגדות האחרונה בגרף 4H.
-    SL: -3.5% | TP: +5% — מחושב על המחיר החי מ-Bitget.
+    SOL LONG Strategy — RSI + Bollinger Bands על 4H.
+    current_price נשלף חי מ-Bitget בכל קריאה.
+    SL  = current_price * 0.965  (-3.5%)
+    TP  = current_price * 1.050  (+5.0%)
+    החלטה: EXECUTE / WAIT / ABORT — לפי RSI + מיקום מחיר בתוך ה-BB.
     """
-    # ── שליפת נתונים חיים ──────────────────────────────────────────────────
-    df_sol_4h = get_data('SOL/USDT', timeframe='4h', limit=50)
-    df_btc    = get_data('BTC/USDT', timeframe='4h', limit=5)
+    # ── שליפת נתונים חיים ישירות מ-Bitget ─────────────────────────────────
+    df_sol = get_data('SOL/USDT', timeframe='4h', limit=60)
+    df_btc = get_data('BTC/USDT', timeframe='4h', limit=5)
 
-    current_price = float(df_sol_4h['close'].iloc[-1])
+    # current_price — תמיד מהנר האחרון שנשלף עכשיו
+    current_price = float(df_sol['close'].iloc[-1])
     price_btc     = float(df_btc['close'].iloc[-1])
 
-    # ── BTC Safety Filter ─────────────────────────────────────────────────
+    # ── BTC Safety ────────────────────────────────────────────────────────
     BTC_MIN = 66_500
     if price_btc < BTC_MIN:
         return (
             f"🔴 *SOL Long — ABORT*\n\n"
             f"⛔ BTC Safety Filter נכשל\n"
-            f"BTC נוכחי: `${price_btc:,.0f}` \\< `${BTC_MIN:,.0f}`\n\n"
-            f"_שוק מסוכן מדי לכניסה_"
+            f"BTC: `${price_btc:,.0f}` \\< `${BTC_MIN:,.0f}`\n\n"
+            f"_שוק מסוכן — אין כניסה_"
         )
 
-    # ── זיהוי התנגדות 4H — Swing High ────────────────────────────────────
-    # מחפש את ה-Swing High האחרון: נר שה-High שלו גבוה משני הנרות משני צדדיו
-    highs = df_sol_4h['high'].values
-    resistance = None
-    resistance_idx = None
-    # סורק מהנר הלפני-אחרון אחורה (לא כולל הנר הנוכחי)
-    for i in range(len(highs) - 2, 1, -1):
-        if highs[i] > highs[i - 1] and highs[i] > highs[i + 1]:
-            resistance = round(float(highs[i]), 4)
-            resistance_idx = i
-            break
+    # ── RSI 14 על 4H ──────────────────────────────────────────────────────
+    rsi_s  = ta.rsi(df_sol['close'], length=14)
+    rsi    = round(float(rsi_s.iloc[-1]), 2) if rsi_s is not None else None
 
-    # fallback — אם לא נמצא Swing High, השתמש בשיא האחרון של 10 נרות
-    if resistance is None:
-        resistance = round(float(df_sol_4h['high'].iloc[-11:-1].max()), 4)
-        resistance_idx = -1
+    # ── Bollinger Bands (20, 2) על 4H ─────────────────────────────────────
+    bb = ta.bbands(df_sol['close'], length=20, std=2)
+    if bb is not None:
+        col_u = [c for c in bb.columns if c.startswith('BBU')][0]
+        col_m = [c for c in bb.columns if c.startswith('BBM')][0]
+        col_l = [c for c in bb.columns if c.startswith('BBL')][0]
+        bb_upper = round(float(bb[col_u].iloc[-1]), 3)
+        bb_mid   = round(float(bb[col_m].iloc[-1]), 3)
+        bb_lower = round(float(bb[col_l].iloc[-1]), 3)
+    else:
+        bb_upper = bb_mid = bb_lower = None
 
-    # ── האם המחיר פורץ את ההתנגדות? ──────────────────────────────────────
-    breakout = current_price > resistance
-    dist_pct = round((current_price - resistance) / resistance * 100, 2)
+    # ── SL / TP — מחושב אך ורק על current_price ──────────────────────────
+    sl     = round(current_price * 0.965, 3)   # current_price * 0.965
+    tp     = round(current_price * 1.050, 3)   # current_price * 1.050
+    sl_usd = round(current_price - sl, 3)
+    tp_usd = round(tp - current_price, 3)
+    rr     = round(tp_usd / sl_usd, 2) if sl_usd > 0 else 0
 
-    # ── חישוב רמות דינמיות לפי המחיר החי ─────────────────────────────────
-    entry = current_price
-    sl    = round(entry * (1 - 0.035), 3)   # -3.5%
-    tp    = round(entry * (1 + 0.050), 3)   # +5.0%
-    sl_usd = round(entry - sl, 3)
-    tp_usd = round(tp - entry, 3)
-
-    candles_ago = len(highs) - 2 - resistance_idx if resistance_idx != -1 else "?"
     now_str = now_il().strftime('%H:%M')
 
-    if breakout:
-        return (
-            f"🟢 *SOL LONG — EXECUTE* ✅\n"
-            f"⏰ {now_str}\n"
-            f"{'─' * 26}\n\n"
-            f"📈 *פריצת התנגדות 4H מאושרת\\!*\n"
-            f"  התנגדות: `${resistance}` \\(לפני {candles_ago} נרות\\)\n"
-            f"  מחיר חי:  `${current_price:.3f}` \\({dist_pct:+.2f}% מעל\\)\n\n"
-            f"{'─' * 26}\n"
-            f"📐 *רמות עסקה — חישוב חי*\n"
-            f"  🟢 כניסה: `${entry:.3f}`\n"
-            f"  🛑 SL \\(\\-3\\.5%\\): `${sl:.3f}` \\(\\-${sl_usd:.3f}\\)\n"
-            f"  🎯 TP  \\(\\+5\\.0%\\): `${tp:.3f}` \\(\\+${tp_usd:.3f}\\)\n"
-            f"  ⚖️ RR: 1 : {round(tp_usd / sl_usd, 2)}\n\n"
-            f"  BTC: `${price_btc:,.0f}` ✅\n\n"
-            f"_כל התנאים עברו — עסקה מאושרת_"
-        )
+    # ── לוגיקת החלטה ──────────────────────────────────────────────────────
+    # EXECUTE: RSI בין 40–65 (מומנטום) + מחיר מעל BB Mid (מגמה עולה)
+    # WAIT:    RSI מחוץ לטווח או מחיר מתחת BB Mid
+    rsi_ok    = (rsi is not None and 40 <= rsi <= 65)
+    above_mid = (bb_mid is not None and current_price > bb_mid)
+    below_up  = (bb_upper is not None and current_price < bb_upper)
+    execute   = rsi_ok and above_mid and below_up
+
+    # ── תיאור מיקום מחיר בתוך ה-BB ───────────────────────────────────────
+    if bb_upper and bb_lower and bb_mid:
+        bb_width = round(bb_upper - bb_lower, 3)
+        pos_in_bb = round((current_price - bb_lower) / (bb_upper - bb_lower) * 100, 1) \
+                    if bb_width > 0 else 50.0
+        bb_pos_str = f"{pos_in_bb:.1f}% בתוך ה\\-BB"
     else:
-        return (
-            f"🟡 *SOL LONG — WAIT* ⏳\n"
-            f"⏰ {now_str}\n"
-            f"{'─' * 26}\n\n"
-            f"📊 *ממתין לפריצת התנגדות 4H*\n"
-            f"  התנגדות: `${resistance}` \\(לפני {candles_ago} נרות\\)\n"
-            f"  מחיר חי:  `${current_price:.3f}` \\({dist_pct:.2f}% מתחת\\)\n"
-            f"  נדרש:     עלייה של `${round(resistance - current_price, 3):.3f}` נוספים\n\n"
-            f"{'─' * 26}\n"
-            f"📐 *רמות מחושבות \\(כשיפרוץ\\)*\n"
-            f"  🛑 SL \\(\\-3\\.5%\\): `${sl:.3f}`\n"
-            f"  🎯 TP  \\(\\+5\\.0%\\): `${tp:.3f}`\n\n"
-            f"  BTC: `${price_btc:,.0f}` ✅\n\n"
-            f"_השתמש /watch SOL LONG לעדכון כשהמחיר יתקרב לפריצה_"
-        )
+        bb_pos_str = "N/A"
+
+    rsi_str    = f"`{rsi}`" if rsi else "N/A"
+    bb_mid_str = f"`${bb_mid}`" if bb_mid else "N/A"
+    bb_up_str  = f"`${bb_upper}`" if bb_upper else "N/A"
+    bb_lo_str  = f"`${bb_lower}`" if bb_lower else "N/A"
+
+    rsi_icon  = "✅" if rsi_ok    else "❌"
+    mid_icon  = "✅" if above_mid else "❌"
+    up_icon   = "✅" if below_up  else "❌"
+
+    # ── בניית הודעה ───────────────────────────────────────────────────────
+    if execute:
+        dec_line = f"🟢 *SOL LONG — EXECUTE* ✅"
+        verdict  = f"_כל התנאים עברו — עסקה מאושרת לפי האסטרטגיה_"
+    else:
+        dec_line = f"🟡 *SOL LONG — WAIT* ⏳"
+        fails = []
+        if not rsi_ok:
+            fails.append(f"RSI {rsi} מחוץ לטווח 40\\-65")
+        if not above_mid:
+            fails.append(f"מחיר מתחת BB Mid \\({bb_mid}\\)")
+        if not below_up:
+            fails.append(f"מחיר מעל BB Upper \\(overbought\\)")
+        verdict = "⏳ *ממתין לתנאים:*\n" + "\n".join(f"  • {f}" for f in fails)
+
+    return (
+        f"{dec_line}\n"
+        f"⏰ {now_str} \\| SOL/USDT 4H\n"
+        f"{'─' * 28}\n\n"
+        f"💰 *מחיר חי \\(Bitget\\): `${current_price:.3f}`*\n\n"
+        f"📊 *אינדיקטורים — 4H*\n"
+        f"  RSI 14 \\(40\\-65\\):  {rsi_str} {rsi_icon}\n"
+        f"  BB Upper:          {bb_up_str}\n"
+        f"  BB Mid:            {bb_mid_str} {mid_icon}\n"
+        f"  BB Lower:          {bb_lo_str}\n"
+        f"  מיקום:             {bb_pos_str} {up_icon}\n"
+        f"  BTC:               `${price_btc:,.0f}` ✅\n\n"
+        f"{'─' * 28}\n"
+        f"📐 *רמות עסקה \\(חישוב על מחיר חי\\)*\n"
+        f"  🟢 כניסה: `${current_price:.3f}`\n"
+        f"  🛑 SL \\(×0\\.965\\): `${sl:.3f}` \\(\\-${sl_usd:.3f}\\)\n"
+        f"  🎯 TP \\(×1\\.050\\): `${tp:.3f}` \\(\\+${tp_usd:.3f}\\)\n"
+        f"  ⚖️ RR: 1 : {rr}\n\n"
+        f"{verdict}"
+    )
 
 
 @bot.message_handler(commands=['sol'])
