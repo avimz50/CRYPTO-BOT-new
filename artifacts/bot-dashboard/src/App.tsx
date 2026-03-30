@@ -685,8 +685,12 @@ export default function App() {
   const scanData   = useJson<ScanData>(`${BOT_API}/api/last_scan`, "/last_scan_results.json", 120_000);
 
   const SCAN_INTERVAL = 3600; // seconds
-  const nextScan = new Date(Math.ceil(now.getTime() / (SCAN_INTERVAL * 1000)) * (SCAN_INTERVAL * 1000));
-  const diff  = Math.max(0, Math.floor((nextScan.getTime() - now.getTime()) / 1000));
+  // חישוב "סריקה הבאה" לפי זמן הסריקה האחרונה + שעה — לא לפי שעה עגולה
+  const lastScanTs  = scanData?.scan_time ? new Date(scanData.scan_time).getTime() : null;
+  const nextScanTs  = lastScanTs
+    ? lastScanTs + SCAN_INTERVAL * 1000
+    : Math.ceil(now.getTime() / (SCAN_INTERVAL * 1000)) * (SCAN_INTERVAL * 1000);
+  const diff  = Math.max(0, Math.floor((nextScanTs - now.getTime()) / 1000));
   const mm    = String(Math.floor(diff / 60)).padStart(2, "0");
   const ss    = String(diff % 60).padStart(2, "0");
   const scanPct = Math.round(((SCAN_INTERVAL - diff) / SCAN_INTERVAL) * 100);
