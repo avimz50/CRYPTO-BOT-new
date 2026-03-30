@@ -2887,10 +2887,17 @@ def handle_scan(message):
                     for b in bubble_watch_m           # כל המטבעות — ללא חיתוך
                 )
                 bub_note = f"\n🫧 *Bubble Watch ({len(bubble_watch_m)}):* {bub_names}"
+            fng_emoji_m = ("😱" if fng_v_m < 13 else
+                           "😨" if fng_v_m < 25 else
+                           "😟" if fng_v_m < 40 else
+                           "😐" if fng_v_m < 60 else
+                           "😊" if fng_v_m < 75 else "🤑")
+            ks_note_m = " 🔒 Kill\\-Switch" if fng_v_m < EXTREME_FEAR_THRESHOLD else ""
             send_msg(
                 f"✅ *סריקה ידנית הושלמה*\n\n"
                 f"🔍 נסרקו: *{total_scanned}* מטבעות\n"
                 f"📊 איתותים: *{signals_found}*\n"
+                f"{fng_emoji_m} Fear & Greed: *{fng_v_m}* — _{fng_lbl_m}_{ks_note_m}\n"
                 f"📊 עסקאות פעילות: *{len(active_trades)}*\n"
                 f"💰 P&L היום: *${pnl_today:+}*"
                 f"{bub_note}\n"
@@ -3564,9 +3571,17 @@ def scan_loop():
             pnl_today = round(daily_stats.get('total_pnl', 0), 2)
             pnl_icon  = "📈" if pnl_today >= 0 else "📉"
 
+            fng_emoji_loop = ("😱" if fng_v_loop < 13 else
+                              "😨" if fng_v_loop < 25 else
+                              "😟" if fng_v_loop < 40 else
+                              "😐" if fng_v_loop < 60 else
+                              "😊" if fng_v_loop < 75 else "🤑")
+            ks_note = " 🔒 Kill\\-Switch" if fng_v_loop < EXTREME_FEAR_THRESHOLD else ""
+
             summary  = f"✅ *סריקה הושלמה — {now}*\n\n"
             summary += f"🔍 נסרקו: *{total_scanned}* מטבעות\n"
             summary += f"📊 איתותים שנמצאו: *{signals_found}*\n"
+            summary += f"{fng_emoji_loop} Fear & Greed: *{fng_v_loop}* — _{fng_lbl_loop}_{ks_note}\n"
             summary += f"📊 עסקאות פעילות: *{len(active_trades)}/{MAX_TRADES}*\n"
             if active_trades:
                 for t in active_trades:
