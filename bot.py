@@ -71,10 +71,12 @@ def get_fear_greed():
         import requests as _req
         r = _req.get('https://api.alternative.me/fng/?limit=1', timeout=5)
         d = r.json()['data'][0]
+        prev_val = _fng_cache['value']
         _fng_cache.update({'value': int(d['value']), 'label': d['value_classification'], 'ts': now})
-        print(f"  [FNG] עודכן: {_fng_cache['value']} – {_fng_cache['label']}")
+        if _fng_cache['value'] != prev_val:   # הדפס רק אם הערך השתנה
+            print(f"[FNG] {prev_val} → {_fng_cache['value']} – {_fng_cache['label']}")
     except Exception as e:
-        print(f"  [FNG] שגיאה בטעינה: {e} (משתמש ב-cache אחרון)")
+        print(f"[FNG] שגיאת רענון: {e}")
     return _fng_cache['value'], _fng_cache['label']
 
 # ─── Global Sentiment Thresholds ──────────────────────────────────────────────
@@ -88,22 +90,27 @@ FEAR_EXTRA_SL_PCT      = 1.0  # % נוסף ל-SL בתנאי פחד
 DAILY_LOSS_LIMIT            = -30.0   # -$30 = 15% מ-$200 יתרת פתיחה
 _daily_circuit_notified: bool = False  # מונע ריבוי הודעות על אותו אירוע
 
+_last_sentiment_action: str = ""
+
 def sentiment_check(context: str = "scan"):
     """
-    בודק את מצב הסנטימנט ומדפיס לוג.
+    בודק את מצב הסנטימנט.
     מחזיר (fng_v:int, label:str, action:str).
-    נדרש לוג לכל בדיקת כניסה: 'Sentiment Check: [Value] - [Action Taken]'
+    מדפיס רק כשה-regime משתנה (Low-Resource mode).
     """
+    global _last_sentiment_action
     fng_v, lbl = get_fear_greed()
     if fng_v < EXTREME_FEAR_THRESHOLD:
-        action = f"KILL-SWITCH — אין עסקאות חדשות (< {EXTREME_FEAR_THRESHOLD})"
+        action = f"KILL-SWITCH (FNG={fng_v})"
     elif fng_v <= FEAR_THRESHOLD:
-        action = f"FEAR FILTER — SL +{FEAR_EXTRA_SL_PCT}% · LONG דורש RSI<30"
+        action = f"FEAR FILTER (FNG={fng_v})"
     elif fng_v >= GREED_THRESHOLD:
-        action = f"GREED FILTER — פוזיציה ×60% · BE@+{GREED_EARLY_BE_PCT}%"
+        action = f"GREED FILTER (FNG={fng_v})"
     else:
-        action = "נייטרלי — אין שינוי"
-    print(f"Sentiment Check: {fng_v} [{lbl}] - {action} [{context}]")
+        action = f"NEUTRAL (FNG={fng_v})"
+    if action.split('(')[0] != _last_sentiment_action.split('(')[0]:
+        print(f"[Sentiment] {_last_sentiment_action or 'START'} → {action} [{context}]")
+        _last_sentiment_action = action
     return fng_v, lbl, action
 
 
@@ -1311,7 +1318,13 @@ SCALP_CRASH_MIN_PCT     = 20.0   # quick-long: coin down > 20% in 2h
 SCALP_SHORT_RSI_THRESH  = 82.0   # RSI 15m must be > 82 for scalp-short
 SCALP_LONG_RSI_THRESH   = 18.0   # RSI 15m must be < 18 for quick-long
 SCALP_BOUNCE_PCT        = 1.0    # price must bounce 1% from 2h low
-SCALP_SCAN_INTERVAL     = 300    # 5 minutes between scalp scans
+SCALP_SCAN_INTERVAL     = 300    # 5 min between scalp scans (normal)
+SCALP_SCAN_INTERVAL_WAIT= 600    # 10 min when Kill-Switch active (resource savings)
+
+# ── Low-Resource Logging ──────────────────────────────────────────────────────
+# False = only critical events (Entry, Exit, Errors) are printed.
+# True  = verbose per-symbol scoring breakdown (debugging only).
+VERBOSE_LOG             = False
 
 
 def score_candles(df_15m, direction):
@@ -1466,7 +1479,8 @@ def score_symbol(df_3h, df_1h, symbol, direction='LONG'):
 
         if any(pd.isna(v) for v in [ema200_v, ema200_15v, macd_v, sig_v,
                                       hist_v, hist_p, rsi_v, bb_mid, atr_v]):
-            print(f"  [{symbol}] NaN in indicators")
+            if VERBOSE_LOG:
+                print(f"  [{symbol}] NaN in indicators")
             return 0, "NaN values", 0
 
         # ════════════════════════════════════════════════
@@ -1474,65 +1488,51 @@ def score_symbol(df_3h, df_1h, symbol, direction='LONG'):
         # ════════════════════════════════════════════════
 
         # ── וטו 1: EMA200 Proximity — Anti-Chase ──
-        ema_gap_pct = (price - ema200_v) / ema200_v * 100  # + = מעל EMA200
+        ema_gap_pct = (price - ema200_v) / ema200_v * 100
         if direction == 'LONG' and ema_gap_pct > EMA_PROXIMITY_PCT:
-            print(f"  [{symbol}] 🚫 EMA200 CHASE VETO: {ema_gap_pct:.1f}% מעל EMA200 (מקסימום {EMA_PROXIMITY_PCT}%) — המתן לפולבק")
             return 0, f"EMA200 chase veto ({ema_gap_pct:.1f}% above EMA200)", atr_v
         if direction == 'SHORT' and ema_gap_pct < -EMA_PROXIMITY_PCT:
-            print(f"  [{symbol}] 🚫 EMA200 CHASE VETO: {abs(ema_gap_pct):.1f}% מתחת EMA200 (מקסימום {EMA_PROXIMITY_PCT}%) — המתן לבאונס")
             return 0, f"EMA200 chase veto ({abs(ema_gap_pct):.1f}% below EMA200)", atr_v
 
         # ── וטו 2: Wick Rejection — Anti-False Breakout ──
-        last_c     = df_3h.iloc[-2]   # נר סגור אחרון (מאושר)
-        c_body     = abs(last_c['close'] - last_c['open'])
-        c_upper    = last_c['high'] - max(last_c['close'], last_c['open'])
-        c_lower    = min(last_c['close'], last_c['open']) - last_c['low']
+        last_c  = df_3h.iloc[-2]
+        c_body  = abs(last_c['close'] - last_c['open'])
+        c_upper = last_c['high'] - max(last_c['close'], last_c['open'])
+        c_lower = min(last_c['close'], last_c['open']) - last_c['low']
         if direction == 'LONG' and c_upper > c_body and c_body > 0:
-            print(f"  [{symbol}] 🚫 WICK REJECTION: פתיל עליון ({c_upper:.6g}) > גוף ({c_body:.6g}) — Shooting Star, מבטל LONG")
             return 0, f"Wick rejection LONG (upper wick {c_upper:.4g} > body {c_body:.4g})", atr_v
         if direction == 'SHORT' and c_lower > c_body and c_body > 0:
-            print(f"  [{symbol}] 🚫 WICK REJECTION: פתיל תחתון ({c_lower:.6g}) > גוף ({c_body:.6g}) — Hammer, מבטל SHORT")
             return 0, f"Wick rejection SHORT (lower wick {c_lower:.4g} > body {c_body:.4g})", atr_v
 
         # ════════════════════════════════
         # 1. TREND — 30 נקודות
         # ════════════════════════════════
-        if direction == 'LONG':
-            t1h  = price > ema200_v
-            t15m = price > ema200_15v
-        else:
-            t1h  = price < ema200_v
-            t15m = price < ema200_15v
+        t1h  = price > ema200_v  if direction == 'LONG' else price < ema200_v
+        t15m = price > ema200_15v if direction == 'LONG' else price < ema200_15v
 
         t_pts = 0
-        if t1h:
-            t_pts += 20
-        if t1h and t15m:
-            t_pts += 10
+        if t1h:        t_pts += 20
+        if t1h and t15m: t_pts += 10
         score += t_pts
         parts.append(f"Trend={t_pts}/30")
-        print(f"  [{symbol}] {direction} | Trend={t_pts} "
-              f"(4H={'✓' if t1h else '✗'} 1H={'✓' if t15m else '✗'})")
+        if VERBOSE_LOG:
+            print(f"  [{symbol}] {direction} | Trend={t_pts} "
+                  f"(4H={'✓' if t1h else '✗'} 1H={'✓' if t15m else '✗'})")
 
         # ════════════════════════════════
         # 2. MOMENTUM (MACD) — 25 נקודות
         # ════════════════════════════════
-        if direction == 'LONG':
-            macd_ok = macd_v > sig_v        # MACD מעל Signal
-            hist_ok = hist_v > hist_p       # Histogram מתחזק (פחות שלילי / יותר חיובי)
-        else:
-            macd_ok = macd_v < sig_v
-            hist_ok = hist_v < hist_p       # Histogram מתחזק לכיוון שלילי
+        macd_ok = (macd_v > sig_v)  if direction == 'LONG' else (macd_v < sig_v)
+        hist_ok = (hist_v > hist_p) if direction == 'LONG' else (hist_v < hist_p)
 
         m_pts = 0
-        if macd_ok:
-            m_pts += 15
-        if hist_ok:
-            m_pts += 10
+        if macd_ok: m_pts += 15
+        if hist_ok: m_pts += 10
         score += m_pts
         parts.append(f"MACD={m_pts}/25")
-        print(f"  [{symbol}] {direction} | MACD={m_pts} "
-              f"(aligned={'✓' if macd_ok else '✗'} hist={'✓' if hist_ok else '✗'})")
+        if VERBOSE_LOG:
+            print(f"  [{symbol}] {direction} | MACD={m_pts} "
+                  f"(aligned={'✓' if macd_ok else '✗'} hist={'✓' if hist_ok else '✗'})")
 
         # ════════════════════════════════
         # 3. RSI STRENGTH — 20 נקודות
@@ -1540,85 +1540,79 @@ def score_symbol(df_3h, df_1h, symbol, direction='LONG'):
 
         # וטו קשה — RSI קיצוני = פסילה מוחלטת
         if direction == 'LONG' and rsi_v > RSI_VETO_LONG:
-            print(f"  [{symbol}] 🚫 ANTI-FOMO RSI VETO: {rsi_v:.1f} > {RSI_VETO_LONG} (ceiling) — skip")
             return 0, f"Anti-FOMO RSI veto ({rsi_v:.1f} > {RSI_VETO_LONG} ceiling)", atr_v
         if direction == 'SHORT' and rsi_v < RSI_VETO_SHORT:
-            print(f"  [{symbol}] 🚫 RSI VETO: {rsi_v:.1f} < {RSI_VETO_SHORT} (oversold) — skip")
             return 0, f"RSI veto ({rsi_v:.1f} oversold)", atr_v
 
         if direction == 'LONG':
-            rsi_ideal = 50 <= rsi_v <= 65   # Sweet spot: מומנטום בלי overbought
-            rsi_ok    = 45 <= rsi_v <= 70   # Acceptable
+            rsi_ideal = 50 <= rsi_v <= 65
+            rsi_ok    = 45 <= rsi_v <= 70
         else:
-            rsi_ideal = 35 <= rsi_v <= 50   # Momentum short: לא oversold עדיין
+            rsi_ideal = 35 <= rsi_v <= 50
             rsi_ok    = 30 <= rsi_v <= 55
 
-        r_pts = 0
-        if rsi_ideal:
-            r_pts = 20
-        elif rsi_ok:
-            r_pts = 10
+        r_pts = 20 if rsi_ideal else (10 if rsi_ok else 0)
         score += r_pts
         parts.append(f"RSI={r_pts}/20(={rsi_v:.0f})")
-        print(f"  [{symbol}] {direction} | RSI={r_pts} (rsi={rsi_v:.1f})")
+        if VERBOSE_LOG:
+            print(f"  [{symbol}] {direction} | RSI={r_pts} (rsi={rsi_v:.1f})")
 
         # ════════════════════════════════
         # 4. BOLLINGER + VOLUME — 15 נקודות
         # ════════════════════════════════
-        if direction == 'LONG':
-            bb_ok = price > bb_mid
-        else:
-            bb_ok = price < bb_mid
-
+        bb_ok  = (price > bb_mid) if direction == 'LONG' else (price < bb_mid)
         vol_ok = vol_rat >= 1.2
 
         b_pts = 0
-        if bb_ok:
-            b_pts += 10
-        if vol_ok:
-            b_pts += 5
+        if bb_ok:  b_pts += 10
+        if vol_ok: b_pts += 5
         score += b_pts
         parts.append(f"BB+Vol={b_pts}/15")
-        print(f"  [{symbol}] {direction} | BB+Vol={b_pts} "
-              f"(bb={'✓' if bb_ok else '✗'} vol×{vol_rat:.1f}={'✓' if vol_ok else '✗'})")
+        if VERBOSE_LOG:
+            print(f"  [{symbol}] {direction} | BB+Vol={b_pts} "
+                  f"(bb={'✓' if bb_ok else '✗'} vol×{vol_rat:.1f}={'✓' if vol_ok else '✗'})")
 
         # ════════════════════════════════
         # 5. CANDLES (נרות יפניים) — 10 נקודות
         # ════════════════════════════════
         c_pts, pattern_name = score_candles(df_3h, direction)
         score += c_pts
-        candle_icon = "🕯" if c_pts > 0 else "—"
         parts.append(f"Candles={c_pts}/10({pattern_name})")
-        print(f"  [{symbol}] {direction} | Candles={c_pts} "
-              f"({candle_icon} {pattern_name})")
+        if VERBOSE_LOG:
+            print(f"  [{symbol}] {direction} | Candles={c_pts} ({pattern_name})")
 
         # ════════════════════════════════════
         # 6. FEAR & GREED INDEX — ±5 נקודות
         # ════════════════════════════════════
         fng_v, fng_lbl = get_fear_greed()
         if direction == 'LONG':
-            if   fng_v < 25: fng_adj = +5    # פחד קיצוני  → קנייה בבאונס
-            elif fng_v < 45: fng_adj = +2    # פחד          → רוח גבית
-            elif fng_v > 75: fng_adj = -5    # חמדנות קיצונית → סיכון LONG
-            elif fng_v > 55: fng_adj = -2    # חמדנות         → זהירות קלה
-            else:            fng_adj =  0    # נייטרלי
-        else:  # SHORT
-            if   fng_v > 75: fng_adj = +5    # חמדנות קיצונית → שורט בשיא
-            elif fng_v > 55: fng_adj = +2    # חמדנות          → רוח גבית
-            elif fng_v < 25: fng_adj = -5    # פחד קיצוני  → סיכון SHORT
-            elif fng_v < 45: fng_adj = -2    # פחד           → זהירות קלה
-            else:            fng_adj =  0    # נייטרלי
+            if   fng_v < 25: fng_adj = +5
+            elif fng_v < 45: fng_adj = +2
+            elif fng_v > 75: fng_adj = -5
+            elif fng_v > 55: fng_adj = -2
+            else:            fng_adj =  0
+        else:
+            if   fng_v > 75: fng_adj = +5
+            elif fng_v > 55: fng_adj = +2
+            elif fng_v < 25: fng_adj = -5
+            elif fng_v < 45: fng_adj = -2
+            else:            fng_adj =  0
         score = max(0, min(100, score + fng_adj))
         sign  = f"+{fng_adj}" if fng_adj >= 0 else str(fng_adj)
-        parts.append(f"FNG={fng_v}({sign})[{fng_lbl}]")
-        print(f"  [{symbol}] {direction} | FNG={fng_v} ({fng_lbl}) adj={sign}")
+        parts.append(f"FNG={fng_v}({sign})")
+        if VERBOSE_LOG:
+            print(f"  [{symbol}] {direction} | FNG={fng_v} adj={sign}")
 
         breakdown = " | ".join(parts) + f"  →  TOTAL={score}/100"
-        print(f"  [{symbol}] {direction} SCORE={score}/100 {'🟢 SIGNAL!' if score >= MIN_SCORE else '🔴 skip'}")
+        # Only print when a signal qualifies (score ≥ threshold)
+        if score >= MIN_SCORE:
+            print(f"[Score] 🟢 {symbol} {direction} SCORE={score}/100 | {breakdown}")
+        elif VERBOSE_LOG:
+            print(f"[Score] 🔴 {symbol} {direction} {score}/100 — skip")
         return score, breakdown, atr_v
 
     except Exception as e:
-        print(f"  [{symbol}] score error: {e}")
+        print(f"[Score] ⚠️ {symbol} error: {e}")
         return 0, str(e), 0
 
 # --- ניהול עסקאות דמו ---
