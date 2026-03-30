@@ -544,7 +544,8 @@ def _sandbox_value_levels(df_4h, df_1h, price: float, direction: str) -> dict:
         # ── EMA 200 על 4H ────────────────────────────────────────────────────
         ema_4h_series = ta.ema(df_4h['close'], length=200)
         if ema_4h_series is None or len(ema_4h_series) < 1:
-            print(f"  [Sandbox] _sandbox_value_levels: EMA200 4H חסר (נתונים לא מספיקים)")
+            if VERBOSE_LOG:
+                print(f"  [Sandbox] EMA200 4H missing — skipping value levels")
             return {}
         ema200_4h = float(ema_4h_series.iloc[-1])
 
@@ -638,7 +639,8 @@ def claude_sandbox_analysis(bubble_watch_list: list, btc_regime: str,
             df_1h  = get_data(symbol, timeframe='1h',  limit=250)
             df_15m = get_data(symbol, timeframe='15m', limit=250)
             if df_4h is None or df_1h is None or df_15m is None:
-                print(f"  [Sandbox] {symbol}: נתונים חסרים — מדלג")
+                if VERBOSE_LOG:
+                    print(f"  [Sandbox] {symbol}: data missing — skip")
                 continue
 
             price = float(df_4h['close'].iloc[-1])
@@ -1198,7 +1200,8 @@ def get_hot_candidates():
     מחזיר: (gainers_list, losers_list)
     """
     try:
-        print("Fetching all tickers for hot candidates...")
+        if VERBOSE_LOG:
+            print("[Scan] Fetching all tickers for hot candidates...")
         tickers = exchange.fetch_tickers()
 
         gainers, losers = [], []
@@ -1239,8 +1242,9 @@ def get_hot_candidates():
         with open(HOT_CANDIDATES_FILE, 'w') as f:
             json.dump(data, f)
 
-        print(f"Gainers: {[c['symbol'] for c in top_gainers]}")
-        print(f"Losers:  {[c['symbol'] for c in top_losers]}")
+        if VERBOSE_LOG:
+            print(f"[Scan] Gainers: {[c['symbol'] for c in top_gainers]}")
+            print(f"[Scan] Losers:  {[c['symbol'] for c in top_losers]}")
         return top_gainers, top_losers
 
     except Exception as e:
@@ -1278,7 +1282,8 @@ def get_btc_regime():
         price = df['close'].iloc[-1]
         regime = 'BULL' if price > ema50 else 'BEAR'
         pct = round((price - ema50) / ema50 * 100, 2)
-        print(f"BTC Regime: {regime} | price={price:.0f} EMA50={ema50:.0f} ({pct:+.2f}%)")
+        if VERBOSE_LOG:
+            print(f"[BTC] Regime={regime} price={price:.0f} EMA50={ema50:.0f} ({pct:+.2f}%)")
         return regime
     except Exception as e:
         print(f"BTC regime check failed: {e} — defaulting to NEUTRAL")
@@ -1448,7 +1453,8 @@ def score_symbol(df_3h, df_1h, symbol, direction='LONG'):
         ema200_15 = ta.ema(df_1h['close'], length=200)
 
         if any(v is None for v in [ema200_1h, macd_df, rsi_s, bb_df, atr_s, ema200_15]):
-            print(f"  [{symbol}] indicator calc failed")
+            if VERBOSE_LOG:
+                print(f"  [{symbol}] indicator calc failed")
             return 0, "indicator error", 0
 
         price      = close_3h.iloc[-1]
@@ -2252,7 +2258,8 @@ def send_heartbeat():
         f"📊 P&L היום: *${pnl_today:+}* · {len(trades_snapshot)} עסקה פעילה"
     )
     send_msg(msg)
-    print(f"Heartbeat sent at {now_str} — {len(trades_snapshot)} trade(s)")
+    if VERBOSE_LOG:
+        print(f"[Heartbeat] sent — {len(trades_snapshot)} trade(s) @ {now_str}")
 
 
 def check_heartbeat():
@@ -3854,18 +3861,19 @@ def scalp_scan_loop():
         try:
             fng_v, fng_lbl, _ = sentiment_check("scalp_scan")
 
+            # Scalp scanner is ONLY active during Extreme Fear (FNG < threshold)
+            # In normal market (WAIT mode), sleep longer to save CPU
             if fng_v >= EXTREME_FEAR_THRESHOLD:
-                time.sleep(SCALP_SCAN_INTERVAL)
+                time.sleep(SCALP_SCAN_INTERVAL_WAIT)   # 10 min in WAIT mode
                 continue
 
             with trades_lock:
                 scalp_count = sum(1 for t in active_trades if t.get('scalp'))
             if scalp_count >= MAX_SCALP_TRADES:
-                print(f"SCALP SCAN: max scalp trades ({scalp_count}/{MAX_SCALP_TRADES}) — skip cycle")
-                time.sleep(SCALP_SCAN_INTERVAL)
+                time.sleep(SCALP_SCAN_INTERVAL_WAIT)   # 10 min when at capacity
                 continue
 
-            print(f"SCALP SCAN: FNG={fng_v} ({fng_lbl}) — Extreme Fear active, scanning...")
+            print(f"[Scalp] FNG={fng_v} — scanning...")
             tickers = exchange.fetch_tickers()
 
             # ── SCALP-SHORT: Bubble Watch — עלה >30% ב-24h ───────────────────────
@@ -3881,7 +3889,8 @@ def scalp_scan_loop():
                 key=lambda x: x['change_pct'], reverse=True
             )[:5]
 
-            print(f"SCALP-SHORT bubble candidates (>{SCALP_BUBBLE_MIN_PCT}% 24h): {[c['symbol'] for c in bubble_candidates]}")
+            if VERBOSE_LOG and bubble_candidates:
+                print(f"[Scalp] SHORT candidates: {[c['symbol'] for c in bubble_candidates]}")
 
             for cand in bubble_candidates:
                 with trades_lock:
@@ -3893,7 +3902,6 @@ def scalp_scan_loop():
                 sym   = cand['symbol']
                 price = cand['price']
                 ok, rsi15, ema9 = _check_scalp_short(sym, price)
-                print(f"  SHORT check {sym}: RSI15m={rsi15:.1f}, EMA9(5m)={ema9:.6g}, ok={ok}")
                 if ok:
                     reason = (f"Bubble +{cand['change_pct']:.1f}% 24h · "
                               f"RSI 15m={rsi15:.1f} >82 · "
@@ -3917,7 +3925,6 @@ def scalp_scan_loop():
 
                 ok, rsi15, drop_pct, bounce_pct = _check_quick_long(sym, price)
                 if ok:
-                    print(f"  LONG check {sym}: drop={drop_pct:.1f}% RSI15m={rsi15:.1f} bounce={bounce_pct:.2f}% — MATCH")
                     reason = (f"Flash Crash -{drop_pct:.1f}% (2h) · "
                               f"RSI 15m={rsi15:.1f} <18 · "
                               f"Bounce +{bounce_pct:.2f}% from low")
@@ -3925,9 +3932,9 @@ def scalp_scan_loop():
                     time.sleep(2)
 
         except Exception as e:
-            print(f"SCALP SCAN error: {e}")
+            print(f"[Scalp] ⚠️ error: {e}")
 
-        time.sleep(SCALP_SCAN_INTERVAL)
+        time.sleep(SCALP_SCAN_INTERVAL)   # 5 min when actively scanning
 
 
 def sol_watch_loop():
@@ -4014,7 +4021,8 @@ def sol_watch_loop():
 
             # ── שלח הודעה רק אם יש שינוי ──────────────────────────────────
             if not changes:
-                print(f"[SOL Watch] No change — {decision} | RSI={rsi} | Price=${current_price:.3f}")
+                if VERBOSE_LOG:
+                    print(f"[SOL Watch] No change — {decision} | RSI={rsi} | Price=${current_price:.3f}")
                 continue
 
             sl = round(current_price * 0.965, 3)

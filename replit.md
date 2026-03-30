@@ -48,6 +48,37 @@ Every package extends `tsconfig.base.json` which sets `composite: true`. The roo
 - `pnpm run build` — runs `typecheck` first, then recursively runs `build` in all packages that define it
 - `pnpm run typecheck` — runs `tsc --build --emitDeclarationOnly` using project references
 
+## Trading Bot (bot.py)
+
+Python crypto trading bot running on Bitget demo mode.
+
+### Key Constants (bot.py top)
+- `MIN_SCORE=90`, `MAX_TRADES=5`, `LEVERAGE=10`, `MARGIN=50`, `POSITION_SIZE=500`
+- `VERBOSE_LOG=False` — set to `True` for per-symbol scoring breakdown (debug only)
+- `SCALP_SCAN_INTERVAL=300` (5 min active), `SCALP_SCAN_INTERVAL_WAIT=600` (10 min WAIT mode)
+
+### Threads
+| Thread | Interval | Notes |
+|--------|----------|-------|
+| trade_monitor_loop | 60s | SL/TP/BE/Trailing — only runs when active_trades exist |
+| scan_loop | 60 min | Auto-scan (Production only, disabled in dev) |
+| sol_watch_loop | 15 min | SOL/USDT watch, alerts on state change only |
+| scalp_scan_loop | 5 min active / 10 min WAIT | Runs only when FNG < 13 (Extreme Fear) |
+| watch_loop | 15 min | User Watch-List |
+
+### Low-Resource Mode
+- `VERBOSE_LOG=False`: Only Entry/Exit/Error events printed. No per-symbol scoring noise.
+- FNG API cached 1h; only prints when value changes.
+- `sentiment_check()` only prints when regime changes (Kill-Switch → Neutral etc.)
+- Scalp scanner doubles sleep to 10 min when not in Extreme Fear (normal market).
+- `save_active_trades()` / `save_wallet()` only called on trade events — not on every poll.
+
+### Wallet API (`/api/wallet`)
+Returns: `balance`, `available_balance`, `locked_balance`, `unrealized_pnl`, `equity`, `active_count`, `total_pnl`, `equity_history`.
+
+### Flask Port
+`8091` (internal), proxied via API Server at port 8080.
+
 ## Packages
 
 ### `artifacts/api-server` (`@workspace/api-server`)
