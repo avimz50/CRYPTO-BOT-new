@@ -2420,6 +2420,117 @@ def handle_close(message):
     except Exception as e:
         send_msg(f"❌ שגיאה בסגירה: {e}")
 
+@bot.message_handler(commands=['addtrade'])
+def handle_addtrade(message):
+    """
+    /addtrade SOL LONG 83.66   — רושם עסקה ידנית לפי מחיר כניסה שנתן המשתמש.
+    /addtrade SOL LONG          — כניסה = מחיר חי מ-Bitget.
+    /addtrade SOL               — LONG + מחיר חי (ברירת מחדל).
+    """
+    try:
+        parts = message.text.strip().split()
+        # פענוח: /addtrade SYMBOL [DIRECTION] [PRICE]
+        if len(parts) < 2:
+            send_msg(
+                "⚠️ *שימוש:*\n"
+                "`/addtrade SOL LONG 83.66` — מחיר ידני\n"
+                "`/addtrade SOL LONG` — מחיר חי\n"
+                "`/addtrade SOL` — LONG + מחיר חי"
+            )
+            return
+
+        raw_sym   = parts[1].upper()
+        symbol    = raw_sym if '/' in raw_sym else f"{raw_sym}/USDT"
+        direction = parts[2].upper() if len(parts) >= 3 and parts[2].upper() in ('LONG', 'SHORT') else 'LONG'
+
+        # מחיר כניסה — ידני או חי
+        if len(parts) >= 4 and parts[3].replace('.', '').isdigit():
+            entry_price = float(parts[3])
+        elif len(parts) == 3 and parts[2].replace('.', '').isdigit():
+            entry_price = float(parts[2])
+            direction   = 'LONG'
+        else:
+            ticker      = exchange.fetch_ticker(symbol)
+            entry_price = float(ticker['last'])
+
+        # בדיקה: כבר קיים?
+        with trades_lock:
+            if any(t['symbol'] == symbol for t in active_trades):
+                send_msg(f"ℹ️ `{symbol}` כבר קיים בעסקאות פעילות")
+                return
+
+        # בדיקת יתרה
+        if wallet.get('balance', 0) < MARGIN:
+            send_msg(f"⚠️ יתרה נמוכה — נדרש ${MARGIN:.0f} | יש ${wallet.get('balance',0):.2f}")
+            return
+
+        # SL / TP — סטנדרטי
+        sl_pct = SL_PCT_FIXED   # 3.5%
+        tp_pct = TP_PCT_FIXED   # 10.5%
+        if direction == 'LONG':
+            sl_price  = round(entry_price * (1 - sl_pct / 100), 8)
+            tp_price  = round(entry_price * (1 + tp_pct / 100), 8)
+            tp1_price = round(entry_price * (1 + TP1_PCT_FIXED / 100), 8)
+            be_price  = round(entry_price * (1 + BE_BUFFER_PCT  / 100), 8)
+        else:
+            sl_price  = round(entry_price * (1 + sl_pct / 100), 8)
+            tp_price  = round(entry_price * (1 - tp_pct / 100), 8)
+            tp1_price = round(entry_price * (1 - TP1_PCT_FIXED / 100), 8)
+            be_price  = round(entry_price * (1 - BE_BUFFER_PCT  / 100), 8)
+
+        trade = {
+            'symbol':          symbol,
+            'entry':           entry_price,
+            'sl':              sl_price,
+            'tp':              tp_price,
+            'tp1':             tp1_price,
+            'be_lvl':          be_price,
+            'sl_pct':          sl_pct,
+            'tp_pct':          tp_pct,
+            'direction':       direction,
+            'phase':           'initial',
+            'be_triggered':    False,
+            'tp1_triggered':   False,
+            'tp1_pnl':         0.0,
+            'peak_price':      entry_price,
+            'trailing_sl':     None,
+            'score':           0,
+            'atr':             0.0,
+            'timeframe':       'Manual',
+            'rsi':             None,
+            'ema200':          None,
+            'score_breakdown': 'Manual entry via /addtrade',
+            'opened_at':       now_il().isoformat(timespec='seconds'),
+            'pos_size':        POSITION_SIZE,
+            'margin':          MARGIN,
+            'fng_at_entry':    None,
+            'sniper':          False,
+            'scalp':           False,
+            'manual':          True,
+        }
+        with trades_lock:
+            active_trades.append(trade)
+        wallet_deduct(MARGIN)
+        save_active_trades()
+
+        eq    = _get_equity()
+        emoji = "🟢" if direction == 'LONG' else "🔴"
+        send_msg(
+            f"✅ *עסקה נרשמה ידנית — {symbol} {emoji}*\n\n"
+            f"💵 כניסה: `${entry_price:.6g}`\n"
+            f"🛑 SL: `${sl_price:.6g}` \\(\\-{sl_pct}%\\)\n"
+            f"🎯 TP: `${tp_price:.6g}` \\(\\+{tp_pct}%\\)\n"
+            f"💼 {LEVERAGE}x · ${MARGIN:.0f} מרג'ין · ${POSITION_SIZE:.0f} נשלט\n"
+            f"📊 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance', 0):.2f}`\n\n"
+            f"_מעקב SL/TP/Trailing פעיל_"
+        )
+        print(f"[/addtrade] Registered: {symbol} {direction} @ {entry_price}")
+
+    except Exception as e:
+        send_msg(f"❌ שגיאה ברישום: `{str(e)[:80]}`")
+        print(f"[/addtrade] Error: {e}")
+
+
 @bot.message_handler(commands=['report'])
 def handle_report(message):
     send_daily_report()
@@ -2773,6 +2884,7 @@ def handle_home(message):
         f"🔍 *פקודות פעולה*\n"
         f"  /scan              — סריקה ידנית עכשיו\n"
         f"  /close BTC         — סגירת עסקה ידנית\n"
+        f"  /addtrade SOL LONG 83.66 — רישום ידני של עסקה פעילה\n"
         f"  /update BTC 84000 95000 — עדכון SL/TP\n\n"
         f"🔭 *Watch — מעקב מטבע ספציפי*\n"
         f"  /watch SOL LONG    — מעקב כל 15 דקות\n"
@@ -3507,8 +3619,11 @@ def _check_scalp_short(symbol: str, price: float):
         candles_15m = exchange.fetch_ohlcv(symbol, '15m', limit=30)
         if len(candles_15m) < 20:
             return False, 0.0, 0.0
-        df15 = pd.DataFrame(candles_15m, columns=['ts', 'open', 'high', 'low', 'close', 'vol'])
-        rsi15 = ta.momentum.RSIIndicator(df15['close'], window=14).rsi().iloc[-1]
+        df15  = pd.DataFrame(candles_15m, columns=['ts', 'open', 'high', 'low', 'close', 'vol'])
+        rsi_s = ta.rsi(df15['close'], length=14)
+        if rsi_s is None or rsi_s.isna().all():
+            return False, 0.0, 0.0
+        rsi15 = float(rsi_s.iloc[-1])
         if rsi15 <= SCALP_SHORT_RSI_THRESH:
             return False, round(rsi15, 2), 0.0
 
@@ -3516,7 +3631,7 @@ def _check_scalp_short(symbol: str, price: float):
         if len(candles_5m) < 15:
             return False, round(rsi15, 2), 0.0
         df5  = pd.DataFrame(candles_5m, columns=['ts', 'open', 'high', 'low', 'close', 'vol'])
-        ema9 = df5['close'].ewm(span=9, adjust=False).mean().iloc[-1]
+        ema9 = float(df5['close'].ewm(span=9, adjust=False).mean().iloc[-1])
         if price >= ema9:
             return False, round(rsi15, 2), round(ema9, 8)
 
@@ -3538,9 +3653,11 @@ def _check_quick_long(symbol: str, price: float):
         candles_15m = exchange.fetch_ohlcv(symbol, '15m', limit=30)
         if len(candles_15m) < 12:
             return False, 0.0, 0.0, 0.0
-        df15 = pd.DataFrame(candles_15m, columns=['ts', 'open', 'high', 'low', 'close', 'vol'])
-
-        rsi15 = ta.momentum.RSIIndicator(df15['close'], window=14).rsi().iloc[-1]
+        df15  = pd.DataFrame(candles_15m, columns=['ts', 'open', 'high', 'low', 'close', 'vol'])
+        rsi_s = ta.rsi(df15['close'], length=14)
+        if rsi_s is None or rsi_s.isna().all():
+            return False, 0.0, 0.0, 0.0
+        rsi15 = float(rsi_s.iloc[-1])
         if rsi15 >= SCALP_LONG_RSI_THRESH:
             return False, round(rsi15, 2), 0.0, 0.0
 
