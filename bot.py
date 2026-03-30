@@ -2923,16 +2923,23 @@ def handle_scan(message):
 
 def start_telegram_polling():
     """
-    Polling עם טיפול חכם ב-409:
-    - אם מגיע 409 → יש instance אחר כבר פועל (Autoscale).
-      ממתינים 5 דקות לפני ניסיון נוסף.
-    - שאר השגיאות → ניסיון חוזר אחרי 5 שניות.
-    - ה-send_msg() ממשיך לעבוד גם ב-send-only mode.
+    Polling הטלגרם:
+    - DEV mode: לא מפעיל polling בכלל — Production bot מטפל בפקודות.
+      send_msg() עובד תמיד (HTTP POST ישיר, לא דורש polling).
+    - PROD mode: polling עם retry עד 5 דקות על 409 (Autoscale).
     """
-    import os
-    is_deployed = os.environ.get('REPLIT_DEPLOYMENT', '') == '1'
-    print(f"Telegram polling started... [{'PROD/Autoscale' if is_deployed else 'DEV'}]")
+    is_deployed = bool(os.environ.get('REPLIT_DEPLOYMENT', ''))
+
+    if not is_deployed:
+        print(
+            "[DEV] Telegram polling SKIPPED — Production bot handles commands. "
+            "send_msg() active (send-only mode)."
+        )
+        return   # לא מתחיל polling ב-dev — אין קונפליקט 409
+
+    print("Telegram polling started... [PROD]")
     consecutive_409 = 0
+
     while True:
         try:
             bot.polling(non_stop=False, timeout=30, long_polling_timeout=30)
@@ -2941,10 +2948,10 @@ def start_telegram_polling():
             err_str = str(e)
             if '409' in err_str:
                 consecutive_409 += 1
-                wait = min(300, 30 * consecutive_409)   # עד 5 דקות
+                wait = min(300, 30 * consecutive_409)
                 print(
-                    f"⚠️  Telegram 409 — instance אחר פועל (Autoscale?). "
-                    f"send_msg עדיין פעיל. ממתין {wait}s לפני retry #{consecutive_409}..."
+                    f"⚠️  Telegram 409 — Autoscale instance conflict. "
+                    f"ממתין {wait}s לפני retry #{consecutive_409}..."
                 )
                 time.sleep(wait)
             else:
