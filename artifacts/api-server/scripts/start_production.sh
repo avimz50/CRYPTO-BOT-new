@@ -6,7 +6,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 echo "=== Starting Trading Bot (background) ==="
 cd "$REPO_ROOT"
-python bot.py &
+python bot.py > /tmp/bot_stdout.log 2> /tmp/bot_stderr.log &
 BOT_PID=$!
 echo "Bot PID: $BOT_PID"
 

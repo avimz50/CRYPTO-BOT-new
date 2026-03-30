@@ -82,6 +82,23 @@ router.get("/last_scan", async (_req, res) => {
   res.json(data);
 });
 
+router.get("/bot_log", (_req, res) => {
+  try {
+    const stdout = fs.existsSync("/tmp/bot_stdout.log")
+      ? fs.readFileSync("/tmp/bot_stdout.log", "utf-8").slice(-8000)
+      : "(no stdout log yet)";
+    const stderr = fs.existsSync("/tmp/bot_stderr.log")
+      ? fs.readFileSync("/tmp/bot_stderr.log", "utf-8").slice(-8000)
+      : "(no stderr log yet)";
+    const crash = fs.existsSync("/tmp/bot_crash.log")
+      ? fs.readFileSync("/tmp/bot_crash.log", "utf-8")
+      : null;
+    res.json({ stdout, stderr, crash });
+  } catch (e) {
+    res.json({ stdout: "", stderr: String(e), crash: null });
+  }
+});
+
 router.get("/audit", (_req, res) => {
   const filePath = path.join(ROOT, "audit_report.json");
   try {

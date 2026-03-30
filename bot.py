@@ -32,15 +32,24 @@ except ImportError:
     print("mplfinance not available — charts disabled")
 
 # --- הגדרות וחיבורים ---
+print("[BOOT] bot.py loading — env check...", flush=True)
+_missing = [k for k in ('BITGET_KEY','BITGET_SECRET','BITGET_PW','TELEGRAM_TOKEN','CHAT_ID') if not os.environ.get(k)]
+if _missing:
+    print(f"[BOOT] FATAL — missing env vars: {_missing}", flush=True)
+else:
+    print("[BOOT] All required env vars present.", flush=True)
+
 exchange = ccxt.bitget({
     'apiKey': os.environ['BITGET_KEY'],
     'secret': os.environ['BITGET_SECRET'],
     'password': os.environ['BITGET_PW'],
     'enableRateLimit': True,
 })
+print("[BOOT] ccxt exchange OK.", flush=True)
 
 bot = telebot.TeleBot(os.environ['TELEGRAM_TOKEN'])
 CHAT_ID = os.environ['CHAT_ID']
+print("[BOOT] Telegram bot OK.", flush=True)
 
 # רשימה קבועה לאסטרטגיית EMA בלבד
 ENERGY_GEO = ['PAXG/USDT', 'POWR/USDT', 'HNT/USDT']
@@ -4301,4 +4310,15 @@ def main():
         time.sleep(3600)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as _boot_err:
+        import traceback as _tb
+        _crash_msg = _tb.format_exc()
+        print(f"[FATAL] Bot crashed at startup:\n{_crash_msg}", flush=True)
+        try:
+            with open('/tmp/bot_crash.log', 'w') as _cf:
+                _cf.write(_crash_msg)
+        except Exception:
+            pass
+        raise
