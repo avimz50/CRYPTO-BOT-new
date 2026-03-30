@@ -6,3 +6,9 @@ id = "egCt1p49VbgCya_yQB0a-"
 uri = "file://שינויים_בבוט.txt"
 type = "text"
 title = "שינויים בבוט — תבניות נרות יפניים"
+
+[[outputs]]
+id = "eoRwqZJMm0-9iXdbzf5qY"
+uri = "file://exports/bot_export.txt"
+type = "text"
+title = "bot.py — Trading Bot Source Code"
