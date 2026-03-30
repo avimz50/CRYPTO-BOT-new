@@ -835,7 +835,15 @@ def send_msg(text):
     try:
         bot.send_message(CHAT_ID, text, parse_mode='Markdown')
     except Exception as e:
-        print(f"Telegram Error: {e}")
+        err = str(e)
+        print(f"Telegram send_msg Error: {err[:120]}")
+        # Fallback: שלח ללא Markdown אם יש שגיאת parse
+        if "parse" in err.lower() or "can't parse" in err.lower() or "Bad Request" in err:
+            try:
+                plain = text.replace('*', '').replace('_', '').replace('`', '').replace('\\', '')
+                bot.send_message(CHAT_ID, plain)
+            except Exception as e2:
+                print(f"Telegram fallback Error: {e2}")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2515,13 +2523,15 @@ def handle_addtrade(message):
 
         eq    = _get_equity()
         emoji = "🟢" if direction == 'LONG' else "🔴"
+        dir_label = "🟢 LONG" if direction == 'LONG' else "🔴 SHORT"
         send_msg(
-            f"✅ *עסקה נרשמה ידנית — {symbol} {emoji}*\n\n"
-            f"💵 כניסה: `${entry_price:.6g}`\n"
-            f"🛑 SL: `${sl_price:.6g}` \\(\\-{sl_pct}%\\)\n"
-            f"🎯 TP: `${tp_price:.6g}` \\(\\+{tp_pct}%\\)\n"
-            f"💼 {LEVERAGE}x · ${MARGIN:.0f} מרג'ין · ${POSITION_SIZE:.0f} נשלט\n"
-            f"📊 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance', 0):.2f}`\n\n"
+            f"✅ *עסקה נרשמה ידנית*\n"
+            f"*{symbol} — {dir_label}*\n\n"
+            f"💵 כניסה: `{entry_price:.6g}`\n"
+            f"🛑 SL: `{sl_price:.6g}` (-{sl_pct}%)\n"
+            f"🎯 TP: `{tp_price:.6g}` (+{tp_pct}%)\n"
+            f"💼 {LEVERAGE}x · {MARGIN:.0f}$ מרג'ין · {POSITION_SIZE:.0f}$ נשלט\n"
+            f"📊 Equity: `{eq:.2f}$` | יתרה: `{wallet.get('balance', 0):.2f}$`\n\n"
             f"_מעקב SL/TP/Trailing פעיל_"
         )
         print(f"[/addtrade] Registered: {symbol} {direction} @ {entry_price}")
