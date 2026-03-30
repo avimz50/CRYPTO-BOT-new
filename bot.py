@@ -1221,6 +1221,21 @@ SNIPER_EMA_PCT     = 5.0   # מחיר חייב תוך 5% מ-EMA200 (אין רד�
 SNIPER_VOL_MIN     = 2.5   # Volume לפחות 2.5× הממוצע — אישור כניסה
 SNIPER_MARGIN_MULT = 0.5   # Half-Size Entry: 50% מגודל הפוזיציה הרגיל
 
+# ── Scalp Mode (High-Volatility Mean Reversion, FNG < EXTREME_FEAR_THRESHOLD) ──
+SCALP_LEVERAGE          = 5
+SCALP_MARGIN            = 15.0
+SCALP_POS_SIZE          = SCALP_MARGIN * SCALP_LEVERAGE   # $75 controlled
+SCALP_TP_PCT            = 3.0    # 3% profit target
+SCALP_SL_PCT            = 1.5    # 1.5% stop loss
+SCALP_MAX_DURATION_MIN  = 60     # force-close after 60 minutes
+MAX_SCALP_TRADES        = 2      # max concurrent scalp trades
+SCALP_BUBBLE_MIN_PCT    = 30.0   # scalp-short: coin up > 30% in 24h
+SCALP_CRASH_MIN_PCT     = 20.0   # quick-long: coin down > 20% in 2h
+SCALP_SHORT_RSI_THRESH  = 82.0   # RSI 15m must be > 82 for scalp-short
+SCALP_LONG_RSI_THRESH   = 18.0   # RSI 15m must be < 18 for quick-long
+SCALP_BOUNCE_PCT        = 1.0    # price must bounce 1% from 2h low
+SCALP_SCAN_INTERVAL     = 300    # 5 minutes between scalp scans
+
 
 def score_candles(df_15m, direction):
     """
@@ -1731,6 +1746,62 @@ def track_trades():
 
             def be_hit(p):
                 return p >= trade['be_lvl'] if direction == 'LONG' else p <= trade['be_lvl']
+
+            # ════════════════════════════════════════════
+            # SCALP PHASE — SL / TP / Time exit
+            # ════════════════════════════════════════════
+            if trade.get('phase') == 'scalp':
+                raw_pnl_pct = (current_price - entry) / entry * 100
+                scalp_pnl_pct = raw_pnl_pct if direction == 'LONG' else -raw_pnl_pct
+                scalp_pnl_usd = round(SCALP_POS_SIZE * scalp_pnl_pct / 100, 2)
+
+                elapsed_min = (time.time() - trade.get('scalp_opened_ts', time.time())) / 60
+
+                tp_hit_s = (direction == 'LONG' and current_price >= trade['tp']) or \
+                           (direction == 'SHORT' and current_price <= trade['tp'])
+                sl_hit_s = (direction == 'LONG' and current_price <= trade['sl']) or \
+                           (direction == 'SHORT' and current_price >= trade['sl'])
+                time_exp = elapsed_min >= SCALP_MAX_DURATION_MIN
+
+                if tp_hit_s or sl_hit_s or time_exp:
+                    if tp_hit_s:
+                        close_reason = 'Scalp-TP'
+                        icon  = "✅"
+                        label = f"🎯 TP נגע \\(\\+{SCALP_TP_PCT}%\\)"
+                        daily_stats['wins'] += 1
+                    elif sl_hit_s:
+                        close_reason = 'Scalp-SL'
+                        icon  = "❌"
+                        label = f"🛑 SL נגע \\(\\-{SCALP_SL_PCT}%\\)"
+                        daily_stats['losses'] += 1
+                    else:
+                        close_reason = 'Scalp-Time'
+                        icon  = "⏱"
+                        label = f"⏱ פג תוקף \\({elapsed_min:.0f} דקות\\)"
+                        if scalp_pnl_usd >= 0:
+                            daily_stats['wins'] += 1
+                        else:
+                            daily_stats['losses'] += 1
+
+                    daily_stats['total_pnl'] += scalp_pnl_usd
+                    wallet_credit(scalp_pnl_usd, SCALP_MARGIN)
+                    _log_closed_trade(trade, close_reason, scalp_pnl_usd, current_price)
+                    eq    = _get_equity()
+                    emoji = "🟢" if direction == 'LONG' else "🔴"
+                    pnl_icon = "📈" if scalp_pnl_usd >= 0 else "📉"
+                    send_msg(
+                        f"⚡ *Scalp סגור — {sym.replace('/USDT','')} {emoji}*\n"
+                        f"{label}\n\n"
+                        f"כניסה: `{entry:.6g}` → יציאה: `{current_price:.6g}`\n"
+                        f"{pnl_icon} *P&L: ${scalp_pnl_usd:+.2f}* \\({scalp_pnl_pct:+.2f}%\\)\n"
+                        f"💼 {SCALP_LEVERAGE}x · ${SCALP_MARGIN:.0f} מרג'ין\n"
+                        f"📊 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance', 0):.2f}`\n"
+                        f"{pnl_icon} סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
+                    )
+                    with trades_lock:
+                        active_trades.remove(trade)
+                    save_active_trades()
+                continue   # skip all normal phase logic for scalp trades
 
             # ════════════════════════════════════════════
             # שלב INITIAL — פוזיציה מלאה $500
@@ -3345,6 +3416,250 @@ def _run_watch_check(symbol: str, entry: dict, silent: bool = False) -> int:
         return 0
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# SCALP MODE — High-Volatility Mean Reversion (FNG < EXTREME_FEAR_THRESHOLD)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _check_scalp_short(symbol: str, price: float):
+    """
+    בדיקת תנאי Scalp-Short:
+    - RSI 15m > 82 (overbought extreme)
+    - מחיר < EMA9 על גרף 5m (מתחיל לרדת)
+    מחזיר: (ok, rsi15, ema9_5m)
+    """
+    try:
+        candles_15m = exchange.fetch_ohlcv(symbol, '15m', limit=30)
+        if len(candles_15m) < 20:
+            return False, 0.0, 0.0
+        df15 = pd.DataFrame(candles_15m, columns=['ts', 'open', 'high', 'low', 'close', 'vol'])
+        rsi15 = ta.momentum.RSIIndicator(df15['close'], window=14).rsi().iloc[-1]
+        if rsi15 <= SCALP_SHORT_RSI_THRESH:
+            return False, round(rsi15, 2), 0.0
+
+        candles_5m = exchange.fetch_ohlcv(symbol, '5m', limit=20)
+        if len(candles_5m) < 15:
+            return False, round(rsi15, 2), 0.0
+        df5  = pd.DataFrame(candles_5m, columns=['ts', 'open', 'high', 'low', 'close', 'vol'])
+        ema9 = df5['close'].ewm(span=9, adjust=False).mean().iloc[-1]
+        if price >= ema9:
+            return False, round(rsi15, 2), round(ema9, 8)
+
+        return True, round(rsi15, 2), round(ema9, 8)
+    except Exception as e:
+        print(f"_check_scalp_short {symbol}: {e}")
+        return False, 0.0, 0.0
+
+
+def _check_quick_long(symbol: str, price: float):
+    """
+    בדיקת תנאי Quick-Long (Dip Buy):
+    - ירידה > 20% ב-2 שעות (8 קנדלים × 15m)
+    - RSI 15m < 18 (oversold extreme)
+    - מחיר קפץ 1%+ מהשפל של 2h האחרונות
+    מחזיר: (ok, rsi15, drop_pct, bounce_pct)
+    """
+    try:
+        candles_15m = exchange.fetch_ohlcv(symbol, '15m', limit=30)
+        if len(candles_15m) < 12:
+            return False, 0.0, 0.0, 0.0
+        df15 = pd.DataFrame(candles_15m, columns=['ts', 'open', 'high', 'low', 'close', 'vol'])
+
+        rsi15 = ta.momentum.RSIIndicator(df15['close'], window=14).rsi().iloc[-1]
+        if rsi15 >= SCALP_LONG_RSI_THRESH:
+            return False, round(rsi15, 2), 0.0, 0.0
+
+        # מחיר ~2 שעות קודם (סגירה 8 קנדלים אחורה)
+        price_2h_ago = df15['close'].iloc[-9] if len(df15) >= 9 else df15['close'].iloc[0]
+        if price_2h_ago <= 0:
+            return False, round(rsi15, 2), 0.0, 0.0
+        drop_pct = (price_2h_ago - price) / price_2h_ago * 100
+        if drop_pct < SCALP_CRASH_MIN_PCT:
+            return False, round(rsi15, 2), round(drop_pct, 2), 0.0
+
+        # שפל 2h ובדיקת קפיצה
+        low_2h = df15['low'].iloc[-9:].min()
+        if low_2h <= 0:
+            return False, round(rsi15, 2), round(drop_pct, 2), 0.0
+        bounce_pct = (price - low_2h) / low_2h * 100
+        if bounce_pct < SCALP_BOUNCE_PCT:
+            return False, round(rsi15, 2), round(drop_pct, 2), round(bounce_pct, 2)
+
+        return True, round(rsi15, 2), round(drop_pct, 2), round(bounce_pct, 2)
+    except Exception as e:
+        print(f"_check_quick_long {symbol}: {e}")
+        return False, 0.0, 0.0, 0.0
+
+
+def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
+    """
+    פותח עסקת Scalp — מינוף 5x, מרג'ין $15, SL 1.5%, TP 3%, תוקף 60 דקות.
+    עוקפת את Kill-Switch כי היא Mean Reversion ולא trend-following.
+    """
+    global active_trades
+
+    with trades_lock:
+        if any(t['symbol'] == symbol for t in active_trades):
+            print(f"SCALP: {symbol} already in active_trades — skip")
+            return
+        scalp_count = sum(1 for t in active_trades if t.get('scalp'))
+    if scalp_count >= MAX_SCALP_TRADES:
+        print(f"SCALP: max scalp trades ({MAX_SCALP_TRADES}) reached — skip {symbol}")
+        return
+    if wallet.get('balance', 0) < SCALP_MARGIN:
+        print(f"SCALP: insufficient balance (${wallet.get('balance', 0):.2f}) — skip {symbol}")
+        return
+
+    sl_dist = price * SCALP_SL_PCT / 100
+    tp_dist = price * SCALP_TP_PCT / 100
+    if direction == 'LONG':
+        sl_price = round(price - sl_dist, 8)
+        tp_price = round(price + tp_dist, 8)
+    else:
+        sl_price = round(price + sl_dist, 8)
+        tp_price = round(price - tp_dist, 8)
+
+    trade = {
+        'symbol':          symbol,
+        'entry':           price,
+        'sl':              sl_price,
+        'tp':              tp_price,
+        'tp1':             tp_price,
+        'be_lvl':          tp_price,
+        'sl_pct':          SCALP_SL_PCT,
+        'tp_pct':          SCALP_TP_PCT,
+        'direction':       direction,
+        'phase':           'scalp',
+        'be_triggered':    False,
+        'tp1_triggered':   False,
+        'tp1_pnl':         0.0,
+        'peak_price':      price,
+        'trailing_sl':     None,
+        'score':           0,
+        'atr':             0.0,
+        'timeframe':       '15m',
+        'rsi':             None,
+        'ema200':          None,
+        'score_breakdown': reason,
+        'opened_at':       now_il().isoformat(timespec='seconds'),
+        'pos_size':        SCALP_POS_SIZE,
+        'margin':          SCALP_MARGIN,
+        'fng_at_entry':    None,
+        'sniper':          False,
+        'scalp':           True,
+        'scalp_opened_ts': time.time(),
+    }
+    with trades_lock:
+        active_trades.append(trade)
+    wallet_deduct(SCALP_MARGIN)
+    save_active_trades()
+
+    emoji     = "🟢" if direction == 'LONG' else "🔴"
+    dir_label = "Quick\\-Long \\(Dip Buy\\)" if direction == 'LONG' else "Scalp\\-Short \\(Bubble\\)"
+    send_msg(
+        f"⚡ *{dir_label}: {symbol.replace('/USDT', '')} {emoji}*\n"
+        f"_High Volatility Mode — Mean Reversion_\n\n"
+        f"💵 כניסה: `{price:.6g}`\n"
+        f"🛑 SL: `{sl_price:.6g}` \\(\\-{SCALP_SL_PCT}%\\)\n"
+        f"🎯 TP: `{tp_price:.6g}` \\(\\+{SCALP_TP_PCT}%\\)\n"
+        f"⏱ תוקף: {SCALP_MAX_DURATION_MIN} דקות\n"
+        f"💼 {SCALP_LEVERAGE}x · ${SCALP_MARGIN:.0f} מרג'ין · ${SCALP_POS_SIZE:.0f} נשלט\n\n"
+        f"📋 _{reason}_"
+    )
+    print(f"SCALP {direction}: {symbol} @ {price:.6g} | SL={sl_price:.6g} TP={tp_price:.6g} | {reason}")
+
+
+def scalp_scan_loop():
+    """
+    Thread 6 — High-Volatility Scalp Scanner.
+    פעיל רק כשFNG < EXTREME_FEAR_THRESHOLD (כרגע 13).
+    רץ כל 5 דקות ומחפש:
+      • Scalp-Short: מטבע עלה >30% ב-24h + RSI15m>82 + מחיר מתחת EMA9(5m)
+      • Quick-Long:  מטבע ירד >20% ב-2h + RSI15m<18 + קפיצה 1% מהשפל
+    עוקף Kill-Switch (Mean Reversion, לא trend-following).
+    """
+    print("Thread 6 (Scalp Scanner) started.")
+    time.sleep(90)   # המתן שה-bot יתייצב לפני הסריקה הראשונה
+
+    while True:
+        try:
+            fng_v, fng_lbl, _ = sentiment_check("scalp_scan")
+
+            if fng_v >= EXTREME_FEAR_THRESHOLD:
+                time.sleep(SCALP_SCAN_INTERVAL)
+                continue
+
+            with trades_lock:
+                scalp_count = sum(1 for t in active_trades if t.get('scalp'))
+            if scalp_count >= MAX_SCALP_TRADES:
+                print(f"SCALP SCAN: max scalp trades ({scalp_count}/{MAX_SCALP_TRADES}) — skip cycle")
+                time.sleep(SCALP_SCAN_INTERVAL)
+                continue
+
+            print(f"SCALP SCAN: FNG={fng_v} ({fng_lbl}) — Extreme Fear active, scanning...")
+            tickers = exchange.fetch_tickers()
+
+            # ── SCALP-SHORT: Bubble Watch — עלה >30% ב-24h ───────────────────────
+            bubble_candidates = sorted(
+                [
+                    {'symbol': s, 'change_pct': t.get('percentage', 0), 'price': t.get('last', 0)}
+                    for s, t in tickers.items()
+                    if s.endswith('/USDT')
+                    and t.get('percentage', 0) >= SCALP_BUBBLE_MIN_PCT
+                    and t.get('last', 0) > 0
+                    and (t.get('quoteVolume') or 0) >= 1_000_000
+                ],
+                key=lambda x: x['change_pct'], reverse=True
+            )[:5]
+
+            print(f"SCALP-SHORT bubble candidates (>{SCALP_BUBBLE_MIN_PCT}% 24h): {[c['symbol'] for c in bubble_candidates]}")
+
+            for cand in bubble_candidates:
+                with trades_lock:
+                    if any(t['symbol'] == cand['symbol'] for t in active_trades):
+                        continue
+                    if sum(1 for t in active_trades if t.get('scalp')) >= MAX_SCALP_TRADES:
+                        break
+
+                sym   = cand['symbol']
+                price = cand['price']
+                ok, rsi15, ema9 = _check_scalp_short(sym, price)
+                print(f"  SHORT check {sym}: RSI15m={rsi15:.1f}, EMA9(5m)={ema9:.6g}, ok={ok}")
+                if ok:
+                    reason = (f"Bubble +{cand['change_pct']:.1f}% 24h · "
+                              f"RSI 15m={rsi15:.1f} >82 · "
+                              f"Price {price:.6g} < EMA9(5m) {ema9:.6g}")
+                    open_scalp_trade(sym, 'SHORT', price, reason)
+                    time.sleep(2)
+
+            # ── QUICK-LONG: Flash Crash — ירד >20% ב-2h ──────────────────────────
+            for sym, ticker in tickers.items():
+                if not sym.endswith('/USDT'):
+                    continue
+                with trades_lock:
+                    if sum(1 for t in active_trades if t.get('scalp')) >= MAX_SCALP_TRADES:
+                        break
+                    if any(t['symbol'] == sym for t in active_trades):
+                        continue
+
+                price = ticker.get('last', 0)
+                if price <= 0 or (ticker.get('quoteVolume') or 0) < 1_000_000:
+                    continue
+
+                ok, rsi15, drop_pct, bounce_pct = _check_quick_long(sym, price)
+                if ok:
+                    print(f"  LONG check {sym}: drop={drop_pct:.1f}% RSI15m={rsi15:.1f} bounce={bounce_pct:.2f}% — MATCH")
+                    reason = (f"Flash Crash -{drop_pct:.1f}% (2h) · "
+                              f"RSI 15m={rsi15:.1f} <18 · "
+                              f"Bounce +{bounce_pct:.2f}% from low")
+                    open_scalp_trade(sym, 'LONG', price, reason)
+                    time.sleep(2)
+
+        except Exception as e:
+            print(f"SCALP SCAN error: {e}")
+
+        time.sleep(SCALP_SCAN_INTERVAL)
+
+
 def sol_watch_loop():
     """
     Thread 5 — מעקב SOL כל 15 דקות.
@@ -3671,6 +3986,10 @@ def main():
     # Thread 5 — SOL Watch: מעקב RSI + BB כל 15 דקות, התראה על שינוי
     sol_watch_thread = threading.Thread(target=sol_watch_loop, daemon=True)
     sol_watch_thread.start()
+
+    # Thread 6 — Scalp Scanner: פעיל בלבד כשFNG < 13 (Extreme Fear), כל 5 דקות
+    scalp_scan_thread = threading.Thread(target=scalp_scan_loop, daemon=True)
+    scalp_scan_thread.start()
 
     if IS_DEPLOYED:
         send_msg(
