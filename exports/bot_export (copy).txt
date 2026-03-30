@@ -2448,15 +2448,13 @@ def handle_dashboard(message):
         f"_תראה שם: Top 15 מועמדים חמים, גיינרים, ווליום ועוד_"
     )
 
-def evening_sol_analysis() -> tuple:
+def evening_sol_analysis() -> str:
     """
     SOL LONG Strategy — RSI + Bollinger Bands על 4H.
     current_price נשלף חי מ-Bitget בכל קריאה.
     SL  = current_price * 0.965  (-3.5%)
     TP  = current_price * 1.050  (+5.0%)
     החלטה: EXECUTE / WAIT / ABORT — לפי RSI + מיקום מחיר בתוך ה-BB.
-
-    מחזיר: (msg: str, execute: bool, price: float, sl: float, tp: float, rsi: float|None)
     """
     # ── שליפת נתונים חיים ישירות מ-Bitget ─────────────────────────────────
     df_sol = get_data('SOL/USDT', timeframe='4h', limit=60)
@@ -2469,13 +2467,12 @@ def evening_sol_analysis() -> tuple:
     # ── BTC Safety ────────────────────────────────────────────────────────
     BTC_MIN = 66_500
     if price_btc < BTC_MIN:
-        msg = (
+        return (
             f"🔴 *SOL Long — ABORT*\n\n"
             f"⛔ BTC Safety Filter נכשל\n"
             f"BTC: `${price_btc:,.0f}` \\< `${BTC_MIN:,.0f}`\n\n"
             f"_שוק מסוכן — אין כניסה_"
         )
-        return msg, False, current_price, 0.0, 0.0, None
 
     # ── RSI 14 על 4H ──────────────────────────────────────────────────────
     rsi_s  = ta.rsi(df_sol['close'], length=14)
@@ -2543,7 +2540,7 @@ def evening_sol_analysis() -> tuple:
             fails.append(f"מחיר מעל BB Upper \\(overbought\\)")
         verdict = "⏳ *ממתין לתנאים:*\n" + "\n".join(f"  • {f}" for f in fails)
 
-    msg = (
+    return (
         f"{dec_line}\n"
         f"⏰ {now_str} \\| SOL/USDT 4H\n"
         f"{'─' * 28}\n\n"
@@ -2563,76 +2560,6 @@ def evening_sol_analysis() -> tuple:
         f"  ⚖️ RR: 1 : {rr}\n\n"
         f"{verdict}"
     )
-    return msg, execute, current_price, sl, tp, rsi
-
-
-def _register_sol_trade(price: float, sl: float, tp: float, rsi: float | None):
-    """
-    רושם עסקת SOL כ-Active Trade בארנק הוירטואלי.
-    משתמש בפרמטרי SL/TP של Evening SOL Strategy (3.5% / 5%).
-    מדלג אם SOL/USDT כבר בעסקאות פעילות.
-    """
-    sym = 'SOL/USDT'
-    with trades_lock:
-        if any(t['symbol'] == sym for t in active_trades):
-            send_msg("ℹ️ *SOL/USDT* כבר קיים בעסקאות פעילות — לא נפתחת עסקה כפולה")
-            return
-    if wallet.get('balance', 0) < MARGIN:
-        send_msg(f"⚠️ *יתרה נמוכה* — נדרש ${MARGIN} | יש ${wallet.get('balance', 0):.2f}")
-        return
-
-    # SL/TP על-פי Evening SOL Strategy
-    sl_pct  = round(abs(price - sl) / price * 100, 2)   # ~3.5%
-    tp_pct  = round(abs(tp - price) / price * 100, 2)   # ~5.0%
-    tp1_pct = tp_pct                                      # SOL: אין split — TP = TP1
-    tp1_price = tp
-    be_price  = round(price * 1.02, 6)                   # BE at +2%
-
-    trade = {
-        'symbol':          sym,
-        'entry':           price,
-        'sl':              sl,
-        'tp':              tp,
-        'tp1':             tp1_price,
-        'be_lvl':          be_price,
-        'sl_pct':          sl_pct,
-        'tp_pct':          tp_pct,
-        'direction':       'LONG',
-        'phase':           'initial',
-        'be_triggered':    False,
-        'tp1_triggered':   False,
-        'tp1_pnl':         0.0,
-        'peak_price':      price,
-        'trailing_sl':     None,
-        'score':           100,
-        'atr':             0.0,
-        'timeframe':       '4H',
-        'rsi':             round(rsi, 2) if rsi else None,
-        'ema200':          None,
-        'score_breakdown': 'Evening SOL Strategy — RSI+BB EXECUTE',
-        'opened_at':       now_il().isoformat(timespec='seconds'),
-        'pos_size':        POSITION_SIZE,
-        'margin':          MARGIN,
-        'fng_at_entry':    None,
-        'sniper':          False,
-        'scalp':           False,
-        'sol_strategy':    True,
-    }
-    with trades_lock:
-        active_trades.append(trade)
-    wallet_deduct(MARGIN)
-    save_active_trades()
-    eq = _get_equity()
-    send_msg(
-        f"✅ *SOL/USDT נרשמה כעסקה פעילה* 🟢\n\n"
-        f"💵 כניסה: `${price:.3f}`\n"
-        f"🛑 SL: `${sl:.3f}` \\(\\-{sl_pct}%\\)\n"
-        f"🎯 TP: `${tp:.3f}` \\(\\+{tp_pct}%\\)\n"
-        f"💼 {LEVERAGE}x · ${MARGIN} מרג'ין · ${POSITION_SIZE} נשלט\n"
-        f"📊 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance', 0):.2f}`\n\n"
-        f"_מעקב SL/TP פעיל — יתרה תעודכן אוטומטית_"
-    )
-    print(f"[SOL] Trade registered: entry={price} SL={sl} TP={tp} RSI={rsi}")
 
 
 @bot.message_handler(commands=['sol'])
@@ -2640,16 +2567,13 @@ def handle_sol(message):
     """
     /sol — ניתוח חי של SOL/USDT לפי Evening SOL Strategy.
     בודק BTC Safety, EMA20 1H, RSI 4H, Volume ומחזיר EXECUTE/WAIT/ABORT.
-    כשמוחלט EXECUTE — רושם מיד כעסקה פעילה בארנק הוירטואלי.
     """
     send_msg("🔭 *Evening SOL Strategy* — מריץ ניתוח חי\\.\\.\\.")
 
     def _run():
         try:
-            msg, execute, price, sl, tp, rsi = evening_sol_analysis()
-            send_msg(msg)
-            if execute:
-                _register_sol_trade(price, sl, tp, rsi)
+            result = evening_sol_analysis()
+            send_msg(result)
         except Exception as e:
             print(f"[/sol] error: {e}")
             send_msg(f"⚠️ שגיאה בניתוח SOL: `{str(e)[:80]}`")
@@ -3795,8 +3719,7 @@ def sol_watch_loop():
             above_mid_b = (bb_mid is not None and current_price > bb_mid)
 
             # ── בדיקת שינויים ──────────────────────────────────────────────
-            changes      = []
-            prev_decision = last['decision']   # שמור לפני עדכון last
+            changes = []
 
             if last['decision'] is not None and decision != last['decision']:
                 changes.append(f"📌 החלטה: `{last['decision']}` → `{decision}`")
@@ -3852,12 +3775,6 @@ def sol_watch_loop():
 
             send_msg(msg)
             print(f"[SOL Watch] Alert sent — {decision} | changes: {len(changes)}")
-
-            # ── רישום עסקה אוטומטי כש-WATCH מזהה מעבר ל-EXECUTE ──────────────
-            if decision == 'EXECUTE' and prev_decision != 'EXECUTE':
-                sl_w = round(current_price * 0.965, 3)
-                tp_w = round(current_price * 1.050, 3)
-                _register_sol_trade(current_price, sl_w, tp_w, rsi)
 
         except Exception as e:
             print(f"[SOL Watch] Error: {e}")
