@@ -3331,6 +3331,126 @@ def _run_watch_check(symbol: str, entry: dict, silent: bool = False) -> int:
         return 0
 
 
+def sol_watch_loop():
+    """
+    Thread 5 — מעקב SOL כל 15 דקות.
+    שולח התראה לטלגרם רק כשמשהו משמעותי משתנה:
+      • החלטה השתנתה (WAIT → EXECUTE, EXECUTE → WAIT)
+      • RSI נכנס לטווח 40–65 (מ-מחוץ לטווח)
+      • מחיר חצה את BB Mid בכל כיוון
+    """
+    SOL_WATCH_INTERVAL = 15 * 60   # כל 15 דקות
+
+    # מצב קודם
+    last = {
+        'decision'   : None,   # 'EXECUTE' | 'WAIT' | 'ABORT'
+        'rsi_in_zone': None,   # True/False — RSI בין 40–65
+        'above_mid'  : None,   # True/False — מחיר מעל BB Mid
+    }
+
+    print("[SOL Watch] Loop started — checking every 15 min")
+
+    while True:
+        time.sleep(SOL_WATCH_INTERVAL)
+        try:
+            # ── שלוף נתונים חיים ──────────────────────────────────────────
+            df_sol = get_data('SOL/USDT', timeframe='4h', limit=60)
+            df_btc = get_data('BTC/USDT', timeframe='4h', limit=5)
+
+            current_price = float(df_sol['close'].iloc[-1])
+            price_btc     = float(df_btc['close'].iloc[-1])
+
+            # RSI
+            rsi_s = ta.rsi(df_sol['close'], length=14)
+            rsi   = round(float(rsi_s.iloc[-1]), 2) if rsi_s is not None else None
+
+            # Bollinger Bands
+            bb = ta.bbands(df_sol['close'], length=20, std=2)
+            if bb is not None:
+                col_u = [c for c in bb.columns if c.startswith('BBU')][0]
+                col_m = [c for c in bb.columns if c.startswith('BBM')][0]
+                col_l = [c for c in bb.columns if c.startswith('BBL')][0]
+                bb_upper = round(float(bb[col_u].iloc[-1]), 3)
+                bb_mid   = round(float(bb[col_m].iloc[-1]), 3)
+                bb_lower = round(float(bb[col_l].iloc[-1]), 3)
+            else:
+                bb_upper = bb_mid = bb_lower = None
+
+            # ── החלטה ──────────────────────────────────────────────────────
+            BTC_MIN  = 66_500
+            if price_btc < BTC_MIN:
+                decision = 'ABORT'
+            else:
+                rsi_ok    = (rsi is not None and 40 <= rsi <= 65)
+                above_mid = (bb_mid is not None and current_price > bb_mid)
+                below_up  = (bb_upper is not None and current_price < bb_upper)
+                decision  = 'EXECUTE' if (rsi_ok and above_mid and below_up) else 'WAIT'
+
+            rsi_in_zone = (rsi is not None and 40 <= rsi <= 65)
+            above_mid_b = (bb_mid is not None and current_price > bb_mid)
+
+            # ── בדיקת שינויים ──────────────────────────────────────────────
+            changes = []
+
+            if last['decision'] is not None and decision != last['decision']:
+                changes.append(f"📌 החלטה: `{last['decision']}` → `{decision}`")
+
+            if last['rsi_in_zone'] is not None and rsi_in_zone != last['rsi_in_zone']:
+                if rsi_in_zone:
+                    changes.append(f"📊 RSI נכנס לטווח: `{rsi}` \\(40–65\\) ✅")
+                else:
+                    changes.append(f"📊 RSI יצא מהטווח: `{rsi}` ❌")
+
+            if last['above_mid'] is not None and above_mid_b != last['above_mid']:
+                if above_mid_b:
+                    changes.append(f"📈 מחיר פרץ מעל BB Mid \\(`${bb_mid}`\\) ✅")
+                else:
+                    changes.append(f"📉 מחיר ירד מתחת BB Mid \\(`${bb_mid}`\\) ❌")
+
+            # ── עדכון מצב ──────────────────────────────────────────────────
+            last['decision']    = decision
+            last['rsi_in_zone'] = rsi_in_zone
+            last['above_mid']   = above_mid_b
+
+            # ── שלח הודעה רק אם יש שינוי ──────────────────────────────────
+            if not changes:
+                print(f"[SOL Watch] No change — {decision} | RSI={rsi} | Price=${current_price:.3f}")
+                continue
+
+            sl = round(current_price * 0.965, 3)
+            tp = round(current_price * 1.050, 3)
+            now_str = now_il().strftime('%H:%M')
+
+            dec_emoji = {'EXECUTE': '🟢 ✅', 'WAIT': '🟡 ⏳', 'ABORT': '🔴 ⛔'}.get(decision, '⏳')
+            change_lines = "\n".join(f"  {c}" for c in changes)
+
+            msg = (
+                f"🔔 *SOL Watch — שינוי זוהה\\!*\n"
+                f"⏰ {now_str}\n"
+                f"{'─' * 26}\n\n"
+                f"{change_lines}\n\n"
+                f"💰 מחיר חי: `${current_price:.3f}`\n"
+                f"📊 RSI 4H: `{rsi}` | BB Mid: `${bb_mid}`\n\n"
+                f"🎯 *החלטה: {decision}* {dec_emoji}\n"
+            )
+
+            if decision == 'EXECUTE':
+                msg += (
+                    f"\n📐 *רמות עסקה:*\n"
+                    f"  🛑 SL: `${sl}` \\(\\-3\\.5%\\)\n"
+                    f"  🎯 TP: `${tp}` \\(\\+5\\.0%\\)\n\n"
+                    f"_/sol לניתוח מלא_"
+                )
+            else:
+                msg += f"\n_/sol לפרטים מלאים_"
+
+            send_msg(msg)
+            print(f"[SOL Watch] Alert sent — {decision} | changes: {len(changes)}")
+
+        except Exception as e:
+            print(f"[SOL Watch] Error: {e}")
+
+
 def watch_loop():
     """
     Thread נפרד — בודק כל מטבע ב-Watch List כל 15 דקות.
@@ -3525,6 +3645,10 @@ def main():
     # Thread 4 — Watch List: מעקב מטבעות ספציפיים כל 15 דקות
     watch_thread = threading.Thread(target=watch_loop, daemon=True)
     watch_thread.start()
+
+    # Thread 5 — SOL Watch: מעקב RSI + BB כל 15 דקות, התראה על שינוי
+    sol_watch_thread = threading.Thread(target=sol_watch_loop, daemon=True)
+    sol_watch_thread.start()
 
     if IS_DEPLOYED:
         send_msg(
