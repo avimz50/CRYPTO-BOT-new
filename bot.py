@@ -2864,6 +2864,17 @@ def handle_unwatch(message):
         send_msg(f"⚠️ `{symbol}` לא נמצא ב\\-Watch List")
 
 
+@bot.message_handler(commands=['ping'])
+def handle_ping(message):
+    """בדיקת חיים מהירה."""
+    import platform
+    env = "PROD 🚀" if IS_DEPLOYED else "DEV 🛠"
+    with trades_lock:
+        n = len(active_trades)
+    send_msg(f"🏓 *Pong!* — בוט פעיל\n"
+             f"⚙️ {env} | עסקאות: {n} | Flask: port 8091")
+
+
 @bot.message_handler(commands=['home', 'start', 'help', 'menu'])
 def handle_home(message):
     """מסך ראשי — כל הפקודות של הבוט."""
@@ -3214,14 +3225,7 @@ def start_telegram_polling():
         )
         return   # לא מתחיל polling ב-dev — אין קונפליקט 409
 
-    # ── המתן 70 שניות לפני הפיסגה ──────────────────────────────────────
-    # Replit Autoscale מפעיל instance חדש לפני שהישן מוגמר.
-    # 409 = שני instances מנסים לפול בו-זמנית.
-    # המתנה נותנת לישן זמן לסיים ולשחרר את session הטלגרם.
-    print("[PROD] Telegram polling: waiting 70s for old instance to terminate...")
-    time.sleep(70)
-
-    # נקה כל webhook קיים ו-pending updates
+    # נקה כל webhook קיים ו-pending updates לפני שמתחילים
     try:
         bot.delete_webhook(drop_pending_updates=True)
         print("[PROD] Webhook cleared, pending updates dropped.")
@@ -3239,9 +3243,10 @@ def start_telegram_polling():
             err_str = str(e)
             if '409' in err_str:
                 consecutive_409 += 1
-                wait = min(300, 30 * consecutive_409)
+                # המתנה קצרה — instance ישן מסתיים תוך ~10-20 שניות
+                wait = min(60, 15 * consecutive_409)
                 print(
-                    f"⚠️  Telegram 409 — Autoscale instance conflict. "
+                    f"⚠️  Telegram 409 — instance conflict. "
                     f"ממתין {wait}s לפני retry #{consecutive_409}..."
                 )
                 time.sleep(wait)

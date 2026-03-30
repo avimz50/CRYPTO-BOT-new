@@ -31,7 +31,7 @@ function readJson(filePath: string): unknown {
 /** Fetch JSON from internal Flask bot server, fallback to reading disk file */
 function fetchFromFlask(endpoint: string, fallbackFile: string, fallback: unknown): Promise<unknown> {
   return new Promise((resolve) => {
-    const req = http.get(`${BOT_FLASK_BASE}${endpoint}`, { timeout: 2000 }, (r) => {
+    const req = http.get(`${BOT_FLASK_BASE}${endpoint}`, { timeout: 5000 }, (r) => {
       let body = "";
       r.on("data", (c) => (body += c));
       r.on("end", () => {

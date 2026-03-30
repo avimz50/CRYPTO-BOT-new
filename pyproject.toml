@@ -8,4 +8,8 @@ dependencies = [
     "pandas>=2.3.3",
     "pandas-ta>=0.4.71b0",
     "pytelegrambotapi>=4.32.0",
+    "flask>=3.0.0",
+    "anthropic>=0.80.0",
+    "requests>=2.32.0",
+    "google-generativeai>=0.8.0",
 ]
