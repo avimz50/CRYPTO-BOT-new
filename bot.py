@@ -1334,6 +1334,12 @@ SCALP_BOUNCE_PCT        = 1.0    # price must bounce 1% from 2h low
 SCALP_SCAN_INTERVAL     = 300    # 5 min between scalp scans (normal)
 SCALP_SCAN_INTERVAL_WAIT= 600    # 10 min when Kill-Switch active (resource savings)
 
+# ── Top 10 Breakout Scan — /top10 command ─────────────────────────────────────
+TOP10_SYMBOLS = [
+    'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT', 'ADA/USDT',
+    'DOGE/USDT', 'AVAX/USDT', 'DOT/USDT', 'LINK/USDT', 'TRX/USDT',
+]
+
 # ── Low-Resource Logging ──────────────────────────────────────────────────────
 # False = only critical events (Entry, Exit, Errors) are printed.
 # True  = verbose per-symbol scoring breakdown (debugging only).
@@ -2826,6 +2832,73 @@ def handle_sol(message):
     threading.Thread(target=_run, daemon=True).start()
 
 
+@bot.message_handler(commands=['top10'])
+def handle_top10(message):
+    """
+    /top10 — סריקת Breakout Strategy על 10 המטבעות המובילים.
+    אותה לוגיקה כמו /sol: BTC 15m EMA20 filter + 1H close > 4H High.
+    """
+    send_msg("📡 *Top 10 Breakout Scan* — מריץ ניתוח חי\\.\\.\\.")
+
+    def _run():
+        try:
+            btc_above_ema = _btc_above_ema20_15m()
+            btc_icon      = "✅" if btc_above_ema else "❌"
+            now_str       = now_il().strftime('%H:%M')
+
+            if not btc_above_ema:
+                send_msg(
+                    f"📡 *Top 10 Breakout Scan* — {now_str}\n\n"
+                    f"₿ BTC 15m > EMA20: {btc_icon}\n\n"
+                    f"🔴 *ABORT — BTC במגמה שלילית*\n"
+                    f"_כל הסריקה מבוטלת. ממתין לחזרת BTC מעל EMA20._"
+                )
+                return
+
+            execute_lines = []
+            wait_lines    = []
+
+            for sym in TOP10_SYMBOLS:
+                short = sym.replace('/USDT', '')
+                try:
+                    breakout, price, h4_high, rsi = _coin_1h_breakout_above_4h_high(sym)
+                    rsi_str = f" | RSI {rsi:.0f}" if rsi is not None else ""
+                    if breakout:
+                        execute_lines.append(
+                            f"🟢 *{short}* — `${price:.4g}` > 4H High `${h4_high:.4g}`{rsi_str}"
+                        )
+                    else:
+                        gap_pct = round((h4_high - price) / h4_high * 100, 1) if h4_high > 0 else 0
+                        wait_lines.append(
+                            f"🟡 {short} — פחות {gap_pct}% מהשיא{rsi_str}"
+                        )
+                except Exception:
+                    wait_lines.append(f"⚠️ {short} — שגיאת נתונים")
+
+            parts = [
+                f"📡 *Top 10 Breakout Scan* — {now_str}\n"
+                f"₿ BTC 15m > EMA20: {btc_icon}\n"
+                f"{'─' * 28}"
+            ]
+
+            if execute_lines:
+                parts.append(f"\n🚀 *פורצים עכשיו ({len(execute_lines)}):*\n" + "\n".join(execute_lines))
+            else:
+                parts.append("\n🚀 *פורצים עכשיו:* אין")
+
+            if wait_lines:
+                parts.append(f"\n⏳ *ממתינים ({len(wait_lines)}):*\n" + "\n".join(wait_lines))
+
+            parts.append(f"\n{'─' * 28}\n_/sol לניתוח מלא + כניסה אוטומטית ל-SOL_")
+            send_msg("\n".join(parts))
+
+        except Exception as e:
+            print(f"[/top10] error: {e}")
+            send_msg(f"⚠️ שגיאה בסריקת Top 10: `{str(e)[:80]}`")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 @bot.message_handler(commands=['watch'])
 def handle_watch(message):
     """
@@ -2960,8 +3033,9 @@ def handle_home(message):
         f"  /watch SOL SHORT   — מעקב SHORT\n"
         f"  /watch             — רשימת מעקב פעילה\n"
         f"  /unwatch SOL       — הפסקת מעקב\n\n"
-        f"🌙 *Evening SOL Strategy*\n"
-        f"  /sol — ניתוח SOL חי: BTC\\+EMA\\+RSI\\+Volume → EXECUTE/WAIT/ABORT\n\n"
+        f"📡 *Breakout Strategy*\n"
+        f"  /top10 — סריקת Breakout על 10 מטבעות מובילים\n"
+        f"  /sol   — ניתוח SOL חי: BTC EMA20 + 1H > 4H High → EXECUTE/WAIT/ABORT\n\n"
         f"🖥 *דאשבורד*\n"
         f"  /dashboard — קבל קישור לדאשבורד\n"
         f"  [👉 פתח דאשבורד]({DASHBOARD_URL})\n\n"
@@ -3966,6 +4040,25 @@ def _sol_1h_breakout_above_4h_high() -> tuple[bool, float, float]:
         return breakout, sol_1h_close, recent_4h_high
     except Exception:
         return False, 0.0, 0.0
+
+
+def _coin_1h_breakout_above_4h_high(symbol: str) -> tuple[bool, float, float, float | None]:
+    """
+    Generic Breakout Check — כל מטבע.
+    מחזיר (breakout, price_1h, high_4h, rsi_4h).
+    breakout=True אם 1H close > highest high של 5 נרות 4H שלמים אחרונים.
+    """
+    try:
+        df_4h          = get_data(symbol, timeframe='4h', limit=10)
+        df_1h          = get_data(symbol, timeframe='1h', limit=5)
+        recent_4h_high = float(df_4h['high'].iloc[-6:-1].max())
+        price_1h       = float(df_1h['close'].iloc[-1])
+        breakout       = price_1h > recent_4h_high
+        rsi_s          = ta.rsi(df_4h['close'], length=14)
+        rsi            = round(float(rsi_s.iloc[-1]), 1) if (rsi_s is not None and not rsi_s.isna().all()) else None
+        return breakout, price_1h, recent_4h_high, rsi
+    except Exception:
+        return False, 0.0, 0.0, None
 
 
 def sol_watch_loop():
