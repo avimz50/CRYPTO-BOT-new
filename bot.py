@@ -4064,34 +4064,52 @@ def _coin_1h_breakout_above_4h_high(symbol: str) -> tuple[bool, float, float, fl
         return False, 0.0, 0.0, None
 
 
-def _coin_breakout_full(symbol: str) -> tuple[bool, float, float, float | None, float]:
+# ── Breakout Strategy Constants ───────────────────────────────────────────────
+BREAKOUT_FNG_LONG_MIN  = 20   # FNG מינימום ל-LONG (מתחת = פחד קיצוני, לא קונים)
+BREAKOUT_FNG_SHORT_MAX = 65   # FNG מקסימום ל-SHORT (מעל = חמדנות, לא שורטים)
+RSI_VETO_SHORT         = 35   # RSI מינימום ל-SHORT (מתחת = oversold, לא שורטים)
+BREAKOUT_MIN_VOL       = 0.8  # volume ratio מינימלי (80% מהממוצע)
+
+
+def _coin_breakout_full(symbol: str, direction: str = 'LONG') -> tuple[bool, float, float, float | None, float]:
     """
-    Breakout check + Volume ratio — לשימוש Top10 Auto-Loop.
-    מחזיר (breakout, price_1h, high_4h, rsi_4h, vol_ratio).
-    vol_ratio = נר 1H אחרון / ממוצע 20 נרות 1H.
+    Breakout / Breakdown check + Volume ratio — לשימוש Top10 Auto-Loop.
+
+    LONG:  breakout=True אם 1H close > highest HIGH של 5 נרות 4H שלמים.
+    SHORT: breakout=True אם 1H close < lowest  LOW  של 5 נרות 4H שלמים.
+
+    מחזיר (signal, price_1h, h4_level, rsi_4h, vol_ratio).
+      h4_level = 4H High (LONG) / 4H Low (SHORT).
     """
     try:
-        df_4h          = get_data(symbol, timeframe='4h', limit=25)
-        df_1h          = get_data(symbol, timeframe='1h', limit=25)
-        recent_4h_high = float(df_4h['high'].iloc[-6:-1].max())
-        price_1h       = float(df_1h['close'].iloc[-1])
-        breakout       = price_1h > recent_4h_high
-        rsi_s          = ta.rsi(df_4h['close'], length=14)
-        rsi            = round(float(rsi_s.iloc[-1]), 1) if (rsi_s is not None and not rsi_s.isna().all()) else None
-        vol_cur        = float(df_1h['volume'].iloc[-1])
-        vol_avg        = float(df_1h['volume'].iloc[-21:-1].mean())
-        vol_ratio      = round(vol_cur / vol_avg, 2) if vol_avg > 0 else 1.0
-        return breakout, price_1h, recent_4h_high, rsi, vol_ratio
+        df_4h     = get_data(symbol, timeframe='4h', limit=25)
+        df_1h     = get_data(symbol, timeframe='1h', limit=25)
+        price_1h  = float(df_1h['close'].iloc[-1])
+
+        if direction == 'LONG':
+            h4_level = float(df_4h['high'].iloc[-6:-1].max())
+            signal   = price_1h > h4_level
+        else:  # SHORT
+            h4_level = float(df_4h['low'].iloc[-6:-1].min())
+            signal   = price_1h < h4_level
+
+        rsi_s     = ta.rsi(df_4h['close'], length=14)
+        rsi       = round(float(rsi_s.iloc[-1]), 1) if (rsi_s is not None and not rsi_s.isna().all()) else None
+        vol_cur   = float(df_1h['volume'].iloc[-1])
+        vol_avg   = float(df_1h['volume'].iloc[-21:-1].mean())
+        vol_ratio = round(vol_cur / vol_avg, 2) if vol_avg > 0 else 1.0
+        return signal, price_1h, h4_level, rsi, vol_ratio
     except Exception:
         return False, 0.0, 0.0, None, 1.0
 
 
 def open_breakout_trade(symbol: str, price: float, margin: float,
                         rsi: float | None, vol_ratio: float,
-                        h4_high: float, fng_v: int):
+                        h4_level: float, fng_v: int,
+                        direction: str = 'LONG'):
     """
-    פותח עסקת Breakout LONG — Breakout Strategy.
-    margin  = 10% מהיתרה הפנויה (מחושב ע"י הקורא).
+    פותח עסקת Breakout LONG או SHORT — Breakout Strategy.
+    margin   = 10% מהיתרה הפנויה (מחושב ע"י הקורא).
     pos_size = margin × LEVERAGE (10x).
     SL=3.5% | TP1=5% | TP=10.5% (RR 1:3) | Trailing=2.5%.
     """
@@ -4105,15 +4123,30 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
     tp1_pct   = TP1_PCT_FIXED   # 5.0%
     be_pct    = BE_BUFFER_PCT   # 2.0%
 
-    sl_price  = round(price * (1 - sl_pct  / 100), 8)
-    tp_price  = round(price * (1 + tp_pct  / 100), 8)
-    tp1_price = round(price * (1 + tp1_pct / 100), 8)
-    be_price  = round(price * (1 + be_pct  / 100), 8)
+    if direction == 'LONG':
+        sl_price  = round(price * (1 - sl_pct  / 100), 8)
+        tp_price  = round(price * (1 + tp_pct  / 100), 8)
+        tp1_price = round(price * (1 + tp1_pct / 100), 8)
+        be_price  = round(price * (1 + be_pct  / 100), 8)
+        level_lbl = f"4H High `${h4_level:.6g}`"
+        dir_emoji = "🚀"
+        dir_label = "LONG"
+        sl_sign   = "-"; tp_sign = "+"
+    else:  # SHORT
+        sl_price  = round(price * (1 + sl_pct  / 100), 8)
+        tp_price  = round(price * (1 - tp_pct  / 100), 8)
+        tp1_price = round(price * (1 - tp1_pct / 100), 8)
+        be_price  = round(price * (1 - be_pct  / 100), 8)
+        level_lbl = f"4H Low `${h4_level:.6g}`"
+        dir_emoji = "🩸"
+        dir_label = "SHORT"
+        sl_sign   = "+"; tp_sign = "-"
 
     rsi_str = f"{rsi:.1f}" if rsi is not None else "N/A"
+    cmp_sym = ">" if direction == 'LONG' else "<"
     reason  = (
-        f"Breakout Strategy: 1H ${price:.6g} > 4H High ${h4_high:.6g} | "
-        f"BTC>EMA20 ✅ | RSI={rsi_str} | Vol×{vol_ratio:.1f}"
+        f"Breakout Strategy {direction}: 1H ${price:.6g} {cmp_sym} {level_lbl} | "
+        f"FNG={fng_v} | RSI={rsi_str} | Vol×{vol_ratio:.1f}"
     )
 
     trade = {
@@ -4125,7 +4158,7 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
         'be_lvl':          be_price,
         'sl_pct':          sl_pct,
         'tp_pct':          tp_pct,
-        'direction':       'LONG',
+        'direction':       direction,
         'phase':           'initial',
         'be_triggered':    False,
         'tp1_triggered':   False,
@@ -4146,40 +4179,77 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
     }
     place_order(trade, margin)
 
-    short = symbol.replace('/USDT', '')
+    short_name = symbol.replace('/USDT', '')
     msg = (
-        f"🚀 *Breakout LONG — {short}*\n"
+        f"{dir_emoji} *Breakout {dir_label} — {short_name}*\n"
         f"{'─' * 26}\n"
         f"📍 כניסה: `${price:.6g}`\n"
-        f"🔴 SL (-{sl_pct}%): `${sl_price:.6g}`\n"
-        f"🎯 TP1 (+{tp1_pct}%): `${tp1_price:.6g}` ← 50%\n"
-        f"🎯 TP  (+{tp_pct}%): `${tp_price:.6g}` ← RR 1:3\n"
+        f"🔴 SL ({sl_sign}{sl_pct}%): `${sl_price:.6g}`\n"
+        f"🎯 TP1 ({tp_sign}{tp1_pct}%): `${tp1_price:.6g}` ← 50%\n"
+        f"🎯 TP  ({tp_sign}{tp_pct}%): `${tp_price:.6g}` ← RR 1:3\n"
         f"📍 Trailing: {TRAIL_PCT}% מהשיא\n"
         f"{'─' * 26}\n"
         f"📊 RSI 4H: *{rsi_str}* | Vol ×{vol_ratio:.1f}\n"
-        f"🔺 4H High: `${h4_high:.6g}` ✅\n"
+        f"{'🔺' if direction=='LONG' else '🔻'} {level_lbl} ✅\n"
+        f"😨 FNG: *{fng_v}*\n"
         f"💼 {LEVERAGE}x · ${margin:.0f} מרג'ין · ${pos_size:.0f} נשלט\n\n"
         + _wallet_opened_summary()
     )
     send_msg(msg)
-    print(f"[Breakout] ✅ LONG {symbol} @ {price:.6g} | margin=${margin:.0f} | RSI={rsi_str}")
+    print(f"[Breakout] ✅ {direction} {symbol} @ {price:.6g} | margin=${margin:.0f} | RSI={rsi_str} | FNG={fng_v}")
+
+
+def _breakout_determine_direction(btc_above_ema: bool, fng_v: int) -> str | None:
+    """
+    קובע כיוון עסקה לפי FNG + BTC EMA20.
+
+    LONG:  BTC מעל EMA20 + FNG ≥ BREAKOUT_FNG_LONG_MIN (20) → שוק עולה, קונים פריצות
+    SHORT: BTC מתחת EMA20 + FNG ≤ BREAKOUT_FNG_SHORT_MAX (65) → שוק יורד, שורטים שברים
+    None:  סיגנלים מנוגדים → לא נכנסים
+
+    היגיון:
+      FNG 0-19  + BTC↓ → Extreme Fear + downtrend → SHORT ✅
+      FNG 20-45 + BTC↑ → Fear + uptrend → LONG ✅
+      FNG 20-45 + BTC↓ → Fear + downtrend → SHORT ✅
+      FNG 46-65 + BTC↑ → Neutral/Greed + uptrend → LONG ✅
+      FNG 46-65 + BTC↓ → Neutral/Greed + downtrend → SHORT ✅
+      FNG 66-100+ BTC↑ → High Greed + uptrend → LONG ✅
+      FNG 66-100+ BTC↓ → High Greed + downtrend → skip (חמדנות + ירידה = מטעה)
+    """
+    if fng_v is None:
+        return None
+
+    if btc_above_ema:
+        # BTC בעלייה
+        if fng_v >= BREAKOUT_FNG_LONG_MIN:   # FNG ≥ 20 → LONG
+            return 'LONG'
+        else:
+            return None  # Extreme Fear + BTC בעלייה → סיגנל מבלבל, לא נכנסים
+    else:
+        # BTC בירידה
+        if fng_v <= BREAKOUT_FNG_SHORT_MAX:   # FNG ≤ 65 → SHORT
+            return 'SHORT'
+        else:
+            return None  # High Greed + BTC בירידה → מטעה, לא נכנסים
 
 
 def top10_breakout_loop():
     """
     Thread 7 — Top 10 Breakout Auto-Scanner, כל 15 דקות.
-    לוגיקה:
-      1. BTC 15m > EMA20 — abort אם לא.
-      2. FNG Kill-Switch ≤ EXTREME_FEAR_THRESHOLD — skip.
-      3. MAX_TRADES מלא — skip.
-      4. סריקת TOP10_SYMBOLS: 1H close > 4H High.
-      5. מיון: RSI עולה (לא overbought) + Volume יורד (כוח).
-      6. פתיחת LONG עם margin = 10% מהיתרה הפנויה.
-    הרצה ראשונה מיידית (ETH + שאר).
-    """
-    TOP10_INTERVAL    = 15 * 60   # 15 דקות
-    BREAKOUT_MIN_VOL  = 0.8       # volume ratio מינימלי
 
+    כיוון נקבע לפי FNG + BTC EMA20:
+      LONG:  BTC > EMA20 + FNG ≥ 20 (פחד/נייטרל/חמדנות + BTC עולה)
+      SHORT: BTC < EMA20 + FNG ≤ 65 (פחד/נייטרל/חמדנות בינוני + BTC יורד)
+      Skip:  סיגנלים מנוגדים (Extreme Fear + BTC עולה, או High Greed + BTC יורד)
+
+    סריקה:
+      LONG:  1H close > 4H High + RSI < 65 + Volume ≥ 0.8x
+      SHORT: 1H close < 4H Low  + RSI > 35 + Volume ≥ 0.8x
+
+    מרג'ין = 10% מהיתרה הפנויה | RR 1:3 | Trailing 2.5%
+    הרצה ראשונה מיידית (כולל ETH).
+    """
+    TOP10_INTERVAL = 15 * 60
     print("Thread 7 (Top10 Breakout) started.")
     first_run = True
 
@@ -4189,16 +4259,19 @@ def top10_breakout_loop():
         first_run = False
 
         try:
-            # ── 1. BTC Filter ─────────────────────────────────────────────
-            btc_above_ema = _btc_above_ema20_15m()
-            if not btc_above_ema:
-                print("[Top10 Breakout] ABORT — BTC < EMA20 15m")
+            # ── 1. נתוני BTC + FNG ────────────────────────────────────────
+            btc_above_ema      = _btc_above_ema20_15m()
+            fng_v, fng_lbl, _  = sentiment_check("top10_breakout")
+
+            if fng_v is None:
+                print("[Top10 Breakout] FNG=None — skip")
                 continue
 
-            # ── 2. Kill-Switch ────────────────────────────────────────────
-            fng_v, fng_lbl, _ = sentiment_check("top10_breakout")
-            if fng_v is None or fng_v <= EXTREME_FEAR_THRESHOLD:
-                print(f"[Top10 Breakout] Kill-Switch FNG={fng_v} — skip")
+            # ── 2. קביעת כיוון ────────────────────────────────────────────
+            direction = _breakout_determine_direction(btc_above_ema, fng_v)
+            if direction is None:
+                btc_lbl = "↑ BTC > EMA20" if btc_above_ema else "↓ BTC < EMA20"
+                print(f"[Top10 Breakout] Mixed signals — FNG={fng_v} {btc_lbl} → skip")
                 continue
 
             # ── 3. Max Trades ──────────────────────────────────────────────
@@ -4206,38 +4279,51 @@ def top10_breakout_loop():
                 print(f"[Top10 Breakout] Max trades ({MAX_TRADES}) — skip")
                 continue
 
-            # ── 4. Scan ────────────────────────────────────────────────────
+            # ── 4. סריקה ──────────────────────────────────────────────────
             existing_syms = {t['symbol'] for t in active_trades}
             candidates    = []
 
             for sym in TOP10_SYMBOLS:
                 if sym in existing_syms:
                     continue
-                breakout, price, h4_high, rsi, vol_ratio = _coin_breakout_full(sym)
-                if not breakout:
+                signal, price, h4_level, rsi, vol_ratio = _coin_breakout_full(sym, direction)
+                if not signal:
                     continue
-                if rsi is not None and rsi > RSI_VETO_LONG:
-                    print(f"[Top10 Breakout] {sym} RSI veto ({rsi:.0f} > {RSI_VETO_LONG})")
-                    continue
+
+                # RSI Filter
+                if direction == 'LONG':
+                    if rsi is not None and rsi > RSI_VETO_LONG:
+                        print(f"[Top10 Breakout] {sym} LONG RSI veto ({rsi:.0f} > {RSI_VETO_LONG})")
+                        continue
+                else:  # SHORT
+                    if rsi is not None and rsi < RSI_VETO_SHORT:
+                        print(f"[Top10 Breakout] {sym} SHORT RSI veto ({rsi:.0f} < {RSI_VETO_SHORT})")
+                        continue
+
+                # Volume Filter
                 if vol_ratio < BREAKOUT_MIN_VOL:
-                    print(f"[Top10 Breakout] {sym} low volume ({vol_ratio:.1f}x < {BREAKOUT_MIN_VOL})")
+                    print(f"[Top10 Breakout] {sym} low volume ({vol_ratio:.1f}x)")
                     continue
+
                 candidates.append({
-                    'symbol': sym, 'price': price, 'h4_high': h4_high,
+                    'symbol': sym, 'price': price, 'h4_level': h4_level,
                     'rsi': rsi, 'vol_ratio': vol_ratio,
                 })
-                print(f"[Top10 Breakout] ✅ {sym} | RSI={rsi} | Vol={vol_ratio:.1f}x")
+                print(f"[Top10 Breakout] ✅ {direction} {sym} | RSI={rsi} | Vol={vol_ratio:.1f}x")
 
             if not candidates:
-                print(f"[Top10 Breakout] No breakouts in {len(TOP10_SYMBOLS)} coins")
+                print(f"[Top10 Breakout] {direction} — no signals in {len(TOP10_SYMBOLS)} coins")
                 continue
 
-            # ── 5. Sort: RSI נמוך קודם + Volume גבוה קודם ────────────────
-            candidates.sort(
-                key=lambda c: (c['rsi'] if c['rsi'] is not None else 999, -c['vol_ratio'])
-            )
+            # ── 5. מיון ───────────────────────────────────────────────────
+            # LONG:  RSI נמוך קודם (לא overbought) + Volume גבוה
+            # SHORT: RSI גבוה קודם (יש לאן לרדת) + Volume גבוה
+            if direction == 'LONG':
+                candidates.sort(key=lambda c: (c['rsi'] if c['rsi'] is not None else 999, -c['vol_ratio']))
+            else:
+                candidates.sort(key=lambda c: (-(c['rsi'] if c['rsi'] is not None else 0), -c['vol_ratio']))
 
-            # ── 6. Open trades ────────────────────────────────────────────
+            # ── 6. פתיחת עסקאות ───────────────────────────────────────────
             for c in candidates:
                 if len(active_trades) >= MAX_TRADES:
                     break
@@ -4252,8 +4338,9 @@ def top10_breakout_loop():
                     margin    = margin,
                     rsi       = c['rsi'],
                     vol_ratio = c['vol_ratio'],
-                    h4_high   = c['h4_high'],
+                    h4_level  = c['h4_level'],
                     fng_v     = fng_v,
+                    direction = direction,
                 )
                 time.sleep(2)
 
