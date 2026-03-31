@@ -991,14 +991,12 @@ def _wallet_opened_summary() -> str:
     available  = wallet.get('balance', STARTING_BALANCE)
     locked     = sum(t.get('margin', MARGIN) for t in active_trades)
     unrealized = _get_unrealized_pnl()
-    equity     = _get_equity()
     upnl_icon  = "📈" if unrealized >= 0 else "📉"
     return (
         f"📊 *ארנק לאחר פתיחה:*\n"
-        f"💰 פנוי:      `${available:.2f}`\n"
-        f"🔒 נעול:      `${locked:.2f}`\n"
-        f"{upnl_icon} Unrealized: `${unrealized:+.2f}`\n"
-        f"⚖️ Equity:    `${equity:.2f}`"
+        f"💰 פנוי: `${available:.2f}`\n"
+        f"🔒 נעול: `${locked:.2f}`\n"
+        f"{upnl_icon} Unrealized: `${unrealized:+.2f}`"
     )
 
 def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_price: float = None):
@@ -1041,11 +1039,10 @@ def wallet_status_text() -> str:
     return (
         f"💼 *ארנק וירטואלי*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"💰 *פנוי: `${available:.2f}`*\n"
+        f"💰 *יתרה פנויה: `${available:.2f}`*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"🔒 נעול בעסקאות: `${locked:.2f}`\n"
         f"{u_icon} Unrealized P&L: `${unrealized:+.2f}`\n"
-        f"⚖️ Total Equity: `${equity:.2f}` ({eq_pct:+.1f}%)\n"
         f"{r_icon} Realized P&L: `${realized:+.2f}`"
     )
 
