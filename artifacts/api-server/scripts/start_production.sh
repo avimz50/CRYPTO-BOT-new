@@ -6,17 +6,19 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 cd "$REPO_ROOT"
 
-echo "=== Starting Trading Bot (background) ==="
+echo "=== Checking Python dependencies ==="
 
-# .venv is created by postbuild (uv sync). If missing, run uv sync now.
-if [ -f ".venv/pyvenv.cfg" ]; then
-  echo "=== .venv ready — starting bot instantly ==="
+# Check if packages are already installed (postbuild may have installed them)
+if python3 -c "import ccxt, telebot, flask, anthropic" 2>/dev/null; then
+  echo "=== Python packages already installed — starting bot instantly ==="
 else
-  echo "=== .venv missing — running uv sync now (postbuild may have failed) ==="
-  uv sync --frozen --no-dev 2>&1 | tail -10 || echo "uv sync failed"
+  echo "=== Installing Python packages via pip ==="
+  pip3 install -r requirements.txt --quiet 2>&1 | tail -5 || echo "[WARN] pip install had issues"
+  echo "=== pip install done ==="
 fi
 
-uv run python bot.py > /tmp/bot_stdout.log 2>&1 &
+echo "=== Starting Trading Bot (background) ==="
+python3 bot.py > /tmp/bot_stdout.log 2>&1 &
 BOT_PID=$!
 echo "Trading bot started with PID: $BOT_PID"
 

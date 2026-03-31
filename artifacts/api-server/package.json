@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "export NODE_ENV=development && pnpm run build && pnpm run start",
     "build": "node ./build.mjs",
-    "postbuild": "if [ \"$CI\" = 'true' ]; then echo '[postbuild] Installing Python deps...'; cd ../../.. && uv sync --frozen --no-dev 2>&1 | tail -5 || echo '[postbuild] uv sync failed'; else echo '[postbuild] dev mode — skipping uv sync'; fi",
+    "postbuild": "if [ \"$CI\" = 'true' ]; then echo '[postbuild] Installing Python deps via pip...'; cd ../../.. && pip3 install -r requirements.txt --quiet 2>&1 | tail -5 && echo '[postbuild] pip install done' || echo '[postbuild] pip install failed'; else echo '[postbuild] dev mode — skipping pip install'; fi",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
