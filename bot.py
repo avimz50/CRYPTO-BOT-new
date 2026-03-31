@@ -1028,7 +1028,7 @@ def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_pric
     ]
 
 def wallet_status_text() -> str:
-    """מחזיר מחרוזת סטטוס ארנק לטלגרם — כולל Unrealized PnL."""
+    """מחזיר מחרוזת סטטוס ארנק לטלגרם — Available Balance ראשי."""
     available  = wallet.get('balance', STARTING_BALANCE)
     start      = wallet.get('starting', STARTING_BALANCE)
     realized   = wallet.get('total_pnl', 0.0)
@@ -1040,9 +1040,11 @@ def wallet_status_text() -> str:
     u_icon     = "📈" if unrealized >= 0 else "📉"
     return (
         f"💼 *ארנק וירטואלי*\n"
-        f"💰 פנוי:         `${available:.2f}`\n"
-        f"🔒 נעול:         `${locked:.2f}`\n"
-        f"{u_icon} Unrealized:  `${unrealized:+.2f}`\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 *פנוי: `${available:.2f}`*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔒 נעול בעסקאות: `${locked:.2f}`\n"
+        f"{u_icon} Unrealized P&L: `${unrealized:+.2f}`\n"
         f"⚖️ Total Equity: `${equity:.2f}` ({eq_pct:+.1f}%)\n"
         f"{r_icon} Realized P&L: `${realized:+.2f}`"
     )
@@ -1308,7 +1310,7 @@ RSI_VETO_LONG  = 65   # Anti-FOMO: RSI מעל 65 = לא קונים (overbought c
 RSI_VETO_SHORT = 28   # RSI מתחת זה = לא מוכרים (oversold)
 EMA_PROXIMITY_PCT = 2.5  # מחיר חייב להיות תוך 2.5% מ-EMA200 (Anti-Chase)
 BE_BUFFER_PCT  = 2.0  # % עלייה/ירידה לפני הזזת SL ל-Break Even (50% מ-TP1=5%)
-TRAIL_PCT      = 1.5  # % Trailing Stop מהשיא
+TRAIL_PCT      = 2.5  # % Trailing Stop מהשיא
 SL_PCT_FIXED   = 3.5  # % SL קבוע (3h chart)
 TP1_PCT_FIXED  = 5.0  # % TP1 קבוע — סגירת 50%
 TP_PCT_FIXED   = 10.5 # % TP מלא — RR 1:3 (3 × 3.5%)
@@ -2640,52 +2642,37 @@ def handle_dashboard(message):
 
 def evening_sol_analysis() -> tuple:
     """
-    SOL LONG Strategy — RSI + Bollinger Bands על 4H.
-    current_price נשלף חי מ-Bitget בכל קריאה.
-    SL  = current_price * 0.965  (-3.5%)
-    TP  = current_price * 1.050  (+5.0%)
-    החלטה: EXECUTE / WAIT / ABORT — לפי RSI + מיקום מחיר בתוך ה-BB.
+    SOL LONG Strategy — Momentum Breakout (עודכן).
+    תנאי כניסה:
+      1. BTC/USDT 15m: price > EMA20 (מגמה חיובית)
+      2. SOL/USDT 1H close > recent 4H high (breakout מאושר)
+    SL  = -3.5% | TP = +10.5% (RR 1:3) | Trailing 2.5%
 
     מחזיר: (msg: str, execute: bool, price: float, sl: float, tp: float, rsi: float|None)
     """
-    # ── שליפת נתונים חיים ישירות מ-Bitget ─────────────────────────────────
-    df_sol = get_data('SOL/USDT', timeframe='4h', limit=60)
-    df_btc = get_data('BTC/USDT', timeframe='4h', limit=5)
+    # ── BTC Correlation Filter (15m EMA20) ────────────────────────────────
+    btc_above_ema = _btc_above_ema20_15m()
 
-    # current_price — תמיד מהנר האחרון שנשלף עכשיו
-    current_price = float(df_sol['close'].iloc[-1])
-    price_btc     = float(df_btc['close'].iloc[-1])
+    df_btc_15m = get_data('BTC/USDT', timeframe='15m', limit=25)
+    ema20_series = ta.ema(df_btc_15m['close'], length=20)
+    btc_close = float(df_btc_15m['close'].iloc[-1])
+    btc_ema20 = round(float(ema20_series.iloc[-1]), 2) if ema20_series is not None else 0
 
-    # ── BTC Safety ────────────────────────────────────────────────────────
-    BTC_MIN = 66_500
-    if price_btc < BTC_MIN:
-        msg = (
-            f"🔴 *SOL Long — ABORT*\n\n"
-            f"⛔ BTC Safety Filter נכשל\n"
-            f"BTC: `${price_btc:,.0f}` \\< `${BTC_MIN:,.0f}`\n\n"
-            f"_שוק מסוכן — אין כניסה_"
-        )
-        return msg, False, current_price, 0.0, 0.0, None
+    # ── SOL 1H Breakout above recent 4H High ──────────────────────────────
+    breakout, sol_1h_close, h4_high = _sol_1h_breakout_above_4h_high()
 
-    # ── RSI 14 על 4H ──────────────────────────────────────────────────────
-    rsi_s  = ta.rsi(df_sol['close'], length=14)
-    rsi    = round(float(rsi_s.iloc[-1]), 2) if rsi_s is not None else None
+    # current_price מנר 1H
+    df_sol_1h     = get_data('SOL/USDT', timeframe='1h', limit=5)
+    current_price = float(df_sol_1h['close'].iloc[-1])
 
-    # ── Bollinger Bands (20, 2) על 4H ─────────────────────────────────────
-    bb = ta.bbands(df_sol['close'], length=20, std=2)
-    if bb is not None:
-        col_u = [c for c in bb.columns if c.startswith('BBU')][0]
-        col_m = [c for c in bb.columns if c.startswith('BBM')][0]
-        col_l = [c for c in bb.columns if c.startswith('BBL')][0]
-        bb_upper = round(float(bb[col_u].iloc[-1]), 3)
-        bb_mid   = round(float(bb[col_m].iloc[-1]), 3)
-        bb_lower = round(float(bb[col_l].iloc[-1]), 3)
-    else:
-        bb_upper = bb_mid = bb_lower = None
+    # RSI 4H — לצרכי display
+    df_sol_4h = get_data('SOL/USDT', timeframe='4h', limit=20)
+    rsi_s = ta.rsi(df_sol_4h['close'], length=14)
+    rsi   = round(float(rsi_s.iloc[-1]), 2) if rsi_s is not None else None
 
-    # ── SL / TP — מחושב אך ורק על current_price ──────────────────────────
-    sl     = round(current_price * 0.965, 3)   # current_price * 0.965
-    tp     = round(current_price * 1.050, 3)   # current_price * 1.050
+    # ── SL / TP ────────────────────────────────────────────────────────────
+    sl     = round(current_price * 0.965, 3)    # -3.5%
+    tp     = round(current_price * 1.105, 3)    # +10.5% (RR 1:3)
     sl_usd = round(current_price - sl, 3)
     tp_usd = round(tp - current_price, 3)
     rr     = round(tp_usd / sl_usd, 2) if sl_usd > 0 else 0
@@ -2693,63 +2680,62 @@ def evening_sol_analysis() -> tuple:
     now_str = now_il().strftime('%H:%M')
 
     # ── לוגיקת החלטה ──────────────────────────────────────────────────────
-    # EXECUTE: RSI בין 40–65 (מומנטום) + מחיר מעל BB Mid (מגמה עולה)
-    # WAIT:    RSI מחוץ לטווח או מחיר מתחת BB Mid
-    rsi_ok    = (rsi is not None and 40 <= rsi <= 65)
-    above_mid = (bb_mid is not None and current_price > bb_mid)
-    below_up  = (bb_upper is not None and current_price < bb_upper)
-    execute   = rsi_ok and above_mid and below_up
-
-    # ── תיאור מיקום מחיר בתוך ה-BB ───────────────────────────────────────
-    if bb_upper and bb_lower and bb_mid:
-        bb_width = round(bb_upper - bb_lower, 3)
-        pos_in_bb = round((current_price - bb_lower) / (bb_upper - bb_lower) * 100, 1) \
-                    if bb_width > 0 else 50.0
-        bb_pos_str = f"{pos_in_bb:.1f}% בתוך ה\\-BB"
+    if not btc_above_ema:
+        execute   = False
+        decision  = 'ABORT'
+    elif breakout:
+        execute   = True
+        decision  = 'EXECUTE'
     else:
-        bb_pos_str = "N/A"
+        execute   = False
+        decision  = 'WAIT'
 
-    rsi_str    = f"`{rsi}`" if rsi else "N/A"
-    bb_mid_str = f"`${bb_mid}`" if bb_mid else "N/A"
-    bb_up_str  = f"`${bb_upper}`" if bb_upper else "N/A"
-    bb_lo_str  = f"`${bb_lower}`" if bb_lower else "N/A"
+    # ── אייקונים ───────────────────────────────────────────────────────────
+    btc_icon      = "✅" if btc_above_ema else "❌"
+    breakout_icon = "✅" if breakout      else "❌"
 
-    rsi_icon  = "✅" if rsi_ok    else "❌"
-    mid_icon  = "✅" if above_mid else "❌"
-    up_icon   = "✅" if below_up  else "❌"
+    btc_label = (
+        f"`${btc_close:,.2f}` > EMA20 `${btc_ema20:,.2f}` {btc_icon}"
+        if btc_above_ema else
+        f"`${btc_close:,.2f}` < EMA20 `${btc_ema20:,.2f}` {btc_icon}"
+    )
+    breakout_label = (
+        f"`${sol_1h_close:.3f}` > 4H High `${h4_high:.3f}` {breakout_icon}"
+        if breakout else
+        f"`${sol_1h_close:.3f}` ≤ 4H High `${h4_high:.3f}` {breakout_icon}"
+    )
 
     # ── בניית הודעה ───────────────────────────────────────────────────────
-    if execute:
-        dec_line = f"🟢 *SOL LONG — EXECUTE* ✅"
-        verdict  = f"_כל התנאים עברו — עסקה מאושרת לפי האסטרטגיה_"
+    if decision == 'EXECUTE':
+        dec_line = "🟢 *SOL LONG — EXECUTE* ✅"
+        verdict  = "_כל תנאי הפריצה אושרו — עסקה מאושרת_"
+    elif decision == 'ABORT':
+        dec_line = "🔴 *SOL LONG — ABORT* ⛔"
+        verdict  = "_BTC במגמה שלילית — לא נכנסים_"
     else:
-        dec_line = f"🟡 *SOL LONG — WAIT* ⏳"
+        dec_line = "🟡 *SOL LONG — WAIT* ⏳"
         fails = []
-        if not rsi_ok:
-            fails.append(f"RSI {rsi} מחוץ לטווח 40\\-65")
-        if not above_mid:
-            fails.append(f"מחיר מתחת BB Mid \\({bb_mid}\\)")
-        if not below_up:
-            fails.append(f"מחיר מעל BB Upper \\(overbought\\)")
+        if not btc_above_ema:
+            fails.append(f"BTC מתחת EMA20 \\(מגמה שלילית\\)")
+        if not breakout:
+            fails.append(f"SOL עוד לא פרץ מעל 4H High \\(`${h4_high:.3f}`\\)")
         verdict = "⏳ *ממתין לתנאים:*\n" + "\n".join(f"  • {f}" for f in fails)
 
     msg = (
         f"{dec_line}\n"
-        f"⏰ {now_str} \\| SOL/USDT 4H\n"
+        f"⏰ {now_str} \\| SOL/USDT\n"
         f"{'─' * 28}\n\n"
-        f"💰 *מחיר חי \\(Bitget\\): `${current_price:.3f}`*\n\n"
-        f"📊 *אינדיקטורים — 4H*\n"
-        f"  RSI 14 \\(40\\-65\\):  {rsi_str} {rsi_icon}\n"
-        f"  BB Upper:          {bb_up_str}\n"
-        f"  BB Mid:            {bb_mid_str} {mid_icon}\n"
-        f"  BB Lower:          {bb_lo_str}\n"
-        f"  מיקום:             {bb_pos_str} {up_icon}\n"
-        f"  BTC:               `${price_btc:,.0f}` ✅\n\n"
+        f"💰 *מחיר SOL 1H: `${current_price:.3f}`*\n"
+        f"📊 RSI 4H: `{rsi}`\n\n"
+        f"🔍 *תנאי כניסה \\(Breakout Strategy\\)*\n"
+        f"  ₿  BTC 15m > EMA20: {btc_label}\n"
+        f"  📈 1H פריצה > 4H High: {breakout_label}\n\n"
         f"{'─' * 28}\n"
-        f"📐 *רמות עסקה \\(חישוב על מחיר חי\\)*\n"
+        f"📐 *רמות עסקה*\n"
         f"  🟢 כניסה: `${current_price:.3f}`\n"
-        f"  🛑 SL \\(×0\\.965\\): `${sl:.3f}` \\(\\-${sl_usd:.3f}\\)\n"
-        f"  🎯 TP \\(×1\\.050\\): `${tp:.3f}` \\(\\+${tp_usd:.3f}\\)\n"
+        f"  🛑 SL \\(\\-3\\.5%\\): `${sl:.3f}` \\(\\-${sl_usd:.3f}\\)\n"
+        f"  🎯 TP \\(\\+10\\.5%\\): `${tp:.3f}` \\(\\+${tp_usd:.3f}\\)\n"
+        f"  📍 Trailing: {TRAIL_PCT}% מהשיא\n"
         f"  ⚖️ RR: 1 : {rr}\n\n"
         f"{verdict}"
     )
@@ -2799,7 +2785,7 @@ def _register_sol_trade(price: float, sl: float, tp: float, rsi: float | None):
         'timeframe':       '4H',
         'rsi':             round(rsi, 2) if rsi else None,
         'ema200':          None,
-        'score_breakdown': 'Evening SOL Strategy — RSI+BB EXECUTE',
+        'score_breakdown': 'SOL Breakout — 1H close > 4H High + BTC EMA20',
         'opened_at':       now_il().isoformat(timespec='seconds'),
         'pos_size':        POSITION_SIZE,
         'margin':          MARGIN,
@@ -2824,11 +2810,11 @@ def _register_sol_trade(price: float, sl: float, tp: float, rsi: float | None):
 @bot.message_handler(commands=['sol'])
 def handle_sol(message):
     """
-    /sol — ניתוח חי של SOL/USDT לפי Evening SOL Strategy.
-    בודק BTC Safety, EMA20 1H, RSI 4H, Volume ומחזיר EXECUTE/WAIT/ABORT.
+    /sol — ניתוח חי של SOL/USDT לפי Breakout Strategy.
+    תנאים: BTC 15m > EMA20 AND SOL 1H close > recent 4H High.
     כשמוחלט EXECUTE — רושם מיד כעסקה פעילה בארנק הוירטואלי.
     """
-    send_msg("🔭 *Evening SOL Strategy* — מריץ ניתוח חי\\.\\.\\.")
+    send_msg("🔭 *SOL Breakout Strategy* — מריץ ניתוח חי\\.\\.\\.")
 
     def _run():
         try:
@@ -3946,21 +3932,57 @@ def scalp_scan_loop():
         time.sleep(SCALP_SCAN_INTERVAL)   # 5 min when actively scanning
 
 
+def _btc_above_ema20_15m() -> bool:
+    """
+    BTC Correlation Filter:
+    מחזיר True אם BTC/USDT 15m close > EMA20 — מגמה חיובית.
+    משמש כפילטר לפני כניסה לכל עסקת SOL.
+    """
+    try:
+        df = get_data('BTC/USDT', timeframe='15m', limit=30)
+        ema20 = ta.ema(df['close'], length=20)
+        if ema20 is None:
+            return True   # fallback permissive
+        btc_close = float(df['close'].iloc[-1])
+        btc_ema   = float(ema20.iloc[-1])
+        return btc_close > btc_ema
+    except Exception:
+        return True   # fallback permissive
+
+
+def _sol_1h_breakout_above_4h_high() -> tuple[bool, float, float]:
+    """
+    Breakout Confirmation:
+    מחזיר (breakout:bool, sol_1h_close:float, recent_4h_high:float).
+    breakout=True אם 1H close > highest high של 5 נרות 4H אחרונים שלמים.
+    """
+    try:
+        df_4h = get_data('SOL/USDT', timeframe='4h', limit=10)
+        df_1h = get_data('SOL/USDT', timeframe='1h', limit=5)
+        # 5 נרות 4H שלמים (לא כולל הנר הנוכחי שעוד מתגבש)
+        recent_4h_high = float(df_4h['high'].iloc[-6:-1].max())
+        sol_1h_close   = float(df_1h['close'].iloc[-1])
+        breakout       = sol_1h_close > recent_4h_high
+        return breakout, sol_1h_close, recent_4h_high
+    except Exception:
+        return False, 0.0, 0.0
+
+
 def sol_watch_loop():
     """
     Thread 5 — מעקב SOL כל 15 דקות.
-    שולח התראה לטלגרם רק כשמשהו משמעותי משתנה:
-      • החלטה השתנתה (WAIT → EXECUTE, EXECUTE → WAIT)
-      • RSI נכנס לטווח 40–65 (מ-מחוץ לטווח)
-      • מחיר חצה את BB Mid בכל כיוון
+    לוגיקה חדשה (Momentum Breakout):
+      • ABORT  — BTC/USDT 15m price < EMA20 (מגמה שלילית)
+      • EXECUTE — SOL 1H close > recent 4H high (breakout מאושר)
+      • WAIT   — אחרת
+    שולח התראה רק כשיש שינוי במצב.
     """
     SOL_WATCH_INTERVAL = 15 * 60   # כל 15 דקות
 
-    # מצב קודם
     last = {
-        'decision'   : None,   # 'EXECUTE' | 'WAIT' | 'ABORT'
-        'rsi_in_zone': None,   # True/False — RSI בין 40–65
-        'above_mid'  : None,   # True/False — מחיר מעל BB Mid
+        'decision'        : None,   # 'EXECUTE' | 'WAIT' | 'ABORT'
+        'btc_above_ema'   : None,   # True/False — BTC > EMA20 15m
+        'breakout'        : None,   # True/False — SOL 1H > 4H high
     }
 
     print("[SOL Watch] Loop started — checking every 15 min")
@@ -3968,86 +3990,76 @@ def sol_watch_loop():
     while True:
         time.sleep(SOL_WATCH_INTERVAL)
         try:
-            # ── שלוף נתונים חיים ──────────────────────────────────────────
-            df_sol = get_data('SOL/USDT', timeframe='4h', limit=60)
-            df_btc = get_data('BTC/USDT', timeframe='4h', limit=5)
+            # ── נתוני BTC ──────────────────────────────────────────────────
+            btc_above_ema = _btc_above_ema20_15m()
 
+            # ── נתוני SOL ──────────────────────────────────────────────────
+            df_sol        = get_data('SOL/USDT', timeframe='1h', limit=5)
             current_price = float(df_sol['close'].iloc[-1])
-            price_btc     = float(df_btc['close'].iloc[-1])
 
-            # RSI
-            rsi_s = ta.rsi(df_sol['close'], length=14)
+            breakout, sol_1h_close, h4_high = _sol_1h_breakout_above_4h_high()
+
+            # RSI 4H לצרכי display בלבד
+            df_sol_4h = get_data('SOL/USDT', timeframe='4h', limit=20)
+            rsi_s = ta.rsi(df_sol_4h['close'], length=14)
             rsi   = round(float(rsi_s.iloc[-1]), 2) if rsi_s is not None else None
 
-            # Bollinger Bands
-            bb = ta.bbands(df_sol['close'], length=20, std=2)
-            if bb is not None:
-                col_u = [c for c in bb.columns if c.startswith('BBU')][0]
-                col_m = [c for c in bb.columns if c.startswith('BBM')][0]
-                col_l = [c for c in bb.columns if c.startswith('BBL')][0]
-                bb_upper = round(float(bb[col_u].iloc[-1]), 3)
-                bb_mid   = round(float(bb[col_m].iloc[-1]), 3)
-                bb_lower = round(float(bb[col_l].iloc[-1]), 3)
-            else:
-                bb_upper = bb_mid = bb_lower = None
-
             # ── החלטה ──────────────────────────────────────────────────────
-            BTC_MIN  = 66_500
-            if price_btc < BTC_MIN:
-                decision = 'ABORT'
+            if not btc_above_ema:
+                decision = 'ABORT'      # BTC במגמה שלילית
+            elif breakout:
+                decision = 'EXECUTE'    # 1H פרץ מעל 4H high
             else:
-                rsi_ok    = (rsi is not None and 40 <= rsi <= 65)
-                above_mid = (bb_mid is not None and current_price > bb_mid)
-                below_up  = (bb_upper is not None and current_price < bb_upper)
-                decision  = 'EXECUTE' if (rsi_ok and above_mid and below_up) else 'WAIT'
-
-            rsi_in_zone = (rsi is not None and 40 <= rsi <= 65)
-            above_mid_b = (bb_mid is not None and current_price > bb_mid)
+                decision = 'WAIT'
 
             # ── בדיקת שינויים ──────────────────────────────────────────────
-            changes      = []
-            prev_decision = last['decision']   # שמור לפני עדכון last
+            changes       = []
+            prev_decision = last['decision']
 
             if last['decision'] is not None and decision != last['decision']:
                 changes.append(f"📌 החלטה: `{last['decision']}` → `{decision}`")
 
-            if last['rsi_in_zone'] is not None and rsi_in_zone != last['rsi_in_zone']:
-                if rsi_in_zone:
-                    changes.append(f"📊 RSI נכנס לטווח: `{rsi}` \\(40–65\\) ✅")
+            if last['btc_above_ema'] is not None and btc_above_ema != last['btc_above_ema']:
+                if btc_above_ema:
+                    changes.append("🟢 BTC חזר מעל EMA20 15m — מגמה חיובית ✅")
                 else:
-                    changes.append(f"📊 RSI יצא מהטווח: `{rsi}` ❌")
+                    changes.append("🔴 BTC ירד מתחת EMA20 15m — מגמה שלילית ⛔")
 
-            if last['above_mid'] is not None and above_mid_b != last['above_mid']:
-                if above_mid_b:
-                    changes.append(f"📈 מחיר פרץ מעל BB Mid \\(`${bb_mid}`\\) ✅")
+            if last['breakout'] is not None and breakout != last['breakout']:
+                if breakout:
+                    changes.append(f"🚀 SOL 1H פרץ מעל 4H High\\! `${sol_1h_close:.3f}` > `${h4_high:.3f}` ✅")
                 else:
-                    changes.append(f"📉 מחיר ירד מתחת BB Mid \\(`${bb_mid}`\\) ❌")
+                    changes.append(f"📉 SOL 1H ירד חזרה מתחת 4H High \\(`${h4_high:.3f}`\\) ❌")
 
             # ── עדכון מצב ──────────────────────────────────────────────────
-            last['decision']    = decision
-            last['rsi_in_zone'] = rsi_in_zone
-            last['above_mid']   = above_mid_b
+            last['decision']      = decision
+            last['btc_above_ema'] = btc_above_ema
+            last['breakout']      = breakout
 
             # ── שלח הודעה רק אם יש שינוי ──────────────────────────────────
             if not changes:
                 if VERBOSE_LOG:
-                    print(f"[SOL Watch] No change — {decision} | RSI={rsi} | Price=${current_price:.3f}")
+                    print(f"[SOL Watch] No change — {decision} | breakout={breakout} | BTC_EMA={btc_above_ema}")
                 continue
 
-            sl = round(current_price * 0.965, 3)
-            tp = round(current_price * 1.050, 3)
+            sl      = round(current_price * 0.965, 3)
+            tp      = round(current_price * 1.105, 3)   # TP 10.5%
             now_str = now_il().strftime('%H:%M')
-
-            dec_emoji = {'EXECUTE': '🟢 ✅', 'WAIT': '🟡 ⏳', 'ABORT': '🔴 ⛔'}.get(decision, '⏳')
-            change_lines = "\n".join(f"  {c}" for c in changes)
+            dec_emoji     = {'EXECUTE': '🟢 ✅', 'WAIT': '🟡 ⏳', 'ABORT': '🔴 ⛔'}.get(decision, '⏳')
+            change_lines  = "\n".join(f"  {c}" for c in changes)
+            btc_label     = "✅ מעל EMA20" if btc_above_ema else "⛔ מתחת EMA20"
+            breakout_label = f"✅ פרץ \\(`${sol_1h_close:.3f}` > `${h4_high:.3f}`\\)" if breakout \
+                             else f"⏳ ממתין \\(4H High: `${h4_high:.3f}`\\)"
 
             msg = (
                 f"🔔 *SOL Watch — שינוי זוהה\\!*\n"
                 f"⏰ {now_str}\n"
                 f"{'─' * 26}\n\n"
                 f"{change_lines}\n\n"
-                f"💰 מחיר חי: `${current_price:.3f}`\n"
-                f"📊 RSI 4H: `{rsi}` | BB Mid: `${bb_mid}`\n\n"
+                f"💰 מחיר SOL: `${current_price:.3f}`\n"
+                f"🔍 RSI 4H: `{rsi}`\n"
+                f"₿  BTC 15m EMA20: {btc_label}\n"
+                f"📈 Breakout 1H>4H: {breakout_label}\n\n"
                 f"🎯 *החלטה: {decision}* {dec_emoji}\n"
             )
 
@@ -4055,19 +4067,22 @@ def sol_watch_loop():
                 msg += (
                     f"\n📐 *רמות עסקה:*\n"
                     f"  🛑 SL: `${sl}` \\(\\-3\\.5%\\)\n"
-                    f"  🎯 TP: `${tp}` \\(\\+5\\.0%\\)\n\n"
+                    f"  🎯 TP: `${tp}` \\(\\+10\\.5%\\)\n"
+                    f"  📍 Trailing: {TRAIL_PCT}%\n\n"
                     f"_/sol לניתוח מלא_"
                 )
+            elif decision == 'ABORT':
+                msg += f"\n_⛔ BTC במגמה שלילית — לא נכנסים_"
             else:
-                msg += f"\n_/sol לפרטים מלאים_"
+                msg += f"\n_⏳ ממתין לפריצה מעל 4H High: `${h4_high:.3f}`_"
 
             send_msg(msg)
-            print(f"[SOL Watch] Alert sent — {decision} | changes: {len(changes)}")
+            print(f"[SOL Watch] Alert sent — {decision} | breakout={breakout} | BTC_EMA={btc_above_ema}")
 
             # ── רישום עסקה אוטומטי כש-WATCH מזהה מעבר ל-EXECUTE ──────────────
             if decision == 'EXECUTE' and prev_decision != 'EXECUTE':
                 sl_w = round(current_price * 0.965, 3)
-                tp_w = round(current_price * 1.050, 3)
+                tp_w = round(current_price * 1.105, 3)
                 _register_sol_trade(current_price, sl_w, tp_w, rsi)
 
         except Exception as e:
