@@ -2889,7 +2889,10 @@ def handle_top10(message):
             if wait_lines:
                 parts.append(f"\n⏳ *ממתינים ({len(wait_lines)}):*\n" + "\n".join(wait_lines))
 
-            parts.append(f"\n{'─' * 28}\n_/sol לניתוח מלא + כניסה אוטומטית ל-SOL_")
+            active_syms = {t['symbol'].replace('/USDT','') for t in active_trades}
+            if active_syms:
+                parts.append(f"\n🔒 *עסקאות פתוחות:* {', '.join(sorted(active_syms))}")
+            parts.append(f"\n{'─' * 28}\n🤖 _כניסה אוטומטית פעילה — Thread 7 סורק כל 15 דקות_")
             send_msg("\n".join(parts))
 
         except Exception as e:
@@ -4061,6 +4064,203 @@ def _coin_1h_breakout_above_4h_high(symbol: str) -> tuple[bool, float, float, fl
         return False, 0.0, 0.0, None
 
 
+def _coin_breakout_full(symbol: str) -> tuple[bool, float, float, float | None, float]:
+    """
+    Breakout check + Volume ratio — לשימוש Top10 Auto-Loop.
+    מחזיר (breakout, price_1h, high_4h, rsi_4h, vol_ratio).
+    vol_ratio = נר 1H אחרון / ממוצע 20 נרות 1H.
+    """
+    try:
+        df_4h          = get_data(symbol, timeframe='4h', limit=25)
+        df_1h          = get_data(symbol, timeframe='1h', limit=25)
+        recent_4h_high = float(df_4h['high'].iloc[-6:-1].max())
+        price_1h       = float(df_1h['close'].iloc[-1])
+        breakout       = price_1h > recent_4h_high
+        rsi_s          = ta.rsi(df_4h['close'], length=14)
+        rsi            = round(float(rsi_s.iloc[-1]), 1) if (rsi_s is not None and not rsi_s.isna().all()) else None
+        vol_cur        = float(df_1h['volume'].iloc[-1])
+        vol_avg        = float(df_1h['volume'].iloc[-21:-1].mean())
+        vol_ratio      = round(vol_cur / vol_avg, 2) if vol_avg > 0 else 1.0
+        return breakout, price_1h, recent_4h_high, rsi, vol_ratio
+    except Exception:
+        return False, 0.0, 0.0, None, 1.0
+
+
+def open_breakout_trade(symbol: str, price: float, margin: float,
+                        rsi: float | None, vol_ratio: float,
+                        h4_high: float, fng_v: int):
+    """
+    פותח עסקת Breakout LONG — Breakout Strategy.
+    margin  = 10% מהיתרה הפנויה (מחושב ע"י הקורא).
+    pos_size = margin × LEVERAGE (10x).
+    SL=3.5% | TP1=5% | TP=10.5% (RR 1:3) | Trailing=2.5%.
+    """
+    if wallet.get('balance', STARTING_BALANCE) < margin:
+        print(f"[Breakout] insufficient balance for {symbol} — skip")
+        return
+
+    pos_size  = round(margin * LEVERAGE, 2)
+    sl_pct    = SL_PCT_FIXED    # 3.5%
+    tp_pct    = TP_PCT_FIXED    # 10.5%
+    tp1_pct   = TP1_PCT_FIXED   # 5.0%
+    be_pct    = BE_BUFFER_PCT   # 2.0%
+
+    sl_price  = round(price * (1 - sl_pct  / 100), 8)
+    tp_price  = round(price * (1 + tp_pct  / 100), 8)
+    tp1_price = round(price * (1 + tp1_pct / 100), 8)
+    be_price  = round(price * (1 + be_pct  / 100), 8)
+
+    rsi_str = f"{rsi:.1f}" if rsi is not None else "N/A"
+    reason  = (
+        f"Breakout Strategy: 1H ${price:.6g} > 4H High ${h4_high:.6g} | "
+        f"BTC>EMA20 ✅ | RSI={rsi_str} | Vol×{vol_ratio:.1f}"
+    )
+
+    trade = {
+        'symbol':          symbol,
+        'entry':           price,
+        'sl':              sl_price,
+        'tp':              tp_price,
+        'tp1':             tp1_price,
+        'be_lvl':          be_price,
+        'sl_pct':          sl_pct,
+        'tp_pct':          tp_pct,
+        'direction':       'LONG',
+        'phase':           'initial',
+        'be_triggered':    False,
+        'tp1_triggered':   False,
+        'tp1_pnl':         0.0,
+        'peak_price':      price,
+        'trailing_sl':     None,
+        'score':           95,
+        'atr':             0.0,
+        'timeframe':       'Breakout',
+        'rsi':             round(rsi, 2) if rsi is not None else None,
+        'ema200':          None,
+        'score_breakdown': reason,
+        'opened_at':       now_il().isoformat(timespec='seconds'),
+        'pos_size':        pos_size,
+        'margin':          margin,
+        'fng_at_entry':    fng_v,
+        'sniper':          False,
+    }
+    place_order(trade, margin)
+
+    short = symbol.replace('/USDT', '')
+    msg = (
+        f"🚀 *Breakout LONG — {short}*\n"
+        f"{'─' * 26}\n"
+        f"📍 כניסה: `${price:.6g}`\n"
+        f"🔴 SL (-{sl_pct}%): `${sl_price:.6g}`\n"
+        f"🎯 TP1 (+{tp1_pct}%): `${tp1_price:.6g}` ← 50%\n"
+        f"🎯 TP  (+{tp_pct}%): `${tp_price:.6g}` ← RR 1:3\n"
+        f"📍 Trailing: {TRAIL_PCT}% מהשיא\n"
+        f"{'─' * 26}\n"
+        f"📊 RSI 4H: *{rsi_str}* | Vol ×{vol_ratio:.1f}\n"
+        f"🔺 4H High: `${h4_high:.6g}` ✅\n"
+        f"💼 {LEVERAGE}x · ${margin:.0f} מרג'ין · ${pos_size:.0f} נשלט\n\n"
+        + _wallet_opened_summary()
+    )
+    send_msg(msg)
+    print(f"[Breakout] ✅ LONG {symbol} @ {price:.6g} | margin=${margin:.0f} | RSI={rsi_str}")
+
+
+def top10_breakout_loop():
+    """
+    Thread 7 — Top 10 Breakout Auto-Scanner, כל 15 דקות.
+    לוגיקה:
+      1. BTC 15m > EMA20 — abort אם לא.
+      2. FNG Kill-Switch ≤ EXTREME_FEAR_THRESHOLD — skip.
+      3. MAX_TRADES מלא — skip.
+      4. סריקת TOP10_SYMBOLS: 1H close > 4H High.
+      5. מיון: RSI עולה (לא overbought) + Volume יורד (כוח).
+      6. פתיחת LONG עם margin = 10% מהיתרה הפנויה.
+    הרצה ראשונה מיידית (ETH + שאר).
+    """
+    TOP10_INTERVAL    = 15 * 60   # 15 דקות
+    BREAKOUT_MIN_VOL  = 0.8       # volume ratio מינימלי
+
+    print("Thread 7 (Top10 Breakout) started.")
+    first_run = True
+
+    while True:
+        if not first_run:
+            time.sleep(TOP10_INTERVAL)
+        first_run = False
+
+        try:
+            # ── 1. BTC Filter ─────────────────────────────────────────────
+            btc_above_ema = _btc_above_ema20_15m()
+            if not btc_above_ema:
+                print("[Top10 Breakout] ABORT — BTC < EMA20 15m")
+                continue
+
+            # ── 2. Kill-Switch ────────────────────────────────────────────
+            fng_v, fng_lbl, _ = sentiment_check("top10_breakout")
+            if fng_v is None or fng_v <= EXTREME_FEAR_THRESHOLD:
+                print(f"[Top10 Breakout] Kill-Switch FNG={fng_v} — skip")
+                continue
+
+            # ── 3. Max Trades ──────────────────────────────────────────────
+            if len(active_trades) >= MAX_TRADES:
+                print(f"[Top10 Breakout] Max trades ({MAX_TRADES}) — skip")
+                continue
+
+            # ── 4. Scan ────────────────────────────────────────────────────
+            existing_syms = {t['symbol'] for t in active_trades}
+            candidates    = []
+
+            for sym in TOP10_SYMBOLS:
+                if sym in existing_syms:
+                    continue
+                breakout, price, h4_high, rsi, vol_ratio = _coin_breakout_full(sym)
+                if not breakout:
+                    continue
+                if rsi is not None and rsi > RSI_VETO_LONG:
+                    print(f"[Top10 Breakout] {sym} RSI veto ({rsi:.0f} > {RSI_VETO_LONG})")
+                    continue
+                if vol_ratio < BREAKOUT_MIN_VOL:
+                    print(f"[Top10 Breakout] {sym} low volume ({vol_ratio:.1f}x < {BREAKOUT_MIN_VOL})")
+                    continue
+                candidates.append({
+                    'symbol': sym, 'price': price, 'h4_high': h4_high,
+                    'rsi': rsi, 'vol_ratio': vol_ratio,
+                })
+                print(f"[Top10 Breakout] ✅ {sym} | RSI={rsi} | Vol={vol_ratio:.1f}x")
+
+            if not candidates:
+                print(f"[Top10 Breakout] No breakouts in {len(TOP10_SYMBOLS)} coins")
+                continue
+
+            # ── 5. Sort: RSI נמוך קודם + Volume גבוה קודם ────────────────
+            candidates.sort(
+                key=lambda c: (c['rsi'] if c['rsi'] is not None else 999, -c['vol_ratio'])
+            )
+
+            # ── 6. Open trades ────────────────────────────────────────────
+            for c in candidates:
+                if len(active_trades) >= MAX_TRADES:
+                    break
+                avail = wallet.get('balance', STARTING_BALANCE)
+                if avail < 5:
+                    print("[Top10 Breakout] Balance too low — stop")
+                    break
+                margin = max(round(avail * 0.10, 2), 5.0)
+                open_breakout_trade(
+                    symbol    = c['symbol'],
+                    price     = c['price'],
+                    margin    = margin,
+                    rsi       = c['rsi'],
+                    vol_ratio = c['vol_ratio'],
+                    h4_high   = c['h4_high'],
+                    fng_v     = fng_v,
+                )
+                time.sleep(2)
+
+        except Exception as e:
+            print(f"[Top10 Breakout] Error: {e}")
+
+
 def sol_watch_loop():
     """
     Thread 5 — מעקב SOL כל 15 דקות.
@@ -4392,6 +4592,10 @@ def main():
     # Thread 6 — Scalp Scanner: פעיל בלבד כשFNG < 13 (Extreme Fear), כל 5 דקות
     scalp_scan_thread = threading.Thread(target=scalp_scan_loop, daemon=True)
     scalp_scan_thread.start()
+
+    # Thread 7 — Top 10 Breakout: BTC EMA20 + 1H>4H High → LONG אוטומטי, כל 15 דקות
+    top10_breakout_thread = threading.Thread(target=top10_breakout_loop, daemon=True)
+    top10_breakout_thread.start()
 
     if IS_DEPLOYED:
         send_msg(
