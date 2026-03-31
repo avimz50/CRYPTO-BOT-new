@@ -6,22 +6,32 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 cd "$REPO_ROOT"
 
-echo "=== Checking Python dependencies ==="
+echo "=== [Bot] REPO=$REPO_ROOT | uv=$(which uv 2>/dev/null || echo MISSING) | py=$(which python3 2>/dev/null || echo MISSING) ==="
 
-# Check if packages are already installed (postbuild may have installed them)
-if python3 -c "import ccxt, telebot, flask, anthropic" 2>/dev/null; then
-  echo "=== Python packages already installed — starting bot instantly ==="
+# ── בחירת runner ─────────────────────────────────────────────────────────────
+if command -v uv &>/dev/null; then
+  if [ -f ".venv/pyvenv.cfg" ]; then
+    echo "=== [Bot] .venv ready — uv run --no-sync (instant) ==="
+    PYTHON_RUN="uv run --no-sync python"
+  else
+    echo "=== [Bot] .venv missing — running uv sync ==="
+    uv sync --frozen --no-dev 2>&1 | tail -5 || echo "[WARN] uv sync failed"
+    PYTHON_RUN="uv run python"
+  fi
+elif command -v python3 &>/dev/null; then
+  echo "=== [Bot] uv not found — using python3 ==="
+  python3 -c "import ccxt" 2>/dev/null || pip3 install -r requirements.txt --quiet 2>&1 | tail -5 || true
+  PYTHON_RUN="python3"
 else
-  echo "=== Installing Python packages via pip ==="
-  pip3 install -r requirements.txt --quiet 2>&1 | tail -5 || echo "[WARN] pip install had issues"
-  echo "=== pip install done ==="
+  echo "=== [Bot] FATAL: no Python or uv found ==="
+  PYTHON_RUN="echo NO_PYTHON_FOUND"
 fi
 
-echo "=== Starting Trading Bot (background) ==="
-python3 bot.py > /tmp/bot_stdout.log 2>&1 &
+echo "=== [Bot] Starting: $PYTHON_RUN bot.py ==="
+$PYTHON_RUN bot.py >> /tmp/bot_stdout.log 2>&1 &
 BOT_PID=$!
-echo "Trading bot started with PID: $BOT_PID"
+echo "=== [Bot] PID=$BOT_PID — background started ==="
 
-echo "=== Starting API Server (foreground) ==="
+echo "=== [API] Starting Node.js ==="
 cd "$SCRIPT_DIR/.."
 node --enable-source-maps ./dist/index.mjs
