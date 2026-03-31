@@ -111,13 +111,20 @@ router.get("/audit", (_req, res) => {
   }
 });
 
-// FNG — cached 1h
-let _fngCache: { value: number; label: string; ts: number } = { value: 50, label: "Neutral", ts: 0 };
+// FNG — cached 15 min
+let _fngCache: { value: number; label: string; ts: number; updated_at: number; time_until_update: number } = {
+  value: 50, label: "Neutral", ts: 0, updated_at: 0, time_until_update: 0
+};
 
 router.get("/fng", (_req, res) => {
   const now = Date.now() / 1000;
-  if (now - _fngCache.ts < 3600) {
-    return res.json({ value: _fngCache.value, label: _fngCache.label });
+  if (now - _fngCache.ts < 900) {
+    return res.json({
+      value: _fngCache.value,
+      label: _fngCache.label,
+      updated_at: _fngCache.updated_at,
+      time_until_update: _fngCache.time_until_update,
+    });
   }
   const url = "https://api.alternative.me/fng/?limit=1";
   https.get(url, (r) => {
@@ -126,15 +133,31 @@ router.get("/fng", (_req, res) => {
     r.on("end", () => {
       try {
         const d = JSON.parse(body).data[0];
-        _fngCache = { value: parseInt(d.value), label: d.value_classification, ts: now };
+        _fngCache = {
+          value: parseInt(d.value),
+          label: d.value_classification,
+          ts: now,
+          updated_at: parseInt(d.timestamp),
+          time_until_update: parseInt(d.time_until_update),
+        };
       } catch {
-        if (_fngCache.ts === 0) _fngCache = { value: 50, label: "Neutral", ts: now - 3500 };
+        if (_fngCache.ts === 0) _fngCache = { value: 50, label: "Neutral", ts: now - 800, updated_at: now, time_until_update: 0 };
       }
-      res.json({ value: _fngCache.value, label: _fngCache.label });
+      res.json({
+        value: _fngCache.value,
+        label: _fngCache.label,
+        updated_at: _fngCache.updated_at,
+        time_until_update: _fngCache.time_until_update,
+      });
     });
   }).on("error", () => {
-    if (_fngCache.ts === 0) _fngCache = { value: 50, label: "Neutral", ts: now - 3500 };
-    res.json({ value: _fngCache.value, label: _fngCache.label });
+    if (_fngCache.ts === 0) _fngCache = { value: 50, label: "Neutral", ts: now - 800, updated_at: now, time_until_update: 0 };
+    res.json({
+      value: _fngCache.value,
+      label: _fngCache.label,
+      updated_at: _fngCache.updated_at,
+      time_until_update: _fngCache.time_until_update,
+    });
   });
 });
 

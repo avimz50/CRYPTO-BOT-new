@@ -515,7 +515,7 @@ function TradeCard({ trade }: { trade: Trade }) {
 // Deployed bot Flask API — single source of truth for live data
 const BOT_API = "https://python-script-bymzrkhy.replit.app";
 
-interface FngData { value: number; label: string; }
+interface FngData { value: number; label: string; updated_at?: number; time_until_update?: number; }
 
 interface RejectedCoin {
   symbol: string;
@@ -687,7 +687,7 @@ export default function App() {
   const hotData    = useJson<HotData>(`${BOT_API}/api/hot`,    "/hot_candidates.json", 60_000);
   const tradesData = useJson<TradesData>(`${BOT_API}/api/trades`, "/active_trades.json", 30_000);
   const walletData = useJson<WalletData>(`${BOT_API}/api/wallet`, "/wallet.json",        30_000);
-  const fngData    = useJson<FngData>(`${BOT_API}/api/fng`,    "/fng.json",             300_000);
+  const fngData    = useJson<FngData>(`${BOT_API}/api/fng`,    "/fng.json",             120_000);
   const scanData   = useJson<ScanData>(`${BOT_API}/api/last_scan`, "/last_scan_results.json", 120_000);
 
   const SCAN_INTERVAL = 3600; // seconds
@@ -866,17 +866,25 @@ export default function App() {
               <span className="text-base">📊</span>
               <h2 className="font-semibold text-gray-300 text-sm">מדד הפחד והחמדנות</h2>
             </div>
-            <span className="text-xs text-gray-600">מתעדכן כל שעה · Alternative.me</span>
+            <span className="text-xs text-gray-600">Alternative.me · live</span>
           </div>
           <FearGreedGauge value={fngData?.value ?? null} label={fngData?.label ?? null} />
           {fngData && (
-            <p className="text-center text-xs mt-1" style={{ color: fngColor(fngData.value) }}>
-              {fngData.value < 25 || fngData.value > 75
-                ? `השפעה על ניקוד: ${fngData.value < 25 ? 'LONG +5 / SHORT -5' : 'SHORT +5 / LONG -5'}`
-                : fngData.value < 45 || fngData.value > 55
-                ? `השפעה על ניקוד: ${fngData.value < 45 ? 'LONG +2 / SHORT -2' : 'SHORT +2 / LONG -2'}`
-                : 'השפעה על ניקוד: נייטרלי (0)'}
-            </p>
+            <>
+              <p className="text-center text-xs mt-1" style={{ color: fngColor(fngData.value) }}>
+                {fngData.value < 25 || fngData.value > 75
+                  ? `השפעה על ניקוד: ${fngData.value < 25 ? 'LONG +5 / SHORT -5' : 'SHORT +5 / LONG -5'}`
+                  : fngData.value < 45 || fngData.value > 55
+                  ? `השפעה על ניקוד: ${fngData.value < 45 ? 'LONG +2 / SHORT -2' : 'SHORT +2 / LONG -2'}`
+                  : 'השפעה על ניקוד: נייטרלי (0)'}
+              </p>
+              {fngData.updated_at ? (
+                <p className="text-center text-xs mt-1 text-gray-600">
+                  עודכן: {new Date(fngData.updated_at * 1000).toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                  {fngData.time_until_update ? ` · עדכון הבא בעוד ${Math.round(fngData.time_until_update / 3600)}ש` : ''}
+                </p>
+              ) : null}
+            </>
           )}
         </div>
 
