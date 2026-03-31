@@ -3852,6 +3852,9 @@ def scalp_scan_loop():
     while True:
         try:
             fng_v, fng_lbl, _ = sentiment_check("scalp_scan")
+            if fng_v is None:
+                time.sleep(SCALP_SCAN_INTERVAL_WAIT)
+                continue
 
             # Scalp scanner is ONLY active during Extreme Fear (FNG < threshold)
             # In normal market (WAIT mode), sleep longer to save CPU
