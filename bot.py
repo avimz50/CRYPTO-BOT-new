@@ -2902,6 +2902,141 @@ def handle_top10(message):
     threading.Thread(target=_run, daemon=True).start()
 
 
+@bot.message_handler(commands=['fillslots'])
+def handle_fillslots(message):
+    """
+    /fillslots              — ממלא slots פנויים מ-TOP10_SYMBOLS (לפי Breakout Strategy).
+    /fillslots ETH LINK BNB — ממלא ממטבעות ספציפיים שצוינו.
+
+    מרג'ין: 10% מהיתרה הפנויה לכל עסקה.
+    אם יתרה < $30: 7% במקום 10%.
+    פותח עסקה רק אם 1H close > 4H High (LONG) או < 4H Low (SHORT),
+    לפי כיוון שנקבע מ-FNG + BTC EMA20.
+    """
+    parts = message.text.strip().split()
+    # מטבעות ספציפיים אם צוינו, אחרת TOP10
+    if len(parts) > 1:
+        requested = [p.upper() for p in parts[1:]]
+        symbols   = [f"{s}/USDT" if '/USDT' not in s else s for s in requested]
+    else:
+        symbols = list(TOP10_SYMBOLS)
+
+    def _run():
+        try:
+            open_slots = MAX_TRADES - len(active_trades)
+            if open_slots <= 0:
+                send_msg(f"⚠️ *כל {MAX_TRADES} הסלוטים תפוסים* — אין מקום לעסקאות חדשות.")
+                return
+
+            avail = wallet.get('balance', STARTING_BALANCE)
+            if avail < 5:
+                send_msg(f"⚠️ *יתרה נמוכה מדי* (${avail:.2f}) — לא ניתן לפתוח עסקאות.")
+                return
+
+            # margin: 10% מהיתרה, או 7% אם יתרה < $30
+            margin_pct = 0.07 if avail < 30 else 0.10
+            margin     = max(round(avail * margin_pct, 2), 5.0)
+
+            # קביעת כיוון
+            btc_above_ema     = _btc_above_ema20_15m()
+            fng_v, fng_lbl, _ = sentiment_check("fillslots")
+            if fng_v is None:
+                send_msg("⚠️ *לא ניתן לקרוא FNG* — נסה שוב.")
+                return
+
+            direction = _breakout_determine_direction(btc_above_ema, fng_v)
+            if direction is None:
+                btc_lbl = "✅ BTC > EMA20" if btc_above_ema else "❌ BTC < EMA20"
+                send_msg(
+                    f"⚠️ *סיגנלים מנוגדים — לא ניתן לפתוח*\n"
+                    f"FNG={fng_v} ({fng_lbl}) | {btc_lbl}\n\n"
+                    f"_נדרש: BTC > EMA20 + FNG ≥ 20 לLONG, או BTC < EMA20 + FNG ≤ 65 לSHORT._"
+                )
+                return
+
+            now_str       = now_il().strftime('%H:%M')
+            dir_emoji     = "🚀" if direction == 'LONG' else "🩸"
+            existing_syms = {t['symbol'] for t in active_trades}
+
+            send_msg(
+                f"{dir_emoji} *FillSlots — {direction}* — {now_str}\n"
+                f"💰 יתרה: ${avail:.2f} | מרג'ין: ${margin:.0f} ({margin_pct*100:.0f}%) | Slots: {open_slots}\n"
+                f"😨 FNG: {fng_v} | ₿ BTC: {'מעל' if btc_above_ema else 'מתחת'} EMA20\n"
+                f"_סורק {len(symbols)} מטבעות..._"
+            )
+
+            opened  = 0
+            skipped = []
+
+            for sym in symbols:
+                if opened >= open_slots:
+                    break
+                if len(active_trades) >= MAX_TRADES:
+                    break
+                if sym in existing_syms:
+                    skipped.append(f"⏭ {sym.replace('/USDT','')} — עסקה פתוחה")
+                    continue
+
+                signal, price, h4_level, rsi, vol_ratio = _coin_breakout_full(sym, direction)
+
+                if not signal:
+                    gap = abs(price - h4_level) / h4_level * 100
+                    cmp = "מתחת" if direction == 'LONG' else "מעל"
+                    skipped.append(
+                        f"🟡 {sym.replace('/USDT','')} — {cmp} {('4H High' if direction=='LONG' else '4H Low')} ב-{gap:.1f}%"
+                    )
+                    continue
+
+                # RSI Filter
+                rsi_ok = True
+                if direction == 'LONG' and rsi is not None and rsi > RSI_VETO_LONG:
+                    skipped.append(f"🔶 {sym.replace('/USDT','')} — RSI {rsi:.0f} גבוה מדי (>{RSI_VETO_LONG})")
+                    rsi_ok = False
+                elif direction == 'SHORT' and rsi is not None and rsi < RSI_VETO_SHORT:
+                    skipped.append(f"🔶 {sym.replace('/USDT','')} — RSI {rsi:.0f} נמוך מדי (<{RSI_VETO_SHORT})")
+                    rsi_ok = False
+                if not rsi_ok:
+                    continue
+
+                # פתיחת עסקה
+                current_avail = wallet.get('balance', STARTING_BALANCE)
+                current_margin = max(round(current_avail * margin_pct, 2), 5.0)
+                open_breakout_trade(
+                    symbol    = sym,
+                    price     = price,
+                    margin    = current_margin,
+                    rsi       = rsi,
+                    vol_ratio = vol_ratio,
+                    h4_level  = h4_level,
+                    fng_v     = fng_v,
+                    direction = direction,
+                )
+                existing_syms.add(sym)
+                opened += 1
+                time.sleep(1)
+
+            # סיכום
+            if opened == 0 and skipped:
+                summary = (
+                    f"📋 *FillSlots — לא נפתחו עסקאות*\n\n"
+                    + "\n".join(skipped[:8])
+                    + f"\n\n_הסריקה בדקה {len(symbols)} מטבעות — אף אחד לא עמד בתנאי הפריצה._"
+                )
+            else:
+                summary_lines = [f"✅ *FillSlots הושלם — נפתחו {opened} עסקאות*"]
+                if skipped:
+                    summary_lines.append(f"\n📋 *דולגו ({len(skipped)}):*\n" + "\n".join(skipped[:6]))
+                summary = "\n".join(summary_lines)
+
+            send_msg(summary)
+
+        except Exception as e:
+            print(f"[/fillslots] error: {e}")
+            send_msg(f"⚠️ שגיאה ב-fillslots: `{str(e)[:100]}`")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 @bot.message_handler(commands=['watch'])
 def handle_watch(message):
     """
@@ -3037,8 +3172,10 @@ def handle_home(message):
         f"  /watch             — רשימת מעקב פעילה\n"
         f"  /unwatch SOL       — הפסקת מעקב\n\n"
         f"📡 *Breakout Strategy*\n"
-        f"  /top10 — סריקת Breakout על 10 מטבעות מובילים\n"
-        f"  /sol   — ניתוח SOL חי: BTC EMA20 + 1H > 4H High → EXECUTE/WAIT/ABORT\n\n"
+        f"  /top10     — סריקת Breakout על 10 מטבעות מובילים\n"
+        f"  /fillslots — מלא slots פנויים אוטומטית (LONG/SHORT לפי FNG+BTC)\n"
+        f"  /fillslots ETH LINK BNB — פתח מטבעות ספציפיים\n"
+        f"  /sol       — ניתוח SOL חי: BTC EMA20 + 1H > 4H High\n\n"
         f"🖥 *דאשבורד*\n"
         f"  /dashboard — קבל קישור לדאשבורד\n"
         f"  [👉 פתח דאשבורד]({DASHBOARD_URL})\n\n"
