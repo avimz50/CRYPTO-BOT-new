@@ -4505,6 +4505,102 @@ def top10_breakout_loop():
             print(f"[Top10 Breakout] Error: {e}")
 
 
+def bubble_watch_scan_loop():
+    """
+    Thread 8 — Bubble Watch Active Scanner, כל 15 דקות (Production בלבד).
+
+    שלבים:
+      1. שולף Top 15 Gainers + Top 15 Losers (get_hot_candidates)
+      2. מסנן מטבעות עם שינוי >10% ב-24h (Bubble Watch definition)
+      3. מריץ _scan_batch → מנוע הציון המלא (4H→1H→15m, RSI, EMA, Wick...)
+      4. פותח עסקה אם ציון ≥ MIN_SCORE (90) וכל הבדיקות עוברות
+    """
+    if not IS_DEPLOYED:
+        print("⚠️  [DEV] Bubble Watch Scanner DISABLED (IS_DEPLOYED=False). Prod only.")
+        return
+
+    print("Thread 8 (Bubble Watch Scanner) started.")
+    BUBBLE_SCAN_INTERVAL = 900   # 15 דקות
+
+    while True:
+        time.sleep(BUBBLE_SCAN_INTERVAL)
+        try:
+            # ── 1. בדיקות מקדימות ──────────────────────────────────────────
+            if len(active_trades) >= MAX_TRADES:
+                print("[BubbleWatch] Max trades — skip")
+                continue
+
+            wallet = load_wallet()
+            if wallet.get('balance', 0) < 5:
+                print("[BubbleWatch] Balance too low — skip")
+                continue
+
+            # ── 2. שלוף גיינרים ולוזרים ──────────────────────────────────
+            gainers, losers = get_hot_candidates()
+            if not gainers and not losers:
+                continue
+
+            # ── 3. סנן ל-Bubble Watch (>10% שינוי) ───────────────────────
+            bubble_longs  = [g for g in gainers if g.get('change_pct', 0) >  10.0]
+            bubble_shorts = [l for l in losers  if abs(l.get('change_pct', 0)) > 10.0]
+
+            total = len(bubble_longs) + len(bubble_shorts)
+            if total == 0:
+                print("[BubbleWatch] No coins >10% change — skip")
+                continue
+
+            now_str = now_il().strftime('%H:%M')
+            print(f"[BubbleWatch] {now_str} — {len(bubble_longs)} LONG + {len(bubble_shorts)} SHORT candidates >10%")
+            send_msg(
+                f"🫧 *Bubble Watch Scan* — {now_str}\n"
+                f"🟢 LONG: *{len(bubble_longs)}*  🔴 SHORT: *{len(bubble_shorts)}*  מטבעות עם שינוי >10%\n"
+                f"📐 מריץ ניתוח מלא — ציון מינימום {MIN_SCORE}/100..."
+            )
+
+            # ── 4. BTC Regime ─────────────────────────────────────────────
+            btc_regime = get_btc_regime()
+
+            # ── 5. ציון מלא + פתיחת עסקאות ──────────────────────────────
+            all_rejections = []
+            signals_found  = 0
+
+            if bubble_longs:
+                signals_found += _scan_batch(
+                    bubble_longs, 'LONG',
+                    btc_regime=btc_regime,
+                    rejected_out=all_rejections,
+                )
+
+            if bubble_shorts and len(active_trades) < MAX_TRADES:
+                signals_found += _scan_batch(
+                    bubble_shorts, 'SHORT',
+                    btc_regime=btc_regime,
+                    rejected_out=all_rejections,
+                )
+
+            # ── 6. דוח תוצאות ─────────────────────────────────────────────
+            if signals_found == 0:
+                # תמצית סיבות הדחייה (עד 5)
+                reasons = []
+                for r in all_rejections[:5]:
+                    sym_clean = r['symbol'].replace('/USDT', '')
+                    reasons.append(f"  ∙ {sym_clean}: {r['reason']}")
+                reasons_txt = "\n".join(reasons) if reasons else "  ∙ לא עברו את הציון"
+                send_msg(
+                    f"🫧 *Bubble Watch* — אין כניסות\n\n"
+                    f"{reasons_txt}\n\n"
+                    f"_הסריקה הבאה בעוד 15 דקות_"
+                )
+            else:
+                send_msg(
+                    f"🫧 *Bubble Watch* — נפתחו *{signals_found}* עסקאות\n"
+                    f"_ניהול SL/TP פעיל — יעדכן בשינויים_"
+                )
+
+        except Exception as e:
+            print(f"[BubbleWatch] Error: {e}")
+
+
 def sol_watch_loop():
     """
     Thread 5 — מעקב SOL כל 15 דקות.
@@ -4841,12 +4937,18 @@ def main():
     top10_breakout_thread = threading.Thread(target=top10_breakout_loop, daemon=True)
     top10_breakout_thread.start()
 
+    # Thread 8 — Bubble Watch Active Scanner: מטבעות >10% שינוי → ניתוח מלא → כניסה אם ≥90
+    bubble_watch_thread = threading.Thread(target=bubble_watch_scan_loop, daemon=True)
+    bubble_watch_thread.start()
+
     if IS_DEPLOYED:
         send_msg(
             "🚀 *הבוט הופעל — Production*\n\n"
             "⚙️ *מצב הלולאות:*\n"
-            "🔍 סריקת איתותים: כל *60 דקות* ✅\n"
-            "📍 מעקב SL/TP:    כל *60 שניות* ✅\n\n"
+            "🔍 סריקת איתותים:      כל *60 דקות* ✅\n"
+            "📡 Top20 Breakout:     כל *15 דקות* ✅\n"
+            "🫧 Bubble Watch Scan:  כל *15 דקות* ✅\n"
+            "📍 מעקב SL/TP:         כל *60 שניות* ✅\n\n"
             f"📋 /home — תפריט ראשי\n"
             f"🖥 [פתח דאשבורד]({DASHBOARD_URL})"
         )
