@@ -1303,7 +1303,7 @@ def get_btc_regime():
 
 MIN_SCORE  = 90   # סף מינימום לפתיחת עסקה (90 = alignment כמעט מושלם)
 MAX_TRADES = 5    # מקסימום עסקאות פתוחות במקביל
-RSI_VETO_LONG  = 65   # Anti-FOMO: RSI מעל 65 = לא קונים (overbought ceiling)
+RSI_VETO_LONG  = 70   # Anti-FOMO: RSI מעל 70 = לא קונים (overbought ceiling)
 RSI_VETO_SHORT = 28   # RSI מתחת זה = לא מוכרים (oversold)
 EMA_PROXIMITY_PCT = 2.5  # מחיר חייב להיות תוך 2.5% מ-EMA200 (Anti-Chase)
 BE_BUFFER_PCT  = 2.0  # % עלייה/ירידה לפני הזזת SL ל-Break Even (50% מ-TP1=5%)
@@ -1336,9 +1336,18 @@ SCALP_SCAN_INTERVAL_WAIT= 600    # 10 min when Kill-Switch active (resource savi
 
 # ── Top 10 Breakout Scan — /top10 command ─────────────────────────────────────
 TOP10_SYMBOLS = [
+    # Top-10 Market Cap
     'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT', 'ADA/USDT',
     'DOGE/USDT', 'AVAX/USDT', 'DOT/USDT', 'LINK/USDT', 'TRX/USDT',
+    # Top 11-20 Expansion
+    'ATOM/USDT', 'NEAR/USDT', 'APT/USDT', 'SUI/USDT', 'ARB/USDT',
+    'OP/USDT',   'INJ/USDT',
+    # Sector Bonus — AI + RWA
+    'FET/USDT', 'RNDR/USDT', 'ONDO/USDT',
 ]
+
+# Sector-priority coins: get moved to front of candidates list
+SECTOR_PRIORITY_SYMBOLS = {'FET/USDT', 'RNDR/USDT', 'ONDO/USDT'}
 
 # ── Low-Resource Logging ──────────────────────────────────────────────────────
 # False = only critical events (Entry, Exit, Errors) are printed.
@@ -2838,7 +2847,7 @@ def handle_top10(message):
     /top10 — סריקת Breakout Strategy על 10 המטבעות המובילים.
     אותה לוגיקה כמו /sol: BTC 15m EMA20 filter + 1H close > 4H High.
     """
-    send_msg("📡 *Top 10 Breakout Scan* — מריץ ניתוח חי\\.\\.\\.")
+    send_msg("📡 *Top 20 Breakout Scan* — מריץ ניתוח חי\\.\\.\\.")
 
     def _run():
         try:
@@ -3172,9 +3181,9 @@ def handle_home(message):
         f"  /watch             — רשימת מעקב פעילה\n"
         f"  /unwatch SOL       — הפסקת מעקב\n\n"
         f"📡 *Breakout Strategy*\n"
-        f"  /top10     — סריקת Breakout על 10 מטבעות מובילים\n"
-        f"  /fillslots — מלא slots פנויים אוטומטית (LONG/SHORT לפי FNG+BTC)\n"
-        f"  /fillslots ETH LINK BNB — פתח מטבעות ספציפיים\n"
+        f"  /top10     — סריקת Breakout על 20 מטבעות (כולל AI: FET/RNDR, RWA: ONDO)\n"
+        f"  /fillslots — מלא slots פנויים מ-20 מטבעות (LONG/SHORT לפי FNG+BTC)\n"
+        f"  /fillslots ETH FET RNDR — פתח מטבעות ספציפיים (AI/RWA קודמים)\n"
         f"  /sol       — ניתוח SOL חי: BTC EMA20 + 1H > 4H High\n\n"
         f"🖥 *דאשבורד*\n"
         f"  /dashboard — קבל קישור לדאשבורד\n"
@@ -4205,7 +4214,7 @@ def _coin_1h_breakout_above_4h_high(symbol: str) -> tuple[bool, float, float, fl
 BREAKOUT_FNG_LONG_MIN  = 20   # FNG מינימום ל-LONG (מתחת = פחד קיצוני, לא קונים)
 BREAKOUT_FNG_SHORT_MAX = 65   # FNG מקסימום ל-SHORT (מעל = חמדנות, לא שורטים)
 RSI_VETO_SHORT         = 35   # RSI מינימום ל-SHORT (מתחת = oversold, לא שורטים)
-BREAKOUT_MIN_VOL       = 0.8  # volume ratio מינימלי (80% מהממוצע)
+BREAKOUT_MIN_VOL       = 1.5  # volume ratio מינימלי (150% מהממוצע = 50% מעל)
 
 
 def _coin_breakout_full(symbol: str, direction: str = 'LONG') -> tuple[bool, float, float, float | None, float]:
@@ -4453,12 +4462,23 @@ def top10_breakout_loop():
                 continue
 
             # ── 5. מיון ───────────────────────────────────────────────────
-            # LONG:  RSI נמוך קודם (לא overbought) + Volume גבוה
-            # SHORT: RSI גבוה קודם (יש לאן לרדת) + Volume גבוה
-            if direction == 'LONG':
-                candidates.sort(key=lambda c: (c['rsi'] if c['rsi'] is not None else 999, -c['vol_ratio']))
-            else:
-                candidates.sort(key=lambda c: (-(c['rsi'] if c['rsi'] is not None else 0), -c['vol_ratio']))
+            # Priority:
+            #   1. Sector coins (AI/RWA) first — sector_bonus=0 sorts before 1
+            #   2. Volume high (>1.5x average) → הוכח עניין אמיתי
+            #   3. LONG: RSI as low as possible (not overbought)
+            #      SHORT: RSI as high as possible (room to drop)
+            def _sort_key(c):
+                sector_bonus = 0 if c['symbol'] in SECTOR_PRIORITY_SYMBOLS else 1
+                rsi_v        = c['rsi'] if c['rsi'] is not None else (999 if direction == 'LONG' else 0)
+                vol_key      = -c['vol_ratio']  # higher vol = lower key = earlier
+                if direction == 'LONG':
+                    # prefer RSI in sweet-spot 55-70 (momentum without overbought)
+                    rsi_key = abs(rsi_v - 62.5)   # closest to midpoint 62.5 = best
+                else:
+                    rsi_key = -rsi_v              # highest RSI first for SHORT
+                return (sector_bonus, rsi_key, vol_key)
+
+            candidates.sort(key=_sort_key)
 
             # ── 6. פתיחת עסקאות ───────────────────────────────────────────
             for c in candidates:
