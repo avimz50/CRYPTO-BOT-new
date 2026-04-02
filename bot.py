@@ -1334,6 +1334,20 @@ SCALP_BOUNCE_PCT        = 1.0    # price must bounce 1% from 2h low
 SCALP_SCAN_INTERVAL     = 300    # 5 min between scalp scans (normal)
 SCALP_SCAN_INTERVAL_WAIT= 600    # 10 min when Kill-Switch active (resource savings)
 
+# ── Cliff-Hanger Strategy (5m Giant-Candle SHORT) ────────────────────────────
+CLIFF_DROP_PCT          = 2.0    # % ירידה בנר 5m אחד = Cliff Event
+CLIFF_VOL_MULT          = 3.0    # Volume חייב להיות 3× ממוצע 10 נרות
+CLIFF_RSI_OVERBOUGHT    = 70.0   # RSI 15m מעל ערך זה = High-Conviction (RSI Divergence)
+CLIFF_SL_PCT            = 1.5    # Stop Loss הדוק
+CLIFF_TP_PCT            = 3.0    # Take Profit (RR 1:2)
+CLIFF_BE_TRIGGER_PCT    = 1.0    # ב-1% רווח → SL עובר לכניסה (Break-Even)
+CLIFF_LEVERAGE          = 10
+CLIFF_MARGIN            = 25.0
+CLIFF_POS_SIZE          = CLIFF_MARGIN * CLIFF_LEVERAGE  # $250 controlled
+CLIFF_MAX_DURATION_MIN  = 30     # force-close אחרי 30 דקות
+MAX_CLIFF_TRADES        = 2      # מקסימום עסקאות Cliff מקבילות
+CLIFF_SCAN_INTERVAL     = 120    # סריקה כל 2 דקות
+
 # ── Top 10 Breakout Scan — /top10 command ─────────────────────────────────────
 TOP10_SYMBOLS = [
     # Top-10 Market Cap
@@ -1897,6 +1911,69 @@ def track_trades():
                         active_trades.remove(trade)
                     save_active_trades()
                 continue   # skip all normal phase logic for scalp trades
+
+            # ════════════════════════════════════════════
+            # CLIFF PHASE — Cliff-Hanger SHORT, SL 1.5%, BE@1%
+            # ════════════════════════════════════════════
+            if trade.get('phase') == 'cliff':
+                raw_pnl_pct  = (current_price - entry) / entry * 100
+                cliff_pnl_pct = -raw_pnl_pct   # SHORT: ירידת מחיר = רווח
+                cliff_pnl_usd = round(CLIFF_POS_SIZE * cliff_pnl_pct / 100, 2)
+                elapsed_min   = (time.time() - trade.get('cliff_opened_ts', time.time())) / 60
+
+                # Break-Even trigger: ב-1% ברווח → SL עובר לכניסה
+                if not trade.get('be_triggered') and current_price <= trade['be_lvl']:
+                    trade['sl']          = entry        # SL → כניסה
+                    trade['be_triggered'] = True
+                    send_msg(
+                        f"📍 *Cliff BE הופעל — {sym.replace('/USDT','')}*\n"
+                        f"רווח 1% הושג → SL הועבר לכניסה `{entry:.6g}`\n"
+                        f"_מסחר ללא סיכון מעכשיו_"
+                    )
+
+                tp_hit_c   = current_price <= trade['tp']
+                sl_hit_c   = current_price >= trade['sl']
+                time_exp_c = elapsed_min >= CLIFF_MAX_DURATION_MIN
+
+                if tp_hit_c or sl_hit_c or time_exp_c:
+                    if tp_hit_c:
+                        close_reason = 'Cliff-TP'
+                        icon  = "✅"
+                        label = f"🎯 TP נגע \\(\\-{CLIFF_TP_PCT}%\\)"
+                        daily_stats['wins'] += 1
+                    elif sl_hit_c:
+                        be_txt = " \\(Break\\-Even\\)" if trade.get('be_triggered') else f" \\(\\-{CLIFF_SL_PCT}%\\)"
+                        close_reason = 'Cliff-SL'
+                        icon  = "❌" if not trade.get('be_triggered') else "🔁"
+                        label = f"🛑 SL נגע{be_txt}"
+                        daily_stats['losses'] += 1
+                    else:
+                        close_reason = 'Cliff-Time'
+                        icon  = "⏱"
+                        label = f"⏱ פג תוקף \\({elapsed_min:.0f} דקות\\)"
+                        if cliff_pnl_usd >= 0:
+                            daily_stats['wins'] += 1
+                        else:
+                            daily_stats['losses'] += 1
+
+                    daily_stats['total_pnl'] += cliff_pnl_usd
+                    wallet_credit(cliff_pnl_usd, CLIFF_MARGIN)
+                    _log_closed_trade(trade, close_reason, cliff_pnl_usd, current_price)
+                    eq       = _get_equity()
+                    pnl_icon = "📈" if cliff_pnl_usd >= 0 else "📉"
+                    send_msg(
+                        f"🪂 *Cliff-Hanger סגור — {sym.replace('/USDT','')} 🔴*\n"
+                        f"{label}\n\n"
+                        f"כניסה: `{entry:.6g}` → יציאה: `{current_price:.6g}`\n"
+                        f"{pnl_icon} *P&L: ${cliff_pnl_usd:+.2f}* \\({cliff_pnl_pct:+.2f}%\\)\n"
+                        f"💼 {CLIFF_LEVERAGE}x · ${CLIFF_MARGIN:.0f} מרג'ין\n"
+                        f"📊 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance', 0):.2f}`\n"
+                        f"{pnl_icon} סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
+                    )
+                    with trades_lock:
+                        active_trades.remove(trade)
+                    save_active_trades()
+                continue   # skip normal phase logic for cliff trades
 
             # ════════════════════════════════════════════
             # שלב INITIAL — פוזיציה מלאה $500
@@ -4060,6 +4137,157 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
     print(f"SCALP {direction}: {symbol} @ {price:.6g} | SL={sl_price:.6g} TP={tp_price:.6g} | {reason}")
 
 
+def _cliff_detect(symbol: str) -> tuple[bool, float, float, bool]:
+    """
+    מזהה Cliff Event על גרף 5m:
+      - ירידה >CLIFF_DROP_PCT% בנר אחד
+      - Volume >CLIFF_VOL_MULT× ממוצע 10 נרות אחרונים
+      - RSI Divergence: RSI(14) ב-15m היה מעל CLIFF_RSI_OVERBOUGHT ועכשיו יורד
+
+    מחזיר (is_cliff, drop_pct, vol_ratio, rsi_divergence).
+    """
+    try:
+        # ── 5m candles ──────────────────────────────────────────────────────
+        df5 = get_data(symbol, timeframe='5m', limit=20)
+        if df5 is None or len(df5) < 12:
+            return False, 0.0, 0.0, False
+
+        # נר אחרון סגור (index -2; -1 הוא נר פתוח)
+        last   = df5.iloc[-2]
+        candle_open  = last['open']
+        candle_close = last['close']
+        candle_vol   = last['volume']
+
+        # % שינוי של הנר (שלילי = ירידה)
+        candle_chg = (candle_close - candle_open) / candle_open * 100
+
+        # Volume ממוצע של 10 נרות אחרונים (ללא הנר הנוכחי)
+        avg_vol = df5['volume'].iloc[-12:-2].mean()
+        if avg_vol <= 0:
+            return False, 0.0, 0.0, False
+        vol_ratio = candle_vol / avg_vol
+
+        # בדיקת תנאי Cliff
+        is_cliff = (candle_chg <= -CLIFF_DROP_PCT) and (vol_ratio >= CLIFF_VOL_MULT)
+        drop_pct = abs(candle_chg)
+
+        # ── RSI Divergence (15m) ─────────────────────────────────────────
+        rsi_divergence = False
+        try:
+            df15 = get_data(symbol, timeframe='15m', limit=20)
+            if df15 is not None and len(df15) >= 15:
+                rsi_series = df15['close'].rolling(14).apply(
+                    lambda x: _rsi_from_series(x), raw=False
+                )
+                rsi_prev = rsi_series.iloc[-3]   # לפני 2 נרות
+                rsi_now  = rsi_series.iloc[-2]   # נר אחרון סגור
+                if (rsi_prev is not None and rsi_now is not None and
+                        rsi_prev > CLIFF_RSI_OVERBOUGHT and rsi_now < rsi_prev):
+                    rsi_divergence = True
+        except Exception:
+            pass
+
+        return is_cliff, drop_pct, vol_ratio, rsi_divergence
+
+    except Exception as e:
+        print(f"[Cliff Detect] {symbol} error: {e}")
+        return False, 0.0, 0.0, False
+
+
+def _rsi_from_series(series):
+    """עוזר: מחשב RSI מ-Series של 14 ערכים."""
+    try:
+        delta  = series.diff()
+        gain   = delta.clip(lower=0).mean()
+        loss   = -delta.clip(upper=0).mean()
+        if loss == 0:
+            return 100.0
+        rs = gain / loss
+        return 100 - (100 / (1 + rs))
+    except Exception:
+        return None
+
+
+def open_cliff_trade(symbol: str, price: float, drop_pct: float,
+                     vol_ratio: float, rsi_divergence: bool):
+    """
+    פותח עסקת Cliff-Hanger SHORT:
+      SL=1.5% · TP=3% · Break-Even ב-1% רווח · תוקף 30 דקות
+    ישיר — ללא בדיקת Kill-Switch (SHORT בלבד, לגיטימי בכל שלב פחד).
+    """
+    global active_trades
+
+    with trades_lock:
+        if any(t['symbol'] == symbol for t in active_trades):
+            print(f"[Cliff] {symbol} כבר פתוח — skip")
+            return
+        cliff_count = sum(1 for t in active_trades if t.get('cliff'))
+
+    if cliff_count >= MAX_CLIFF_TRADES:
+        print(f"[Cliff] Max cliff trades ({MAX_CLIFF_TRADES}) — skip {symbol}")
+        return
+    if len(active_trades) >= MAX_TRADES:
+        print(f"[Cliff] Max total trades ({MAX_TRADES}) — skip {symbol}")
+        return
+    if wallet.get('balance', 0) < CLIFF_MARGIN:
+        print(f"[Cliff] יתרה נמוכה — skip {symbol}")
+        return
+
+    sl_price = round(price * (1 + CLIFF_SL_PCT  / 100), 8)   # SHORT: SL מעל כניסה
+    tp_price = round(price * (1 - CLIFF_TP_PCT  / 100), 8)   # SHORT: TP מתחת כניסה
+    be_level = round(price * (1 - CLIFF_BE_TRIGGER_PCT / 100), 8)  # 1% ברווח
+
+    conviction = "⚡ High-Conviction (RSI Divergence)" if rsi_divergence else "Cliff Event"
+
+    trade = {
+        'symbol':          symbol,
+        'entry':           price,
+        'sl':              sl_price,
+        'tp':              tp_price,
+        'tp1':             tp_price,
+        'be_lvl':          be_level,
+        'sl_pct':          CLIFF_SL_PCT,
+        'tp_pct':          CLIFF_TP_PCT,
+        'direction':       'SHORT',
+        'phase':           'cliff',
+        'be_triggered':    False,
+        'tp1_triggered':   False,
+        'tp1_pnl':         0.0,
+        'peak_price':      price,
+        'trailing_sl':     None,
+        'score':           0,
+        'atr':             0.0,
+        'timeframe':       '5m',
+        'rsi':             None,
+        'ema200':          None,
+        'score_breakdown': f"Cliff {drop_pct:.1f}% drop | Vol {vol_ratio:.1f}× | {conviction}",
+        'opened_at':       now_il().isoformat(timespec='seconds'),
+        'pos_size':        CLIFF_POS_SIZE,
+        'margin':          CLIFF_MARGIN,
+        'fng_at_entry':    None,
+        'sniper':          False,
+        'scalp':           False,
+        'cliff':           True,
+        'cliff_opened_ts': time.time(),
+    }
+    place_order(trade, CLIFF_MARGIN)
+
+    div_note = "\n⚡ *RSI Divergence — High-Conviction!*" if rsi_divergence else ""
+    send_msg(
+        f"🪂 *Cliff-Hanger SHORT: {symbol.replace('/USDT', '')} 🔴*{div_note}\n"
+        f"_נר 5m ירד {drop_pct:.1f}% עם Volume {vol_ratio:.1f}× ממוצע_\n\n"
+        f"💵 כניסה: `{price:.6g}`\n"
+        f"🛑 SL: `{sl_price:.6g}` (+{CLIFF_SL_PCT}%)\n"
+        f"📍 Break-Even ב: `{be_level:.6g}` (-{CLIFF_BE_TRIGGER_PCT}%)\n"
+        f"🎯 TP: `{tp_price:.6g}` (-{CLIFF_TP_PCT}%)\n"
+        f"⏱ תוקף: {CLIFF_MAX_DURATION_MIN} דקות\n"
+        f"💼 {CLIFF_LEVERAGE}x · ${CLIFF_MARGIN:.0f} מרג'ין · ${CLIFF_POS_SIZE:.0f} נשלט\n\n"
+        + _wallet_opened_summary()
+    )
+    print(f"[Cliff] SHORT {symbol} @ {price:.6g} | SL={sl_price:.6g} TP={tp_price:.6g}"
+          f" | Drop={drop_pct:.1f}% Vol={vol_ratio:.1f}× RSI-Div={rsi_divergence}")
+
+
 def scalp_scan_loop():
     """
     Thread 6 — High-Volatility Scalp Scanner.
@@ -4601,6 +4829,60 @@ def bubble_watch_scan_loop():
             print(f"[BubbleWatch] Error: {e}")
 
 
+def cliff_hanger_loop():
+    """
+    Thread 9 — Cliff-Hanger SHORT Scanner, כל 2 דקות (תמיד פעיל).
+
+    מחפש 'Cliff Events': נר 5m שירד >2% עם Volume >3× ממוצע.
+    פותח SHORT מיידי — ללא המתנה ל-4H אישור או BTC EMA20.
+    SL=1.5% · TP=3% · Break-Even אוטומטי ב-1% רווח · תוקף 30 דקות.
+    """
+    print("Thread 9 (Cliff-Hanger) started.")
+
+    while True:
+        time.sleep(CLIFF_SCAN_INTERVAL)
+        try:
+            # מגבלות גלובליות
+            if len(active_trades) >= MAX_TRADES:
+                continue
+            cliff_count = sum(1 for t in active_trades if t.get('cliff'))
+            if cliff_count >= MAX_CLIFF_TRADES:
+                continue
+            if wallet.get('balance', 0) < CLIFF_MARGIN:
+                continue
+
+            existing_syms = {t['symbol'] for t in active_trades}
+
+            for sym in TOP10_SYMBOLS:
+                if sym in existing_syms:
+                    continue
+                if len(active_trades) >= MAX_TRADES:
+                    break
+                cliff_count = sum(1 for t in active_trades if t.get('cliff'))
+                if cliff_count >= MAX_CLIFF_TRADES:
+                    break
+
+                is_cliff, drop_pct, vol_ratio, rsi_div = _cliff_detect(sym)
+                if not is_cliff:
+                    continue
+
+                # שלוף מחיר נוכחי
+                try:
+                    ticker = exchange.fetch_ticker(sym)
+                    price  = ticker['last']
+                except Exception:
+                    continue
+
+                conviction = "⚡ RSI-Div" if rsi_div else "Cliff"
+                print(f"[Cliff] 🪂 {sym} — Drop={drop_pct:.1f}% Vol={vol_ratio:.1f}× {conviction}")
+                open_cliff_trade(sym, price, drop_pct, vol_ratio, rsi_div)
+                existing_syms.add(sym)
+                time.sleep(1)
+
+        except Exception as e:
+            print(f"[Cliff-Hanger] Error: {e}")
+
+
 def sol_watch_loop():
     """
     Thread 5 — מעקב SOL כל 15 דקות.
@@ -4941,6 +5223,10 @@ def main():
     bubble_watch_thread = threading.Thread(target=bubble_watch_scan_loop, daemon=True)
     bubble_watch_thread.start()
 
+    # Thread 9 — Cliff-Hanger: נר 5m ירד >2% + Vol >3× → SHORT מיידי, כל 2 דקות
+    cliff_hanger_thread = threading.Thread(target=cliff_hanger_loop, daemon=True)
+    cliff_hanger_thread.start()
+
     if IS_DEPLOYED:
         send_msg(
             "🚀 *הבוט הופעל — Production*\n\n"
@@ -4948,6 +5234,7 @@ def main():
             "🔍 סריקת איתותים:      כל *60 דקות* ✅\n"
             "📡 Top20 Breakout:     כל *15 דקות* ✅\n"
             "🫧 Bubble Watch Scan:  כל *15 דקות* ✅\n"
+            "🪂 Cliff-Hanger SHORT: כל *2 דקות*  ✅\n"
             "📍 מעקב SL/TP:         כל *60 שניות* ✅\n\n"
             f"📋 /home — תפריט ראשי\n"
             f"🖥 [פתח דאשבורד]({DASHBOARD_URL})"
