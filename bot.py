@@ -2283,6 +2283,65 @@ def send_daily_report():
     msg += f"_הבוט פעיל ומסרוק כל שעה_ 🤖"
 
     send_msg(msg)
+
+    # ── פירוט עסקאות סגורות היום ─────────────────────────────────────────────
+    today_str = now_il().strftime('%Y-%m-%d')
+    today_trades = [
+        t for t in closed_trades_log
+        if t.get('closed_at', '').startswith(today_str)
+    ]
+
+    if today_trades:
+        reason_emoji = {
+            'TP':           '🎯',  'TP1+Trail':    '📍',
+            'Trailing':     '📍',  'BE':           '🔒',
+            'SL':           '🛑',  'Manual':       '✋',
+            'Scalp-TP':     '✅',  'Scalp-SL':     '❌',  'Scalp-Time':    '⏱',
+            'Velocity-TP':  '✅',  'Velocity-SL':  '❌',  'Velocity-Time': '⏱',
+            'Cliff-TP':     '✅',  'Cliff-SL':     '❌',  'Cliff-Time':    '⏱',
+        }
+        reason_label = {
+            'TP':           'TP מלא',       'TP1+Trail':    'TP1 + Trailing',
+            'Trailing':     'Trailing SL',  'BE':           'Break-Even',
+            'SL':           'Stop Loss',    'Manual':       'סגירה ידנית',
+            'Scalp-TP':     'Scalp TP',     'Scalp-SL':     'Scalp SL',    'Scalp-Time':    'Scalp פג תוקף',
+            'Velocity-TP':  'Velocity TP',  'Velocity-SL':  'Velocity SL', 'Velocity-Time': 'Velocity פג תוקף',
+            'Cliff-TP':     'Cliff TP',     'Cliff-SL':     'Cliff SL',    'Cliff-Time':    'Cliff פג תוקף',
+        }
+
+        detail_msg = f"📋 *פירוט עסקאות היום — {now_il().strftime('%d/%m/%Y')}*\n"
+        detail_msg += f"{'─' * 30}\n\n"
+
+        total_pnl_detail = 0.0
+        for i, t in enumerate(today_trades, 1):
+            sym       = t['symbol'].replace('/USDT', '')
+            d         = t.get('direction', 'LONG')
+            d_emoji   = '🟢' if d == 'LONG' else '🔴'
+            entry     = t.get('entry_price', 0)
+            close_p   = t.get('close_price', 0)
+            pnl       = t.get('pnl_usd', 0.0)
+            reason    = t.get('close_reason', '?')
+            closed_t  = t.get('closed_at', '')[-8:-3]  # HH:MM
+            r_emoji   = reason_emoji.get(reason, '❓')
+            r_label   = reason_label.get(reason, reason)
+            pnl_icon  = '📈' if pnl >= 0 else '📉'
+            total_pnl_detail += pnl
+
+            detail_msg += (
+                f"*{i}\\. {sym}* {d_emoji} {d}\n"
+                f"   💵 כניסה: `{entry:.5g}` → יציאה: `{close_p:.5g}`\n"
+                f"   {pnl_icon} P&L: *${pnl:+.2f}*\n"
+                f"   {r_emoji} סיבה: {r_label}  _{closed_t}_\n\n"
+            )
+
+        pnl_total_icon = '📈' if total_pnl_detail >= 0 else '📉'
+        detail_msg += f"{'─' * 30}\n"
+        detail_msg += f"{pnl_total_icon} *סה\"כ P&L: ${total_pnl_detail:+.2f}*  \\({len(today_trades)} עסקאות\\)"
+
+        send_msg(detail_msg)
+    else:
+        send_msg("📋 _אין עסקאות סגורות היום_")
+
     print(f"Daily report sent at {now}")
 
 def send_heartbeat():
