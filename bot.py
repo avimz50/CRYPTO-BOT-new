@@ -2789,22 +2789,6 @@ def handle_addtrade(message):
 def handle_report(message):
     send_daily_report()
 
-@bot.message_handler(commands=['ping'])
-def handle_ping(message):
-    now        = now_il().strftime('%d/%m/%Y %H:%M:%S')
-    uptime_msg = f"🟢 *הבוט פעיל!*\n\n"
-    uptime_msg += f"🕐 שעה: `{now}`\n"
-    uptime_msg += f"📊 עסקאות פעילות: *{len(active_trades)}*\n"
-    if active_trades:
-        for t in active_trades:
-            phase = "🔄 Trailing" if t.get('phase') == 'trailing' else "📊 Initial"
-            uptime_msg += f"   • `{t['symbol']}` — {phase}\n"
-    uptime_msg += f"\n📈 P&L היום: *${round(daily_stats.get('total_pnl', 0), 2):+}*\n"
-    uptime_msg += f"✅ ניצחונות: {daily_stats.get('wins', 0)} · ❌ הפסדים: {daily_stats.get('losses', 0)}\n"
-    uptime_msg += f"\n🖥 [פתח דאשבורד]({DASHBOARD_URL})\n"
-    uptime_msg += f"_הסריקה הבאה בעוד פחות משעה_"
-    send_msg(uptime_msg)
-
 @bot.message_handler(commands=['dashboard'])
 def handle_dashboard(message):
     send_msg(
@@ -3650,27 +3634,24 @@ def start_telegram_polling():
     is_deployed = bool(os.environ.get('REPLIT_DEPLOYMENT', ''))
 
     if not is_deployed:
-        print(
-            "[DEV] Telegram polling SKIPPED — Production bot handles commands. "
-            "send_msg() active (send-only mode)."
-        )
+        # DEV: לא מפעילים polling — הבוט הפרוס מטפל בפקודות.
+        # send_msg() עובד תמיד (HTTP POST ישיר).
+        print("[DEV] Telegram polling SKIPPED — Production bot handles commands.", flush=True)
         return
 
-    # המתן לסיום ה-instance הישן ונקה webhook
+    # PROD: ממתינים 30 שניות לסיום ה-instance הישן
     print("[PROD] Waiting 30s for old instance to shut down...")
     time.sleep(30)
 
+    # נקה webhook ו-pending updates
     try:
         bot.delete_webhook(drop_pending_updates=True)
-        print("[PROD] Webhook cleared, pending updates dropped.")
+        print("[PROD] Webhook cleared — starting infinity_polling...")
     except Exception as e:
         print(f"[PROD] delete_webhook error (non-fatal): {e}")
 
-    print("[PROD] Starting Telegram infinity_polling...")
-
     while True:
         try:
-            # infinity_polling מטפל אוטומטית בכל שגיאת רשת ו-timeout
             bot.infinity_polling(
                 timeout=25,
                 long_polling_timeout=20,
@@ -3686,8 +3667,8 @@ def start_telegram_polling():
                 except Exception:
                     pass
             else:
-                print(f"[PROD] Polling error — restart in 10s: {e}")
-                time.sleep(10)
+                print(f"[PROD] Polling error — restart in 5s: {e}")
+                time.sleep(5)
 
 # --- לולאת מעקב עסקאות — Thread נפרד ---
 
@@ -5349,15 +5330,8 @@ def main():
             f"🖥 [פתח דאשבורד]({DASHBOARD_URL})"
         )
     else:
-        send_msg(
-            "🛠 *הבוט הופעל — Development Mode*\n\n"
-            "⚙️ *מצב הלולאות:*\n"
-            "🔍 סריקה אוטומטית: *מושבתת* \\(רק /scan ידני\\)\n"
-            "📍 מעקב SL/TP:    כל *60 שניות* ✅\n\n"
-            "_כדי לא לקבל הודעות כפולות עם הבוט הפרוס_\n"
-            f"📋 /home — תפריט ראשי\n"
-            f"🖥 [פתח דאשבורד]({DASHBOARD_URL})"
-        )
+        # DEV: רק הדפסה לקונסול — לא שולחים הודעה לטלגרם כדי לא לבלבל
+        print("[DEV] Bot started in Development Mode — no Telegram startup message sent.", flush=True)
 
     # Thread הראשי נשאר ער
     while True:
