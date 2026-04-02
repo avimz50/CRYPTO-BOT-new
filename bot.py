@@ -3674,7 +3674,6 @@ def start_telegram_polling():
             bot.infinity_polling(
                 timeout=25,
                 long_polling_timeout=20,
-                reconnect_always=True,
                 logger_level=None,
             )
         except Exception as e:
