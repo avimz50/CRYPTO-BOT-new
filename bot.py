@@ -1358,11 +1358,11 @@ TOP10_SYMBOLS = [
     'ATOM/USDT', 'NEAR/USDT', 'APT/USDT', 'SUI/USDT', 'ARB/USDT',
     'OP/USDT',   'INJ/USDT',
     # Sector Bonus — AI + RWA
-    'FET/USDT', 'RNDR/USDT', 'ONDO/USDT',
+    'FET/USDT', 'RENDER/USDT', 'ONDO/USDT',
 ]
 
 # Sector-priority coins: get moved to front of candidates list
-SECTOR_PRIORITY_SYMBOLS = {'FET/USDT', 'RNDR/USDT', 'ONDO/USDT'}
+SECTOR_PRIORITY_SYMBOLS = {'FET/USDT', 'RENDER/USDT', 'ONDO/USDT'}
 
 # ── Low-Resource Logging ──────────────────────────────────────────────────────
 # False = only critical events (Entry, Exit, Errors) are printed.
@@ -3340,9 +3340,9 @@ def handle_home(message):
         f"  /watch             — רשימת מעקב פעילה\n"
         f"  /unwatch SOL       — הפסקת מעקב\n\n"
         f"📡 *Breakout Strategy*\n"
-        f"  /top10     — סריקת Breakout על 20 מטבעות (כולל AI: FET/RNDR, RWA: ONDO)\n"
+        f"  /top10     — סריקת Breakout על 20 מטבעות (כולל AI: FET/RENDER, RWA: ONDO)\n"
         f"  /fillslots — מלא slots פנויים מ-20 מטבעות (LONG/SHORT לפי FNG+BTC)\n"
-        f"  /fillslots ETH FET RNDR — פתח מטבעות ספציפיים (AI/RWA קודמים)\n"
+        f"  /fillslots ETH FET RENDER — פתח מטבעות ספציפיים (AI/RWA קודמים)\n"
         f"  /sol       — ניתוח SOL חי: BTC EMA20 + 1H > 4H High\n\n"
         f"🖥 *דאשבורד*\n"
         f"  /dashboard — קבל קישור לדאשבורד\n"
