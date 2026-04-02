@@ -1,6 +1,8 @@
 import os
 import io
 import json
+import signal
+import sys
 import ccxt
 import telebot
 import time
@@ -3641,10 +3643,9 @@ def handle_scan(message):
 def start_telegram_polling():
     """
     Polling הטלגרם:
-    - DEV mode: לא מפעיל polling בכלל — Production bot מטפל בפקודות.
-      send_msg() עובד תמיד (HTTP POST ישיר, לא דורש polling).
-    - PROD mode: המתנה של 70 שניות + delete_webhook לפני polling,
-      כדי להבטיח שה-instance הישן הסתיים לפני שמתחילים.
+    - DEV mode: לא מפעיל polling — Production bot מטפל בפקודות.
+    - PROD mode: infinity_polling עם reconnect אוטומטי לכל שגיאה.
+      ממתין 30 שניות לפני התחלה כדי לאפשר לinstance הישן לסגור.
     """
     is_deployed = bool(os.environ.get('REPLIT_DEPLOYMENT', ''))
 
@@ -3653,37 +3654,41 @@ def start_telegram_polling():
             "[DEV] Telegram polling SKIPPED — Production bot handles commands. "
             "send_msg() active (send-only mode)."
         )
-        return   # לא מתחיל polling ב-dev — אין קונפליקט 409
+        return
 
-    # נקה כל webhook קיים ו-pending updates לפני שמתחילים
+    # המתן לסיום ה-instance הישן ונקה webhook
+    print("[PROD] Waiting 30s for old instance to shut down...")
+    time.sleep(30)
+
     try:
         bot.delete_webhook(drop_pending_updates=True)
         print("[PROD] Webhook cleared, pending updates dropped.")
     except Exception as e:
         print(f"[PROD] delete_webhook error (non-fatal): {e}")
 
-    print("[PROD] Starting Telegram polling now...")
-    consecutive_409 = 0
+    print("[PROD] Starting Telegram infinity_polling...")
 
     while True:
         try:
-            bot.polling(non_stop=False, timeout=30, long_polling_timeout=30)
-            consecutive_409 = 0
+            # infinity_polling מטפל אוטומטית בכל שגיאת רשת ו-timeout
+            bot.infinity_polling(
+                timeout=25,
+                long_polling_timeout=20,
+                reconnect_always=True,
+                logger_level=None,
+            )
         except Exception as e:
             err_str = str(e)
             if '409' in err_str:
-                consecutive_409 += 1
-                # המתנה קצרה — instance ישן מסתיים תוך ~10-20 שניות
-                wait = min(60, 15 * consecutive_409)
-                print(
-                    f"⚠️  Telegram 409 — instance conflict. "
-                    f"ממתין {wait}s לפני retry #{consecutive_409}..."
-                )
-                time.sleep(wait)
+                print(f"⚠️  [PROD] Telegram 409 — ממתין 30s לסיום instance ישן...")
+                time.sleep(30)
+                try:
+                    bot.delete_webhook(drop_pending_updates=True)
+                except Exception:
+                    pass
             else:
-                consecutive_409 = 0
-                print(f"Polling error: {e}")
-                time.sleep(5)
+                print(f"[PROD] Polling error — restart in 10s: {e}")
+                time.sleep(10)
 
 # --- לולאת מעקב עסקאות — Thread נפרד ---
 
@@ -5358,6 +5363,17 @@ def main():
     # Thread הראשי נשאר ער
     while True:
         time.sleep(3600)
+
+def _sigterm_handler(signum, frame):
+    """סגירה נקייה כשרפליט מכבה את הפרסום — מונע 409 בפרסום הבא."""
+    print("[PROD] SIGTERM received — stopping polling and exiting cleanly.", flush=True)
+    try:
+        bot.stop_polling()
+    except Exception:
+        pass
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, _sigterm_handler)
 
 if __name__ == "__main__":
     try:
