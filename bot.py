@@ -1083,20 +1083,38 @@ def _wallet_opened_summary() -> str:
 def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_price: float = None):
     """מוסיף עסקה סגורה ל-closed_trades_log לשימוש בדוח Drive."""
     global closed_trades_log
+    entry_p = trade['entry']
+    close_p = close_price or trade.get('current_price', entry_p)
+    sl_at_open = trade.get('sl')
+    tp_at_open = trade.get('tp')
+    # יחס R:R על בסיס SL/TP בפתיחה
+    try:
+        dist_tp = abs(tp_at_open - entry_p) / entry_p * 100 if tp_at_open else None
+        dist_sl = abs(sl_at_open - entry_p) / entry_p * 100 if sl_at_open else None
+        rr_ratio = round(dist_tp / dist_sl, 2) if (dist_tp and dist_sl and dist_sl > 0) else None
+    except Exception:
+        dist_tp = dist_sl = rr_ratio = None
+
     record = {
-        'symbol':       trade['symbol'],
-        'direction':    trade['direction'],
-        'timeframe':    trade.get('timeframe', '4H'),
-        'entry_price':  trade['entry'],
-        'close_price':  close_price or trade.get('current_price', trade['entry']),
-        'score':        trade.get('score', 0),
-        'rsi':          trade.get('rsi'),
-        'ema200':       trade.get('ema200'),
+        'symbol':          trade['symbol'],
+        'direction':       trade['direction'],
+        'timeframe':       trade.get('timeframe', '4H'),
+        'entry_price':     entry_p,
+        'close_price':     close_p,
+        'sl_at_open':      sl_at_open,
+        'tp_at_open':      tp_at_open,
+        'dist_sl_pct':     round(dist_sl, 2) if dist_sl is not None else None,
+        'dist_tp_pct':     round(dist_tp, 2) if dist_tp is not None else None,
+        'rr_ratio':        rr_ratio,
+        'score':           trade.get('score', 0),
+        'rsi':             trade.get('rsi'),
+        'ema200':          trade.get('ema200'),
         'score_breakdown': trade.get('score_breakdown', ''),
-        'close_reason': close_reason,
-        'pnl_usd':      round(pnl_usd, 2),
-        'opened_at':    trade.get('opened_at', ''),
-        'closed_at':    now_il().isoformat(timespec='seconds'),
+        'strategy':        trade.get('strategy', ''),
+        'close_reason':    close_reason,
+        'pnl_usd':         round(pnl_usd, 2),
+        'opened_at':       trade.get('opened_at', ''),
+        'closed_at':       now_il().isoformat(timespec='seconds'),
     }
     closed_trades_log.append(record)
     # שמור רק 48 שעות אחרונות

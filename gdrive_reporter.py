@@ -136,6 +136,20 @@ def save_report_locally(report_data):
 # 3. GEMINI AI ANALYSIS
 # ─────────────────────────────────────────────────────────────
 
+def _fmt_duration(opened_at: str, closed_at: str) -> str:
+    """מחשב משך עסקה מ-opened_at ל-closed_at."""
+    try:
+        o = datetime.fromisoformat(opened_at)
+        c = datetime.fromisoformat(closed_at)
+        mins = int((c - o).total_seconds() / 60)
+        if mins < 60:
+            return f"{mins}ד'"
+        h, m = divmod(mins, 60)
+        return f"{h}ש'{m}ד'" if m else f"{h}ש'"
+    except Exception:
+        return "—"
+
+
 def analyze_with_gemini(report_data):
     """
     Sends the trading report to Gemini for AI analysis.
@@ -144,45 +158,104 @@ def analyze_with_gemini(report_data):
     if not GEMINI_URL or not GEMINI_KEY:
         return None
     try:
-        w = report_data['wallet']
-        s = report_data['summary']
+        w      = report_data['wallet']
+        s      = report_data['summary']
         closed = report_data['closed_trades']
         active = report_data['active_trades']
 
-        # סיכום עסקאות לפרומפט
-        closed_lines = '\n'.join(
-            f"  - {t['symbol']} {t.get('direction','LONG')} | "
-            f"P&L: ${t['pnl_usd']:+.2f} | סיבת סגירה: {t.get('close_reason','')}"
-            for t in closed[:15]
-        ) or "  אין עסקאות סגורות"
-
-        active_lines = '\n'.join(
-            f"  - {t['symbol']} {t.get('direction','LONG')} | "
-            f"Floating: ${t['unrealized_usd']:+.2f} | ציון: {t.get('score',0)}"
-            for t in active
-        ) or "  אין עסקאות פעילות"
-
         wr = (s['wins_24h'] / s['closed_count'] * 100) if s['closed_count'] > 0 else 0
 
-        prompt = f"""אתה אנליסט מסחר מקצועי. נתח את דוח המסחר הבא ותן תובנות קצרות ועשירות בעברית.
+        # ── פירוט מלא של כל עסקה סגורה ──────────────────────────────────────
+        def _pct_change(entry, close, direction):
+            if not entry or entry == 0:
+                return 0.0
+            raw = (close - entry) / entry * 100
+            return raw if direction == 'LONG' else -raw
 
-📊 **נתוני הדוח — {report_data['generated_at']}:**
+        closed_detail_lines = []
+        for i, t in enumerate(closed[:20], 1):
+            sym      = t.get('symbol', '?')
+            dirn     = t.get('direction', 'LONG')
+            tf       = t.get('timeframe', '?')
+            strategy = t.get('strategy', '')
+            entry    = t.get('entry_price', 0)
+            close_p  = t.get('close_price', 0)
+            pnl      = t.get('pnl_usd', 0.0)
+            reason   = t.get('close_reason', '?')
+            score    = t.get('score', 0)
+            rsi      = t.get('rsi')
+            rr       = t.get('rr_ratio')
+            dist_sl  = t.get('dist_sl_pct')
+            dist_tp  = t.get('dist_tp_pct')
+            breakdown = t.get('score_breakdown', '')
+            opened   = t.get('opened_at', '')
+            closed_t = t.get('closed_at', '')
+            duration = _fmt_duration(opened, closed_t)
+            pct      = _pct_change(entry, close_p, dirn)
+            pnl_sign = '+' if pnl >= 0 else ''
+            rsi_str  = f" | RSI={rsi:.0f}" if rsi is not None else ''
+            rr_str   = f" | R:R={rr}" if rr is not None else ''
+            sl_tp_str = (f" | SL={dist_sl:.1f}% / TP={dist_tp:.1f}%"
+                         if dist_sl is not None and dist_tp is not None else '')
+            strat_str = f" [{strategy}]" if strategy else ''
+            bd_str   = f"\n     ניקוד: {breakdown}" if breakdown else ''
+
+            closed_detail_lines.append(
+                f"  {i}. {sym} {dirn}{strat_str} [{tf}] | ציון={score}{rsi_str}{rr_str}\n"
+                f"     כניסה: {entry:.6g} → יציאה: {close_p:.6g} ({pct:+.2f}%){sl_tp_str}\n"
+                f"     P&L: {pnl_sign}${pnl:.2f} | סיבה: {reason} | משך: {duration}{bd_str}"
+            )
+
+        closed_block = '\n'.join(closed_detail_lines) if closed_detail_lines else "  אין עסקאות סגורות"
+
+        # ── עסקאות פעילות ────────────────────────────────────────────────────
+        active_detail_lines = []
+        for t in active:
+            sym   = t.get('symbol', '?')
+            dirn  = t.get('direction', 'LONG')
+            score = t.get('score', 0)
+            fl    = t.get('unrealized_usd', 0.0)
+            phase = t.get('phase', 'initial')
+            rsi   = t.get('rsi')
+            rsi_s = f" | RSI={rsi:.0f}" if rsi is not None else ''
+            fl_s  = f"+${fl:.2f}" if fl >= 0 else f"-${abs(fl):.2f}"
+            active_detail_lines.append(
+                f"  • {sym} {dirn} | Floating: {fl_s} | Phase: {phase} | ציון={score}{rsi_s}"
+            )
+        active_block = '\n'.join(active_detail_lines) if active_detail_lines else "  אין עסקאות פעילות"
+
+        # ── Prompt מורחב ─────────────────────────────────────────────────────
+        prompt = f"""אתה אנליסט מסחר אלגוריתמי בכיר. קיבלת דוח מסחר יומי מלא של בוט קריפטו. נתח אותו לעומק ותן דוח ניתוח מקצועי בעברית.
+
+═══════════════════════════════
+📊 סיכום פיננסי — {report_data['generated_at']}
+═══════════════════════════════
 • יתרה כוללת: ${w['total_balance']:.2f} (התחלה: ${w['starting_balance']:.2f})
 • Realized P&L: ${w['realized_pnl']:+.2f} | Floating: ${w['floating_pnl']:+.2f}
-• עסקאות 24h: {s['closed_count']} נסגרו (✅ {s['wins_24h']} / ❌ {s['losses_24h']}) | Win Rate: {wr:.0f}%
 • P&L 24h: ${s['pnl_24h']:+.2f}
+• עסקאות שנסגרו: {s['closed_count']} | ✅ {s['wins_24h']} רווח / ❌ {s['losses_24h']} הפסד | Win Rate: {wr:.0f}%
+• עסקאות פעילות כרגע: {s['active_count']}
 
-📂 **עסקאות שנסגרו:**
-{closed_lines}
+═══════════════════════════════
+📂 פירוט עסקאות סגורות (24h)
+═══════════════════════════════
+{closed_block}
 
-🔓 **עסקאות פעילות:**
-{active_lines}
+═══════════════════════════════
+🔓 עסקאות פעילות כרגע
+═══════════════════════════════
+{active_block}
 
-תן ניתוח קצר (4-6 שורות) הכולל:
-1. הערכת ביצועי הבוט היום
-2. דפוסים שבולטים (סוגי סגירות, כיוונים)
-3. המלצה אחת קצרה לשיפור או אישור שהאסטרטגיה עובדת
-ענה בעברית בלבד, ללא כותרות markdown מורכבות."""
+═══════════════════════════════
+🔍 בקש ממך ניתוח מעמיק הכולל:
+═══════════════════════════════
+1. ביצועי הבוט היום — האם P&L ו-Win Rate מצדיקים את האסטרטגיה?
+2. ניתוח עסקה-עסקה — אילו עסקאות בלטו לטובה או לרעה ומדוע? (הסתמך על ציון, RSI, כיוון, משך)
+3. דפוסים בסיבות הסגירה — האם רואים דפוס (יותר SL? יותר Trailing? TP1 מוגדל?)
+4. איכות הכניסות — האם הציונים ו-RSI תואמים לתוצאות? (ציון גבוה = רווח?)
+5. המלצה ספציפית אחת לשיפור מחר — פרמטר קונקרטי לשנות או דפוס לנצל
+
+ענה בעברית בלבד. כתוב בצורה ענייניית ומקצועית, ללא מחמאות עצמיות. עד 10 שורות."""
 
         url  = f'{GEMINI_URL}/models/gemini-2.5-flash:generateContent'
         hdrs = {'x-goog-api-key': GEMINI_KEY, 'Content-Type': 'application/json'}
