@@ -1304,15 +1304,15 @@ def get_btc_regime():
 # ═══════════════════════════════════════════════════════════════
 
 MIN_SCORE  = 90   # סף מינימום לפתיחת עסקה (90 = alignment כמעט מושלם)
-MAX_TRADES = 5    # מקסימום עסקאות פתוחות במקביל
+MAX_TRADES = 3    # מקסימום 3 עסקאות פתוחות במקביל
 RSI_VETO_LONG  = 70   # Anti-FOMO: RSI מעל 70 = לא קונים (overbought ceiling)
 RSI_VETO_SHORT = 28   # RSI מתחת זה = לא מוכרים (oversold)
 EMA_PROXIMITY_PCT = 2.5  # מחיר חייב להיות תוך 2.5% מ-EMA200 (Anti-Chase)
-BE_BUFFER_PCT  = 2.0  # % עלייה/ירידה לפני הזזת SL ל-Break Even (50% מ-TP1=5%)
-TRAIL_PCT      = 2.5  # % Trailing Stop מהשיא
-SL_PCT_FIXED   = 3.5  # % SL קבוע (3h chart)
-TP1_PCT_FIXED  = 5.0  # % TP1 קבוע — סגירת 50%
-TP_PCT_FIXED   = 10.5 # % TP מלא — RR 1:3 (3 × 3.5%)
+BE_BUFFER_PCT  = 1.5  # % רווח להפעלת Trailing Stop (Phase 2)
+TRAIL_PCT      = 1.0  # % Trailing Stop מהשיא — אגרסיבי
+SL_PCT_FIXED   = 2.5  # % SL קבוע
+TP1_PCT_FIXED  = 3.0  # % TP1 — סגירת 50% ומעבר ל-Breakeven
+TP_PCT_FIXED   = 10.0 # % TP מלא — 50% הנותרים רצים ל-10%
 
 # ─── Sniper Exception — Override Kill-Switch under STRICT conditions ───────────
 SNIPER_MIN_SCORE   = 95    # ציון מינימום 4H — מעל 90 הרגיל
@@ -1338,15 +1338,15 @@ SCALP_SCAN_INTERVAL_WAIT= 600    # 10 min when Kill-Switch active (resource savi
 
 # ── High-Velocity Strategy (5m Explosive Candle — LONG "Rocket" + SHORT "Cliff") ─
 CLIFF_DROP_PCT          = 2.5    # % תנועה בנר 5m אחד = Velocity Event (עלייה או ירידה)
-CLIFF_VOL_MULT          = 4.0    # Volume חייב להיות 4× ממוצע (400% של הממוצע)
+CLIFF_VOL_MULT          = 3.0    # Volume חייב להיות 3× ממוצע (300% של הממוצע)
 CLIFF_RSI_OVERBOUGHT    = 70.0   # RSI 15m מעל ערך זה = High-Conviction SHORT divergence
-CLIFF_SL_PCT            = 1.5    # Stop Loss ראשוני
-CLIFF_TP_PCT            = 3.0    # Take Profit (RR 1:2)
-CLIFF_BE_TRIGGER_PCT    = 1.5    # ב-1.5% רווח → SL עובר לכניסה (Break-Even)
-CLIFF_TRAIL_PCT         = 1.0    # Trailing Stop מיידי — 1% מהשיא/שפל
+CLIFF_SL_PCT            = 2.5    # Stop Loss — זהה לאסטרטגיה הרגילה
+CLIFF_TP_PCT            = 3.0    # Take Profit (RR 1:1.2)
+CLIFF_BE_TRIGGER_PCT    = 1.5    # ב-1.5% רווח → Trailing Stop פעיל
+CLIFF_TRAIL_PCT         = 1.0    # Trailing Stop — 1% מהשיא/שפל
 CLIFF_LEVERAGE          = 10
-CLIFF_MARGIN            = 25.0
-CLIFF_POS_SIZE          = CLIFF_MARGIN * CLIFF_LEVERAGE  # $250 controlled
+CLIFF_MARGIN            = 50.0   # $50 מרג'ין לכל עסקה — אחיד עם האסטרטגיה הרגילה
+CLIFF_POS_SIZE          = CLIFF_MARGIN * CLIFF_LEVERAGE  # $500 controlled
 CLIFF_MAX_DURATION_MIN  = 30     # force-close אחרי 30 דקות
 MAX_CLIFF_TRADES        = 2      # מקסימום עסקאות Velocity מקבילות
 CLIFF_SCAN_INTERVAL     = 120    # סריקה כל 2 דקות
@@ -5319,13 +5319,21 @@ def main():
 
     if IS_DEPLOYED:
         send_msg(
-            "🚀 *הבוט הופעל — Production*\n\n"
-            "⚙️ *מצב הלולאות:*\n"
-            "🔍 סריקת איתותים:      כל *60 דקות* ✅\n"
-            "📡 Top20 Breakout:     כל *15 דקות* ✅\n"
-            "🫧 Bubble Watch Scan:  כל *15 דקות* ✅\n"
-            "⚡ High-Velocity (Rocket+Cliff): כל *2 דקות* ✅\n"
-            "📍 מעקב SL/TP:         כל *60 שניות* ✅\n\n"
+            "🟢 *SYSTEM READY — Aggressive Hunter 2026*\n"
+            f"{'─' * 30}\n\n"
+            "💰 *יתרה:* $200\\.00 \\(איפוס מלא\\)\n"
+            "📊 *P&L:* $0\\.00\n\n"
+            "⚙️ *פרמטרים:*\n"
+            "  📌 מרג'ין: *$50* | מינוף: *10×*\n"
+            "  🎯 מקסימום עסקאות: *3*\n"
+            "  🛑 SL: *2\\.5%* | TP1: *3%* \\(50%\\) | TP2: *10%*\n"
+            "  📍 Trailing: *1%* מהשיא \\(מופעל ב-\\+1\\.5%\\)\n\n"
+            "⚡ *לולאות פעילות:*\n"
+            "  🔍 סריקה:         כל *60 דקות* ✅\n"
+            "  📡 Top20 Breakout: כל *15 דקות* ✅\n"
+            "  🫧 Bubble Watch:   כל *15 דקות* ✅\n"
+            "  ⚡ High-Velocity:  כל *2 דקות* ✅\n"
+            "  📍 מעקב SL/TP:    כל *60 שניות* ✅\n\n"
             f"📋 /home — תפריט ראשי\n"
             f"🖥 [פתח דאשבורד]({DASHBOARD_URL})"
         )
