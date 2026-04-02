@@ -91,11 +91,38 @@ def get_fear_greed():
     return _fng_cache['value'], _fng_cache['label']
 
 # ─── Global Sentiment Thresholds ──────────────────────────────────────────────
-EXTREME_FEAR_THRESHOLD = 13   # Kill-Switch: אין עסקאות חדשות בכלל
-FEAR_THRESHOLD         = 30   # Fear Filter: RSI<30 ל-LONG + SL+1%
-GREED_THRESHOLD        = 70   # Greed Filter: פוזיציה ×60% + BE@+2%
+_FNG_SETTINGS_FILE = os.path.join(os.path.dirname(__file__), 'fng_settings.json')
+_FNG_DEFAULTS      = {'extreme_fear': 13, 'fear': 30, 'greed': 70}
+
+def _load_fng_settings() -> dict:
+    try:
+        with open(_FNG_SETTINGS_FILE, 'r') as f:
+            d = json.load(f)
+        return {
+            'extreme_fear': int(d.get('extreme_fear', _FNG_DEFAULTS['extreme_fear'])),
+            'fear':         int(d.get('fear',         _FNG_DEFAULTS['fear'])),
+            'greed':        int(d.get('greed',        _FNG_DEFAULTS['greed'])),
+        }
+    except Exception:
+        return dict(_FNG_DEFAULTS)
+
+def _save_fng_settings():
+    try:
+        with open(_FNG_SETTINGS_FILE, 'w') as f:
+            json.dump({'extreme_fear': EXTREME_FEAR_THRESHOLD,
+                       'fear':         FEAR_THRESHOLD,
+                       'greed':        GREED_THRESHOLD}, f)
+    except Exception as e:
+        print(f"[FNG Settings] שגיאת שמירה: {e}", flush=True)
+
+_fng_loaded         = _load_fng_settings()
+EXTREME_FEAR_THRESHOLD = _fng_loaded['extreme_fear']  # Kill-Switch: אין עסקאות חדשות בכלל
+FEAR_THRESHOLD         = _fng_loaded['fear']           # Fear Filter: RSI<30 ל-LONG + SL+1%
+GREED_THRESHOLD        = _fng_loaded['greed']          # Greed Filter: פוזיציה ×60% + BE@+2%
 GREED_EARLY_BE_PCT     = 2.0  # % רווח להפעלת BE מוקדם בחמדנות
 FEAR_EXTRA_SL_PCT      = 1.0  # % נוסף ל-SL בתנאי פחד
+
+print(f"[FNG Settings] נטענו: extreme={EXTREME_FEAR_THRESHOLD} fear={FEAR_THRESHOLD} greed={GREED_THRESHOLD}", flush=True)
 
 # ─── Daily Circuit Breaker ─────────────────────────────────────────────────────
 DAILY_LOSS_LIMIT            = -30.0   # -$30 = 15% מ-$200 יתרת פתיחה
@@ -900,7 +927,8 @@ def api_fng_settings_post():
     if errors:
         return flask_jsonify({'ok': False, 'errors': errors}), 400
 
-    print(f"[FNG Settings] extreme={EXTREME_FEAR_THRESHOLD} fear={FEAR_THRESHOLD} greed={GREED_THRESHOLD}", flush=True)
+    _save_fng_settings()
+    print(f"[FNG Settings] שמורים: extreme={EXTREME_FEAR_THRESHOLD} fear={FEAR_THRESHOLD} greed={GREED_THRESHOLD}", flush=True)
     return flask_jsonify({
         'ok': True,
         'extreme_fear': EXTREME_FEAR_THRESHOLD,
@@ -3406,11 +3434,12 @@ def handle_setfng(message):
     elif param == 'greed':
         GREED_THRESHOLD = val
 
+    _save_fng_settings()
     fng_v, _ = get_fear_greed()
-    print(f"[FNG Settings] {param}={old_val}→{val} by Telegram", flush=True)
+    print(f"[FNG Settings] {param}={old_val}→{val} by Telegram — שמור לקובץ", flush=True)
 
     send_msg(
-        f"✅ *{label} עודכן*\n\n"
+        f"✅ *{label} עודכן ונשמר*\n\n"
         f"  לפני: *{old_val}* → אחרי: *{val}*\n\n"
         f"📊 *מצב נוכחי — FNG={fng_v}:*\n"
         f"  🔴 Kill-Switch: FNG < *{EXTREME_FEAR_THRESHOLD}*\n"
