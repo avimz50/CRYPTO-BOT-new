@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 
 /* ══════════════════════════════════════════════
    7-SEGMENT DISPLAY
@@ -682,6 +682,159 @@ function LastScanStatus({ scan }: { scan: ScanData | null }) {
   );
 }
 
+// ── FNG Settings Types ────────────────────────────────────────
+interface FngRange { min: number; max: number; desc: string; }
+interface FngSettings {
+  extreme_fear: number;
+  fear: number;
+  greed: number;
+  ranges: { extreme_fear: FngRange; fear: FngRange; greed: FngRange; };
+}
+
+function FngSettingsPanel({ botApi }: { botApi: string }) {
+  const [settings, setSettings]   = useState<FngSettings | null>(null);
+  const [draft, setDraft]         = useState<{ extreme_fear: number; fear: number; greed: number } | null>(null);
+  const [open, setOpen]           = useState(false);
+  const [saving, setSaving]       = useState(false);
+  const [feedback, setFeedback]   = useState<{ ok: boolean; msg: string } | null>(null);
+
+  const load = useCallback(() => {
+    fetch(`${botApi}/api/fng_settings`)
+      .then(r => r.json())
+      .then((d: FngSettings) => {
+        setSettings(d);
+        setDraft({ extreme_fear: d.extreme_fear, fear: d.fear, greed: d.greed });
+      })
+      .catch(() => {});
+  }, [botApi]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const save = async () => {
+    if (!draft) return;
+    setSaving(true);
+    setFeedback(null);
+    try {
+      const r = await fetch(`${botApi}/api/fng_settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(draft),
+      });
+      const d = await r.json();
+      if (r.ok && d.ok) {
+        setSettings(s => s ? { ...s, ...draft } : s);
+        setFeedback({ ok: true, msg: 'הוגדר בהצלחה ✓' });
+        setTimeout(() => setFeedback(null), 3000);
+      } else {
+        setFeedback({ ok: false, msg: (d.errors ?? [d.error ?? 'שגיאה']).join(' | ') });
+      }
+    } catch {
+      setFeedback({ ok: false, msg: 'שגיאת רשת' });
+    }
+    setSaving(false);
+  };
+
+  type DraftKey = 'extreme_fear' | 'fear' | 'greed';
+  const rows: Array<{ key: DraftKey; label: string; icon: string; color: string }> = [
+    { key: 'extreme_fear', label: 'Kill-Switch',  icon: '🔴', color: '#ef4444' },
+    { key: 'fear',         label: 'Fear',          icon: '🟠', color: '#f97316' },
+    { key: 'greed',        label: 'Greed',         icon: '🟢', color: '#22c55e' },
+  ];
+
+  if (!settings || !draft) return null;
+
+  const changed = draft.extreme_fear !== settings.extreme_fear
+               || draft.fear         !== settings.fear
+               || draft.greed        !== settings.greed;
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden"
+         style={{ background: 'linear-gradient(135deg, #0d1117 0%, #0f1b2d 100%)' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full px-4 py-3 flex items-center justify-between text-left"
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-base">⚙️</span>
+          <span className="font-semibold text-gray-300 text-sm">הגדרות מדד הפחד</span>
+          <span className="text-xs text-gray-500">
+            KS&lt;{settings.extreme_fear} · Fear≤{settings.fear} · Greed≥{settings.greed}
+          </span>
+        </div>
+        <span className="text-gray-500 text-xs">{open ? '▲' : '▼'}</span>
+      </button>
+
+      {open && (
+        <div className="px-4 pb-4 space-y-4 border-t border-gray-800 pt-4">
+          {rows.map(({ key, label, icon, color }) => {
+            const range = settings.ranges[key];
+            const val = draft[key];
+            return (
+              <div key={key}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-medium" style={{ color }}>
+                    {icon} {label}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={range.min}
+                      max={range.max}
+                      value={val}
+                      onChange={e => setDraft(d => d ? { ...d, [key]: Number(e.target.value) } : d)}
+                      className="w-16 text-center bg-gray-800 border border-gray-700 rounded text-white text-sm py-0.5"
+                    />
+                    <span className="text-xs text-gray-500">({range.min}–{range.max})</span>
+                  </div>
+                </div>
+                <input
+                  type="range"
+                  min={range.min}
+                  max={range.max}
+                  value={val}
+                  onChange={e => setDraft(d => d ? { ...d, [key]: Number(e.target.value) } : d)}
+                  className="w-full h-1.5 rounded appearance-none cursor-pointer"
+                  style={{ accentColor: color }}
+                />
+                <p className="text-xs text-gray-600 mt-0.5">{range.desc}</p>
+              </div>
+            );
+          })}
+
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              onClick={save}
+              disabled={!changed || saving}
+              className="flex-1 py-2 rounded-lg text-sm font-semibold transition-all"
+              style={{
+                background: changed ? '#3b82f6' : '#1f2937',
+                color: changed ? '#fff' : '#6b7280',
+                cursor: changed ? 'pointer' : 'not-allowed',
+              }}
+            >
+              {saving ? 'שומר...' : 'שמור הגדרות'}
+            </button>
+            <button
+              onClick={() => setDraft({ extreme_fear: settings.extreme_fear, fear: settings.fear, greed: settings.greed })}
+              disabled={!changed}
+              className="px-3 py-2 rounded-lg text-xs text-gray-400 border border-gray-700 hover:border-gray-600 transition-all"
+              style={{ cursor: changed ? 'pointer' : 'not-allowed', opacity: changed ? 1 : 0.4 }}
+            >
+              איפוס
+            </button>
+          </div>
+
+          {feedback && (
+            <p className={`text-xs text-center font-medium ${feedback.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+              {feedback.msg}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const now        = useClock();
   const hotData    = useJson<HotData>(`${BOT_API}/api/hot`,    "/hot_candidates.json", 60_000);
@@ -887,6 +1040,9 @@ export default function App() {
             </>
           )}
         </div>
+
+        {/* FNG Settings Panel */}
+        <FngSettingsPanel botApi={BOT_API} />
 
         {/* Last Scan Status */}
         <LastScanStatus scan={scanData ?? null} />

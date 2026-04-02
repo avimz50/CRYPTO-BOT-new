@@ -12,7 +12,7 @@ import pandas_ta as ta
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 from keep_alive import keep_alive, app as flask_app
-from flask import jsonify as flask_jsonify
+from flask import jsonify as flask_jsonify, request as flask_request
 import gdrive_reporter
 
 # ── אזור זמן ישראל — ZoneInfo עובד גם ב-Production ──
@@ -856,6 +856,57 @@ def api_hot():
             return flask_jsonify(json.load(f))
     except Exception:
         return flask_jsonify({'updated': '—', 'count': 0, 'candidates': []})
+
+@flask_app.route('/api/fng_settings', methods=['GET'])
+def api_fng_settings_get():
+    return flask_jsonify({
+        'extreme_fear': EXTREME_FEAR_THRESHOLD,
+        'fear':         FEAR_THRESHOLD,
+        'greed':        GREED_THRESHOLD,
+        'ranges': {
+            'extreme_fear': {'min': 5,  'max': 25, 'desc': 'Kill-Switch — אין עסקאות חדשות'},
+            'fear':         {'min': 15, 'max': 45, 'desc': 'Fear — RSI<30 ל-LONG + SL+1%'},
+            'greed':        {'min': 55, 'max': 85, 'desc': 'Greed — פוזיציה 60% + BE מוקדם'},
+        }
+    })
+
+@flask_app.route('/api/fng_settings', methods=['POST'])
+def api_fng_settings_post():
+    global EXTREME_FEAR_THRESHOLD, FEAR_THRESHOLD, GREED_THRESHOLD
+    data = flask_request.get_json(force=True, silent=True) or {}
+    errors = []
+
+    if 'extreme_fear' in data:
+        v = int(data['extreme_fear'])
+        if 5 <= v <= 25:
+            EXTREME_FEAR_THRESHOLD = v
+        else:
+            errors.append(f'extreme_fear חייב להיות 5–25 (קיבלתי {v})')
+
+    if 'fear' in data:
+        v = int(data['fear'])
+        if 15 <= v <= 45:
+            FEAR_THRESHOLD = v
+        else:
+            errors.append(f'fear חייב להיות 15–45 (קיבלתי {v})')
+
+    if 'greed' in data:
+        v = int(data['greed'])
+        if 55 <= v <= 85:
+            GREED_THRESHOLD = v
+        else:
+            errors.append(f'greed חייב להיות 55–85 (קיבלתי {v})')
+
+    if errors:
+        return flask_jsonify({'ok': False, 'errors': errors}), 400
+
+    print(f"[FNG Settings] extreme={EXTREME_FEAR_THRESHOLD} fear={FEAR_THRESHOLD} greed={GREED_THRESHOLD}", flush=True)
+    return flask_jsonify({
+        'ok': True,
+        'extreme_fear': EXTREME_FEAR_THRESHOLD,
+        'fear':         FEAR_THRESHOLD,
+        'greed':        GREED_THRESHOLD,
+    })
 
 def send_msg(text):
     try:
@@ -3277,6 +3328,98 @@ def handle_unwatch(message):
         send_msg(f"⚠️ `{symbol}` לא נמצא ב\\-Watch List")
 
 
+@bot.message_handler(commands=['fng'])
+def handle_fng(message):
+    """מציג את הסף הנוכחי של מדד הפחד + הטווח המותר."""
+    fng_v, fng_lbl = get_fear_greed()
+    status = ""
+    if fng_v < EXTREME_FEAR_THRESHOLD:
+        status = "🔴 Kill-Switch פעיל — אין עסקאות חדשות"
+    elif fng_v <= FEAR_THRESHOLD:
+        status = "🟠 Fear — RSI<30 ל-LONG, SL+1%"
+    elif fng_v >= GREED_THRESHOLD:
+        status = "🟢 Greed — פוזיציה 60% + BE מוקדם"
+    else:
+        status = "🟡 Neutral — מסחר רגיל"
+
+    send_msg(
+        f"📊 *הגדרות מדד הפחד — FNG*\n"
+        f"{'─' * 28}\n\n"
+        f"📡 *מדד נוכחי:* {fng_v} \\({fng_lbl}\\)\n"
+        f"⚡ *סטטוס:* {status}\n\n"
+        f"*⚙️ ספים פעילים:*\n"
+        f"  🔴 Kill-Switch: FNG < *{EXTREME_FEAR_THRESHOLD}* \\(טווח: 5–25\\)\n"
+        f"  🟠 Fear:        FNG ≤ *{FEAR_THRESHOLD}* \\(טווח: 15–45\\)\n"
+        f"  🟢 Greed:       FNG ≥ *{GREED_THRESHOLD}* \\(טווח: 55–85\\)\n\n"
+        f"*🔧 לשינוי:*\n"
+        f"  `/setfng extreme 15` — שנה Kill-Switch\n"
+        f"  `/setfng fear 25`    — שנה Fear\n"
+        f"  `/setfng greed 75`   — שנה Greed"
+    )
+
+
+@bot.message_handler(commands=['setfng'])
+def handle_setfng(message):
+    """שינוי סף מדד הפחד. שימוש: /setfng extreme|fear|greed <ערך>"""
+    global EXTREME_FEAR_THRESHOLD, FEAR_THRESHOLD, GREED_THRESHOLD
+    parts = message.text.strip().split()
+
+    if len(parts) != 3:
+        send_msg(
+            "⚠️ *שימוש שגוי*\n\n"
+            "```\n"
+            "/setfng extreme <5-25>\n"
+            "/setfng fear    <15-45>\n"
+            "/setfng greed   <55-85>\n"
+            "```"
+        )
+        return
+
+    param = parts[1].lower()
+    try:
+        val = int(parts[2])
+    except ValueError:
+        send_msg(f"❌ הערך `{parts[2]}` לא מספר תקין.")
+        return
+
+    ranges = {
+        'extreme': (5,  25,  'Kill-Switch'),
+        'fear':    (15, 45,  'Fear'),
+        'greed':   (55, 85,  'Greed'),
+    }
+
+    if param not in ranges:
+        send_msg(f"❌ פרמטר לא מוכר: `{param}`\nאפשרויות: `extreme`, `fear`, `greed`")
+        return
+
+    lo, hi, label = ranges[param]
+    if not (lo <= val <= hi):
+        send_msg(f"❌ *{label}* חייב להיות בין *{lo}* ל-*{hi}*\nקיבלתי: `{val}`")
+        return
+
+    old_val = {'extreme': EXTREME_FEAR_THRESHOLD, 'fear': FEAR_THRESHOLD, 'greed': GREED_THRESHOLD}[param]
+
+    if param == 'extreme':
+        EXTREME_FEAR_THRESHOLD = val
+    elif param == 'fear':
+        FEAR_THRESHOLD = val
+    elif param == 'greed':
+        GREED_THRESHOLD = val
+
+    fng_v, _ = get_fear_greed()
+    print(f"[FNG Settings] {param}={old_val}→{val} by Telegram", flush=True)
+
+    send_msg(
+        f"✅ *{label} עודכן*\n\n"
+        f"  לפני: *{old_val}* → אחרי: *{val}*\n\n"
+        f"📊 *מצב נוכחי — FNG={fng_v}:*\n"
+        f"  🔴 Kill-Switch: FNG < *{EXTREME_FEAR_THRESHOLD}*\n"
+        f"  🟠 Fear:        FNG ≤ *{FEAR_THRESHOLD}*\n"
+        f"  🟢 Greed:       FNG ≥ *{GREED_THRESHOLD}*\n\n"
+        f"_ניתן לשנות שוב עם /setfng_"
+    )
+
+
 @bot.message_handler(commands=['ping'])
 def handle_ping(message):
     """בדיקת חיים מהירה."""
@@ -3315,6 +3458,11 @@ def handle_home(message):
         f"  /report     — דוח יומי מלא\n"
         f"  /scanreport — דוח סריקה אחרון\n"
         f"  /ping       — בדיקת חיות הבוט\n\n"
+        f"📊 *הגדרות מדד הפחד (FNG)*\n"
+        f"  /fng                  — הצג ספים נוכחיים + טווחים מותרים\n"
+        f"  /setfng extreme 15    — שנה Kill-Switch (5–25)\n"
+        f"  /setfng fear 25       — שנה Fear (15–45)\n"
+        f"  /setfng greed 75      — שנה Greed (55–85)\n\n"
         f"🔍 *פקודות פעולה*\n"
         f"  /scan              — סריקה ידנית עכשיו\n"
         f"  /close BTC         — סגירת עסקה ידנית\n"

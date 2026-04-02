@@ -111,6 +111,41 @@ router.get("/audit", (_req, res) => {
   }
 });
 
+// FNG Settings — proxy to Flask bot
+router.get("/fng_settings", async (_req, res) => {
+  const data = await fetchFromFlask("/api/fng_settings", "", {
+    extreme_fear: 13, fear: 30, greed: 70,
+    ranges: {
+      extreme_fear: { min: 5,  max: 25, desc: 'Kill-Switch — אין עסקאות חדשות' },
+      fear:         { min: 15, max: 45, desc: 'Fear — RSI<30 + SL+1%' },
+      greed:        { min: 55, max: 85, desc: 'Greed — פוזיציה 60% + BE מוקדם' },
+    }
+  });
+  res.json(data);
+});
+
+router.post("/fng_settings", (req, res) => {
+  const body = JSON.stringify(req.body);
+  const options = {
+    hostname: "localhost",
+    port: BOT_FLASK_PORT,
+    path: "/api/fng_settings",
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+  };
+  const proxyReq = http.request(options, (r) => {
+    let data = "";
+    r.on("data", (c) => (data += c));
+    r.on("end", () => {
+      try { res.status(r.statusCode ?? 200).json(JSON.parse(data)); }
+      catch { res.status(500).json({ error: "invalid response from bot" }); }
+    });
+  });
+  proxyReq.on("error", (e) => res.status(503).json({ error: String(e) }));
+  proxyReq.write(body);
+  proxyReq.end();
+});
+
 // FNG — cached 15 min
 let _fngCache: { value: number; label: string; ts: number; updated_at: number; time_until_update: number } = {
   value: 50, label: "Neutral", ts: 0, updated_at: 0, time_until_update: 0
