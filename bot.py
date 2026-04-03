@@ -1471,6 +1471,13 @@ SWING_TRACK_BE_PCT     = 4.0          # BE after +4% (מבנה שוק ברור)
 MAX_EQUITY_RISK_PCT    = 1.5          # סיכון מקסימלי 1.5% מהון לעסקה
 MIN_RR_RATIO           = 2.0          # יחס RR מינימלי 1:2
 
+# 🎯 Precision Hunter — מצב מתח שוק גבוה
+HUNTER_FNG_THRESHOLD   = 70           # FNG ≥ 70 → Hunter Mode (Greed)
+HUNTER_PUMP_PCT_24H    = 15.0         # נכס עלה >15% ב-24h → Hunter Mode
+HUNTER_MIN_RR          = 3.0          # מינ' RR 1:3 במצב Hunter
+HUNTER_TP1_RR          = 1.0          # TP1 ב-1:1 RR (= מרחק SL) במצב Hunter
+WEEKLY_PROFIT_TARGET   = 50.0         # יעד רווח שבועי ($)
+
 # ── Top 10 Breakout Scan — /top10 command ─────────────────────────────────────
 TOP10_SYMBOLS = [
     # Top-10 Market Cap
@@ -1808,6 +1815,36 @@ def fetch_symbol_volume_usd(symbol: str) -> float:
         return 0.0
 
 
+def fetch_symbol_ticker_info(symbol: str) -> tuple:
+    """
+    מחזיר (vol_usd_24h, change_pct_24h) עבור מטבע נתון.
+    מחזיר (0, 0) בשגיאה. קריאה אחת לאחסון נפח + שינוי יחד.
+    """
+    try:
+        ticker = exchange.fetch_ticker(symbol)
+        vol    = float(ticker.get('quoteVolume') or 0)
+        chg    = float(ticker.get('percentage')  or 0)
+        return vol, chg
+    except Exception as e:
+        print(f"[TICKER_INFO] שגיאה עבור {symbol}: {e}")
+        return 0.0, 0.0
+
+
+def is_hunter_mode(fng_v: int, change_24h: float = 0.0) -> tuple:
+    """
+    🎯 Precision Hunter — מזהה מתח שוק גבוה:
+      • FNG ≥ 70 (Greed/Extreme Greed)
+      • OR נכס עלה/ירד >15% ב-24h
+    מחזיר: (is_hunter: bool, reason: str)
+    """
+    if fng_v >= HUNTER_FNG_THRESHOLD:
+        return True, f"FNG={fng_v} ≥ {HUNTER_FNG_THRESHOLD} (Greed)"
+    if abs(change_24h) >= HUNTER_PUMP_PCT_24H:
+        sign = "⬆️" if change_24h > 0 else "⬇️"
+        return True, f"24h שינוי {sign}{abs(change_24h):.1f}% > {HUNTER_PUMP_PCT_24H}%"
+    return False, ""
+
+
 def calc_risk_position(track: str, equity: float) -> tuple:
     """
     מחשב גודל פוזיציה לפי חוק הסיכון 1.5% מהון.
@@ -1853,21 +1890,30 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     """
     track = 'Swing'
 
-    # ── בדיקת נפח (Swing: מינימום $10M) ────────────────────────────────────
-    vol_usd = fetch_symbol_volume_usd(symbol)
+    # ── נפח + שינוי 24h (קריאה אחת) ─────────────────────────────────────────
+    vol_usd, change_24h = fetch_symbol_ticker_info(symbol)
     if vol_usd > 0 and vol_usd < SWING_TRACK_VOL_MIN:
-        msg_vol = (
+        print(f"[SWING] נפח נמוך עבור {symbol}: ${vol_usd/1e6:.1f}M < $10M — מדלג")
+        send_msg(
             f"⚠️ *נפח נמוך מדי — {symbol.replace('/USDT','')}*\n"
             f"נפח 24h: ${vol_usd/1e6:.1f}M | מינימום Swing: ${SWING_TRACK_VOL_MIN/1e6:.0f}M\n"
             f"_העסקה נדחתה — נזילות לא מספקת_"
         )
-        print(f"[SWING] נפח נמוך עבור {symbol}: ${vol_usd/1e6:.1f}M < $10M — מדלג")
-        send_msg(msg_vol)
         return
 
     # ── FNG + גודל פוזיציה לפי 1.5% סיכון ─────────────────────────────────
     if fng_v is None:
         fng_v, _, _ = sentiment_check("open_trade")
+
+    # ── 🎯 Hunter Mode Detection ──────────────────────────────────────────────
+    hunter, hunter_reason = is_hunter_mode(fng_v, change_24h)
+    if hunter:
+        send_msg(
+            f"🎯 *Hunter Mode פעיל — {symbol.replace('/USDT','')}*\n"
+            f"⚠️ מתח שוק גבוה: _{hunter_reason}_\n"
+            f"עובר למצב Precision Hunter — מקבל רק עסקאות עם RR 1:3 ומעלה."
+        )
+        print(f"  [HUNTER MODE] {symbol}: {hunter_reason} → RR min={HUNTER_MIN_RR}")
 
     equity = _get_equity()
     effective_margin, pos_size, leverage, sl_pct, tp1_pct, tp_pct = calc_risk_position('Swing', equity)
@@ -1885,6 +1931,12 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     if fng_v <= FEAR_THRESHOLD:
         sl_pct = min(sl_pct + FEAR_EXTRA_SL_PCT, 8.0)   # בטווח 5-8%
         print(f"  [SENTIMENT] FEAR ({fng_v}) → Swing SL מורחב ל-{sl_pct}%")
+
+    # Hunter Mode: TP1 = 1:1 RR, TP = 1:3 RR
+    if hunter:
+        tp1_pct = round(sl_pct * HUNTER_TP1_RR, 2)         # TP1 = SL distance (1:1)
+        tp_pct  = round(sl_pct * HUNTER_MIN_RR, 2)          # TP  = 3 × SL distance (1:3)
+        print(f"  [HUNTER] Swing TP1={tp1_pct}% TP={tp_pct}% (SL={sl_pct}%)")
 
     # ── בדיקת יתרה ─────────────────────────────────────────────────────────
     if wallet.get('balance', STARTING_BALANCE) < effective_margin:
@@ -1911,22 +1963,34 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         be_price  = price - be_dist
         tp1_price = price - tp1_dist
 
-    # ── בדיקת RR מינימלי 1:2 ───────────────────────────────────────────────
+    # ── בדיקת RR (מינימום 1:2 רגיל / 1:3 ב-Hunter Mode) ────────────────────
     est_profit_tp = round(abs(tp_price  - price) / price * pos_size, 2)
     est_loss_sl   = round(abs(sl_price  - price) / price * pos_size, 2)
     rr_ratio      = round(est_profit_tp / est_loss_sl, 2) if est_loss_sl > 0 else 0
 
-    if rr_ratio < MIN_RR_RATIO:
-        print(f"[SWING] RR={rr_ratio:.2f} < {MIN_RR_RATIO} — {symbol} נדחה")
-        send_msg(
-            f"⚠️ *RR נמוך — {symbol.replace('/USDT','')}*\n"
-            f"RR: {rr_ratio:.2f} | מינימום: {MIN_RR_RATIO:.0f}\n"
-            f"_העסקה נדחתה — יחס סיכון/תשואה לא מספיק_"
-        )
+    required_rr = HUNTER_MIN_RR if hunter else MIN_RR_RATIO
+
+    if rr_ratio < required_rr:
+        print(f"[SWING] RR={rr_ratio:.2f} < {required_rr} {'(Hunter)' if hunter else ''} — {symbol} נדחה")
+        if hunter:
+            send_msg(
+                f"❌ *Trade Rejected: {symbol.replace('/USDT','')}*\n"
+                f"Current RR: 1:{rr_ratio} | Min requirement in tense market: 1:{int(HUNTER_MIN_RR)}\n"
+                f"🎯 _Hunter Mode Active — Precision entries only_"
+            )
+        else:
+            send_msg(
+                f"⚠️ *RR נמוך — {symbol.replace('/USDT','')}*\n"
+                f"RR: {rr_ratio:.2f} | מינימום: {required_rr:.0f}\n"
+                f"_העסקה נדחתה — יחס סיכון/תשואה לא מספיק_"
+            )
         return
 
     max_risk_usd = round(pos_size * sl_pct / 100, 2)
     risk_pct_eq  = round(max_risk_usd / equity * 100, 2)
+
+    # Hunter Mode: TP1 hit → auto-BE (flag stored in trade)
+    hunter_be_on_tp1 = hunter   # בעסקות Hunter, TP1 מפעיל BE אוטומטית
 
     trade = {
         'symbol':          symbol,
@@ -1958,7 +2022,10 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         'sniper':          sniper_mode,
         'track':           track,            # 🌊 Swing
         'vol_usd':         round(vol_usd),
-        'slippage_pct':    0.0,              # Demo: ביצוע בדיוק במחיר הסריקה
+        'change_24h':      round(change_24h, 2),
+        'slippage_pct':    0.0,
+        'hunter_mode':     hunter,           # 🎯 Precision Hunter
+        'hunter_be_on_tp1': hunter_be_on_tp1,
     }
     place_order(trade, effective_margin)
 
@@ -1971,19 +2038,26 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         tf_reason = f"טרנד חזק ב-{timeframe}" if timeframe == '4H' else f"פריצה ב-{timeframe} (4H חלש)"
     tf_icon = "📊" if timeframe == '4H' else ("⏱️" if timeframe == '1H' else "⚡")
 
+    hunter_tag = "🎯 *PRECISION HUNTER MODE* | " if hunter else ""
+    rr_label   = f"RR 1:{int(HUNTER_MIN_RR)}" if hunter else "RR 1:2"
+    be_note    = " ← TP1 מפעיל BE אוטומטי!" if hunter else " ← אחרי מבנה ברור"
+
     msg  = f"{dir_header}\n\n"
     msg += f"{'─' * 26}\n"
-    msg += f"🌊 *מסלול Swing — סבלנות ומבנה שוק*\n"
-    msg += f"{emoji} מטבע: `{symbol}` | נפח: ${vol_usd/1e6:.0f}M\n"
+    msg += f"{hunter_tag}🌊 *מסלול Swing*\n"
+    if hunter:
+        msg += f"⚠️ _שוק במתח: {hunter_reason}_\n"
+    msg += f"{emoji} מטבע: `{symbol}` | נפח: ${vol_usd/1e6:.0f}M | 24h: {change_24h:+.1f}%\n"
     msg += f"{tf_icon} גרף: *{timeframe}* — _{tf_reason}_\n"
     msg += f"פירוט: _{reason}_\n\n"
     msg += f"*ניקוד איתות: {score}/100*\n"
     msg += f"`{score_bar}` {'🟢 STRONG' if score >= 95 else '🟡 GOOD'}\n\n"
     msg += f"מחיר כניסה: `{price:.6g}`\n"
-    msg += f"🛑 SL  ({'-' if direction=='LONG' else '+'}{sl_pct}%): `{sl_price:.6g}` ← Swing רחב\n"
-    msg += f"🔒 BE  ({'+' if direction=='LONG' else '-'}{be_pct}%): `{be_price:.6g}` ← אחרי מבנה ברור\n"
-    msg += f"🎯 TP1 ({'+' if direction=='LONG' else '-'}{tp1_pct}%): `{tp1_price:.6g}` ← סגירת 50%\n"
-    msg += f"🎯 TP  ({'+' if direction=='LONG' else '-'}{tp_pct}%): `{tp_price:.6g}` ← RR 1:2\n"
+    msg += f"🛑 SL  ({'-' if direction=='LONG' else '+'}{sl_pct}%): `{sl_price:.6g}`\n"
+    msg += f"🔒 BE  ({'+' if direction=='LONG' else '-'}{be_pct}%): `{be_price:.6g}`{be_note}\n"
+    msg += f"🎯 TP1 ({'+' if direction=='LONG' else '-'}{tp1_pct}%): `{tp1_price:.6g}` ← 1:1 RR\n" if hunter else \
+           f"🎯 TP1 ({'+' if direction=='LONG' else '-'}{tp1_pct}%): `{tp1_price:.6g}` ← סגירת 50%\n"
+    msg += f"🎯 TP  ({'+' if direction=='LONG' else '-'}{tp_pct}%): `{tp_price:.6g}` ← {rr_label}\n"
     msg += f"📍 Trailing: {TRAIL_PCT}% מהשיא (אחרי TP1)\n\n"
     msg += f"{'─' * 26}\n"
     msg += f"💼 *Leverage: {leverage}x (Isolated) | מסלול Swing*\n"
@@ -2089,6 +2163,27 @@ def track_trades():
                             f"מחיר: `{current_price:.6g}` (+{be_trigger_pct}% — 50% of way to TP1)\n"
                             f"SL הועבר לכניסה: `{entry:.6g}` | {tbadge}\n"
                             f"💼 {scalp_lev}x · ההון מוגן!"
+                        )
+
+                # ── Scalp Hunter Mode: TP1 → auto-BE + go trailing ───────────
+                if trade.get('hunter_be_on_tp1') and not trade.get('tp1_triggered'):
+                    tp1_hit_s = ((direction == 'LONG' and current_price >= trade.get('tp1', float('inf'))) or
+                                 (direction == 'SHORT' and current_price <= trade.get('tp1', 0)))
+                    if tp1_hit_s:
+                        half_pnl    = round(scalp_pos / 2 * (current_price - entry) / entry, 2) if direction == 'LONG' \
+                                      else round(scalp_pos / 2 * (entry - current_price) / entry, 2)
+                        trade['tp1_triggered'] = True
+                        trade['tp1_pnl']       = half_pnl
+                        trade['sl']            = entry        # BE immediata
+                        trade['be_triggered']  = True
+                        daily_stats['total_pnl'] += half_pnl
+                        send_msg(
+                            f"🎯 *Scalp TP1 הושג — {sym.replace('/USDT','')}!* [Hunter Mode]\n"
+                            f"מחיר: `{current_price:.6g}` | {direction} | {tbadge}\n"
+                            f"50% נסגרו · ✅ *Profit at TP1: +${half_pnl}*\n"
+                            f"🔒 *SL הועבר ל-BE אוטומטית!* `{entry:.6g}`\n"
+                            f"🎯 _Precision Hunter: שאר 50% ממשיכים ל-TP 1:3_\n"
+                            f"📈 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                         )
 
                 if tp_hit_s or sl_hit_s or time_exp:
@@ -2306,7 +2401,7 @@ def track_trades():
                         f"💼 {LEVERAGE}x Isolated · ההון מוגן!"
                     )
 
-                # 2. TP1 (5%) — סגור 50%, הפעל Trailing
+                # 2. TP1 — סגור 50%, הפעל Trailing (+ auto-BE ב-Hunter Mode)
                 if tp1_hit(current_price):
                     dist_pct  = abs(current_price - entry) / entry * 100
                     tp1_pnl   = round(half * dist_pct / 100, 2)
@@ -2320,14 +2415,28 @@ def track_trades():
                     else:
                         trade['trailing_sl'] = current_price * 1.02
                     daily_stats['total_pnl'] += tp1_pnl
-                    send_msg(
-                        f"🎯 *TP1 הושג — {sym}!*\n"
-                        f"מחיר: `{current_price:.6g}` | {direction} | {tbadge}\n"
-                        f"50% נסגרו · ✅ *Profit at TP1: +${tp1_pnl}* (+{tp1_pct_r}%)\n"
-                        f"💼 {t_leverage}x · שאר 50% בטריילינג\n"
-                        f"📍 Trailing SL: `{trade['trailing_sl']:.6g}`\n"
-                        f"📈 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
-                    )
+
+                    # 🎯 Hunter Mode: TP1 hit → auto-move SL to Break Even immediately
+                    if trade.get('hunter_be_on_tp1'):
+                        trade['sl']          = entry
+                        trade['be_triggered'] = True
+                        send_msg(
+                            f"🎯 *TP1 הושג — {sym}!* [Hunter Mode]\n"
+                            f"מחיר: `{current_price:.6g}` | {direction} | {tbadge}\n"
+                            f"50% נסגרו · ✅ *Profit at TP1: +${tp1_pnl}* (+{tp1_pct_r}%)\n"
+                            f"🔒 *SL הועבר ל-BE אוטומטית!* `{entry:.6g}` — הון מוגן\n"
+                            f"🎯 _Precision Hunter: שאר 50% בטריילינג לכיוון 1:3_\n"
+                            f"📈 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
+                        )
+                    else:
+                        send_msg(
+                            f"🎯 *TP1 הושג — {sym}!*\n"
+                            f"מחיר: `{current_price:.6g}` | {direction} | {tbadge}\n"
+                            f"50% נסגרו · ✅ *Profit at TP1: +${tp1_pnl}* (+{tp1_pct_r}%)\n"
+                            f"💼 {t_leverage}x · שאר 50% בטריילינג\n"
+                            f"📍 Trailing SL: `{trade['trailing_sl']:.6g}`\n"
+                            f"📈 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
+                        )
                     continue
 
                 # 3. SL נגע
@@ -4476,8 +4585,8 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
         print(f"SCALP: max scalp trades ({MAX_SCALP_TRADES}) reached — skip {symbol}")
         return
 
-    # ── בדיקת נפח (Scalp: מינימום $50M) ─────────────────────────────────────
-    vol_usd = fetch_symbol_volume_usd(symbol)
+    # ── נפח + שינוי 24h (קריאה אחת) ─────────────────────────────────────────
+    vol_usd, change_24h = fetch_symbol_ticker_info(symbol)
     if vol_usd > 0 and vol_usd < SCALP_TRACK_VOL_MIN:
         print(f"[SCALP] נפח נמוך עבור {symbol}: ${vol_usd/1e6:.1f}M < $50M — מדלג")
         send_msg(
@@ -4487,6 +4596,17 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
         )
         return
 
+    # ── 🎯 Hunter Mode Detection ──────────────────────────────────────────────
+    fng_v_now, _, _ = sentiment_check("scalp_hunter")
+    hunter, hunter_reason = is_hunter_mode(fng_v_now, change_24h)
+    if hunter:
+        send_msg(
+            f"🎯 *Hunter Mode פעיל — {symbol.replace('/USDT','')} (Scalp)*\n"
+            f"⚠️ מתח שוק גבוה: _{hunter_reason}_\n"
+            f"Precision Hunter — מקבל רק עסקאות RR 1:3 ומעלה."
+        )
+        print(f"  [HUNTER SCALP] {symbol}: {hunter_reason} → RR min={HUNTER_MIN_RR}")
+
     # ── גודל פוזיציה לפי 1.5% סיכון מהון ────────────────────────────────────
     equity = _get_equity()
     eff_margin, pos_size, leverage, sl_pct, tp1_pct, tp_pct = calc_risk_position('Scalp', equity)
@@ -4494,6 +4614,12 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
     if wallet.get('balance', 0) < eff_margin:
         print(f"SCALP: insufficient balance (${wallet.get('balance', 0):.2f}) — skip {symbol}")
         return
+
+    # Hunter Mode: TP1 = 1:1 RR, TP = 1:3 RR
+    if hunter:
+        tp1_pct = round(sl_pct * HUNTER_TP1_RR, 2)
+        tp_pct  = round(sl_pct * HUNTER_MIN_RR, 2)
+        print(f"  [HUNTER] Scalp TP1={tp1_pct}% TP={tp_pct}% (SL={sl_pct}%)")
 
     # ── מחירי SL / TP1 / TP ──────────────────────────────────────────────────
     sl_dist  = price * sl_pct  / 100
@@ -4504,7 +4630,6 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
         sl_price  = round(price - sl_dist,  8)
         tp1_price = round(price + tp1_dist, 8)
         tp_price  = round(price + tp_dist,  8)
-        # BE at 50% of the way to TP1
         be_price  = round(price + tp1_dist * SCALP_TRACK_BE_TRIGGER, 8)
     else:
         sl_price  = round(price + sl_dist,  8)
@@ -4512,10 +4637,21 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
         tp_price  = round(price - tp_dist,  8)
         be_price  = round(price - tp1_dist * SCALP_TRACK_BE_TRIGGER, 8)
 
-    # ── בדיקת RR ─────────────────────────────────────────────────────────────
+    # ── בדיקת RR (מינימום 1:2 רגיל / 1:3 ב-Hunter Mode) ────────────────────
     est_profit = round(abs(tp_price  - price) / price * pos_size, 2)
     est_loss   = round(abs(sl_price  - price) / price * pos_size, 2)
     rr_ratio   = round(est_profit / est_loss, 2) if est_loss > 0 else 0
+
+    required_rr = HUNTER_MIN_RR if hunter else MIN_RR_RATIO
+    if rr_ratio < required_rr:
+        print(f"[SCALP] RR={rr_ratio:.2f} < {required_rr} {'(Hunter)' if hunter else ''} — {symbol} נדחה")
+        if hunter:
+            send_msg(
+                f"❌ *Trade Rejected: {symbol.replace('/USDT','')} (Scalp)*\n"
+                f"Current RR: 1:{rr_ratio} | Min requirement in tense market: 1:{int(HUNTER_MIN_RR)}\n"
+                f"🎯 _Hunter Mode Active — Precision entries only_"
+            )
+        return
 
     max_risk_usd = round(pos_size * sl_pct / 100, 2)
     risk_pct_eq  = round(max_risk_usd / equity * 100, 2)
@@ -4526,7 +4662,7 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
         'sl':              sl_price,
         'tp':              tp_price,
         'tp1':             tp1_price,
-        'be_lvl':          be_price,    # ← 50% of way to TP1
+        'be_lvl':          be_price,
         'sl_pct':          sl_pct,
         'tp_pct':          tp_pct,
         'direction':       direction,
@@ -4546,13 +4682,16 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
         'pos_size':        pos_size,
         'margin':          eff_margin,
         'leverage':        leverage,
-        'fng_at_entry':    None,
+        'fng_at_entry':    fng_v_now,
         'sniper':          False,
         'scalp':           True,
         'scalp_opened_ts': time.time(),
-        'track':           track,          # ⚡ Scalp
+        'track':           track,
         'vol_usd':         round(vol_usd),
-        'slippage_pct':    0.0,            # Demo: Market Order, no slippage simulation
+        'change_24h':      round(change_24h, 2),
+        'slippage_pct':    0.0,
+        'hunter_mode':     hunter,
+        'hunter_be_on_tp1': hunter,
     }
     place_order(trade, eff_margin)
 
