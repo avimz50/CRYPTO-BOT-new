@@ -1111,6 +1111,8 @@ def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_pric
         'ema200':          trade.get('ema200'),
         'score_breakdown': trade.get('score_breakdown', ''),
         'strategy':        trade.get('strategy', ''),
+        'track':           trade.get('track', 'Swing'),   # ⚡ Scalp / 🌊 Swing
+        'slippage_pct':    trade.get('slippage_pct', 0.0),
         'close_reason':    close_reason,
         'pnl_usd':         round(pnl_usd, 2),
         'opened_at':       trade.get('opened_at', ''),
@@ -1448,6 +1450,27 @@ CLIFF_MAX_DURATION_MIN  = 30     # force-close אחרי 30 דקות
 MAX_CLIFF_TRADES        = 2      # מקסימום עסקאות Velocity מקבילות
 CLIFF_SCAN_INTERVAL     = 120    # סריקה כל 2 דקות
 
+# ─── Two-Track Trading System ──────────────────────────────────────────────────
+# ⚡ Track A: Scalping — מהיר, SL צמוד, נפח גבוה
+SCALP_TRACK_VOL_MIN    = 50_000_000   # מינימום $50M נפח 24h
+SCALP_TRACK_SL_PCT     = 2.0          # SL 2% — מהיר ומדויק
+SCALP_TRACK_TP1_PCT    = 4.0          # TP1 4% — RR 1:2
+SCALP_TRACK_TP_PCT     = 8.0          # TP  8% — RR 1:4
+SCALP_TRACK_LEVERAGE   = 10           # מינוף 10x
+SCALP_TRACK_BE_TRIGGER = 0.50         # BE at 50% of way to TP1
+
+# 🌊 Track B: Swing — סבלני, SL רחב, מינוף נמוך
+SWING_TRACK_VOL_MIN    = 10_000_000   # מינימום $10M נפח 24h
+SWING_TRACK_SL_PCT     = 6.0          # SL 6% — נשימה לתנודתיות (טווח 5-8%)
+SWING_TRACK_TP1_PCT    = 6.0          # TP1 6%
+SWING_TRACK_TP_PCT     = 12.0         # TP 12% — RR 1:2
+SWING_TRACK_LEVERAGE   = 3            # מינוף 3x מקסימום
+SWING_TRACK_BE_PCT     = 4.0          # BE after +4% (מבנה שוק ברור)
+
+# 🛡️ חוקי-על גלובליים
+MAX_EQUITY_RISK_PCT    = 1.5          # סיכון מקסימלי 1.5% מהון לעסקה
+MIN_RR_RATIO           = 2.0          # יחס RR מינימלי 1:2
+
 # ── Top 10 Breakout Scan — /top10 command ─────────────────────────────────────
 TOP10_SYMBOLS = [
     # Top-10 Market Cap
@@ -1774,41 +1797,103 @@ def _pnl_on_half(dist_pct):
     """P&L ($) על חצי פוזיציה ($250) לפי % מרחק מהכניסה."""
     return round(POSITION_SIZE / 2 * dist_pct / 100, 2)
 
+
+def fetch_symbol_volume_usd(symbol: str) -> float:
+    """מחזיר נפח מסחר 24h ($) עבור מטבע נתון. מחזיר 0 בשגיאה."""
+    try:
+        ticker = exchange.fetch_ticker(symbol)
+        return float(ticker.get('quoteVolume') or 0)
+    except Exception as e:
+        print(f"[VOLUME_CHECK] שגיאה בשליפת נפח עבור {symbol}: {e}")
+        return 0.0
+
+
+def calc_risk_position(track: str, equity: float) -> tuple:
+    """
+    מחשב גודל פוזיציה לפי חוק הסיכון 1.5% מהון.
+      max_risk_usd = equity × 1.5%
+      pos_size     = max_risk_usd / sl_pct          (כך ש-pos_size × sl_pct = max_risk)
+      margin       = pos_size / leverage             (מוגבל $5–$50)
+    מחזיר: (margin, pos_size, leverage, sl_pct, tp1_pct, tp_pct)
+    """
+    if track == 'Scalp':
+        sl_pct   = SCALP_TRACK_SL_PCT
+        tp1_pct  = SCALP_TRACK_TP1_PCT
+        tp_pct   = SCALP_TRACK_TP_PCT
+        leverage = SCALP_TRACK_LEVERAGE
+    else:
+        sl_pct   = SWING_TRACK_SL_PCT
+        tp1_pct  = SWING_TRACK_TP1_PCT
+        tp_pct   = SWING_TRACK_TP_PCT
+        leverage = SWING_TRACK_LEVERAGE
+
+    max_risk = equity * (MAX_EQUITY_RISK_PCT / 100)   # e.g. $200 × 1.5% = $3
+    pos_size = max_risk / (sl_pct / 100)              # $3 / 0.02 = $150 (Scalp), $3/0.06=$50 (Swing)
+    margin   = pos_size / leverage
+    margin   = round(max(5.0, min(margin, MARGIN)), 2)  # clamp $5–$50
+    pos_size = round(margin * leverage, 2)
+    return margin, pos_size, leverage, sl_pct, tp1_pct, tp_pct
+
+
+def track_badge(track: str) -> str:
+    """אמוג'י + תווית מסלול לטלגרם."""
+    return "⚡ Scalp" if track == 'Scalp' else "🌊 Swing"
+
+
 def open_demo_trade(symbol, price, reason, df_3h=None,
                     direction='LONG', score=0, atr=0, timeframe='4H', tf_reason='',
                     rsi=None, ema200=None, fng_v=None, sniper_mode=False):
     """
-    פותח עסקת דמו עם SL/TP קבועים.
-    SL=3.5% | TP1=5% (סגירת 50%) | TP=10.5% (RR 1:3) | BE=2%
+    פותח עסקת דמו — 🌊 מסלול Swing.
+    SL=6% | TP1=6% | TP=12% (RR 1:2) | BE=+4% (אחרי מבנה שוק ברור)
+    מינוף 3x | גודל פוזיציה לפי 1.5% סיכון מהון
     timeframe: '4H' / '1H' — גרף הכניסה שנבחר אדפטיבית
     fng_v: ערך FNG שכבר חושב ב-scan (כדי לא לשאול שוב)
     sniper_mode: True → Half-Size Entry (50% מגודל הפוזיציה הרגיל)
     """
-    # ── Sniper Mode: מרג'ין מינימלי ──────────────────────────────────────────
-    effective_margin = MARGIN * SNIPER_MARGIN_MULT if sniper_mode else MARGIN
+    track = 'Swing'
 
-    # בדיקת יתרה — אין לפתוח עסקה אם אין מספיק כסף
+    # ── בדיקת נפח (Swing: מינימום $10M) ────────────────────────────────────
+    vol_usd = fetch_symbol_volume_usd(symbol)
+    if vol_usd > 0 and vol_usd < SWING_TRACK_VOL_MIN:
+        msg_vol = (
+            f"⚠️ *נפח נמוך מדי — {symbol.replace('/USDT','')}*\n"
+            f"נפח 24h: ${vol_usd/1e6:.1f}M | מינימום Swing: ${SWING_TRACK_VOL_MIN/1e6:.0f}M\n"
+            f"_העסקה נדחתה — נזילות לא מספקת_"
+        )
+        print(f"[SWING] נפח נמוך עבור {symbol}: ${vol_usd/1e6:.1f}M < $10M — מדלג")
+        send_msg(msg_vol)
+        return
+
+    # ── FNG + גודל פוזיציה לפי 1.5% סיכון ─────────────────────────────────
+    if fng_v is None:
+        fng_v, _, _ = sentiment_check("open_trade")
+
+    equity = _get_equity()
+    effective_margin, pos_size, leverage, sl_pct, tp1_pct, tp_pct = calc_risk_position('Swing', equity)
+
+    # Sniper Mode: חצי גודל
+    if sniper_mode:
+        effective_margin = round(effective_margin * SNIPER_MARGIN_MULT, 2)
+        pos_size         = round(effective_margin * leverage, 2)
+
+    # Sentiment adjustments
+    if fng_v >= GREED_THRESHOLD and not sniper_mode:
+        pos_size         = round(pos_size * 0.60)
+        effective_margin = round(pos_size / leverage, 2)
+        print(f"  [SENTIMENT] GREED ({fng_v}) → Swing פוזיציה צומצמה ל-${pos_size}")
+    if fng_v <= FEAR_THRESHOLD:
+        sl_pct = min(sl_pct + FEAR_EXTRA_SL_PCT, 8.0)   # בטווח 5-8%
+        print(f"  [SENTIMENT] FEAR ({fng_v}) → Swing SL מורחב ל-{sl_pct}%")
+
+    # ── בדיקת יתרה ─────────────────────────────────────────────────────────
     if wallet.get('balance', STARTING_BALANCE) < effective_margin:
         print(f"WALLET: insufficient balance (${wallet.get('balance', 0):.2f}) — skipping {symbol}")
         send_msg(f"⚠️ *יתרה נמוכה* — אין מספיק להפקדת מרג'ין\nנדרש: ${effective_margin:.0f} | יש: ${wallet.get('balance', 0):.2f}")
         return
 
-    # ── Sentiment Rules: position size & SL ──────────────────────────────────
-    if fng_v is None:
-        fng_v, _, _ = sentiment_check("open_trade")
-    pos_size = POSITION_SIZE * SNIPER_MARGIN_MULT if sniper_mode else POSITION_SIZE   # Sniper=Half-Size
-    sl_pct   = SL_PCT_FIXED    # 3.5%
-    if fng_v >= GREED_THRESHOLD and not sniper_mode:
-        pos_size = round(POSITION_SIZE * 0.60)   # ×60% — Greed Filter (לא חל על Sniper)
-        print(f"  [SENTIMENT] GREED ({fng_v}) → פוזיציה צומצמה ל-${pos_size}")
-    if fng_v <= FEAR_THRESHOLD:
-        sl_pct = SL_PCT_FIXED + FEAR_EXTRA_SL_PCT   # +1% — Fear buffer
-        print(f"  [SENTIMENT] FEAR ({fng_v}) → SL מורחב ל-{sl_pct}% (+{FEAR_EXTRA_SL_PCT}%)")
-
-    # ── SL/TP קבועים לגרף 4H ──
-    tp_pct  = TP_PCT_FIXED    # 10.5%
-    tp1_pct = TP1_PCT_FIXED   # 5.0%
-    be_pct  = BE_BUFFER_PCT   # 2.0%
+    # ── SL / TP / BE — Swing Track ─────────────────────────────────────────
+    be_pct = SWING_TRACK_BE_PCT   # 4% — אחרי מבנה שוק ברור
 
     sl_dist  = price * sl_pct  / 100
     tp_dist  = price * tp_pct  / 100
@@ -1826,16 +1911,22 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         be_price  = price - be_dist
         tp1_price = price - tp1_dist
 
-    # ── P&L (using pos_size for sentiment-adjusted positions) ──
-    tp1_pnl    = round(pos_size / 2 * tp1_pct / 100, 2)
-    tp2_pnl    = round(pos_size / 2 * tp_pct  / 100, 2)
-    max_profit = round(tp1_pnl + tp2_pnl, 2)
-    sl_loss    = round(pos_size * sl_pct / 100, 2)
-
-    # ── Expected P&L at TP / SL — formula: abs(target-entry)/entry * pos_size ──
+    # ── בדיקת RR מינימלי 1:2 ───────────────────────────────────────────────
     est_profit_tp = round(abs(tp_price  - price) / price * pos_size, 2)
     est_loss_sl   = round(abs(sl_price  - price) / price * pos_size, 2)
     rr_ratio      = round(est_profit_tp / est_loss_sl, 2) if est_loss_sl > 0 else 0
+
+    if rr_ratio < MIN_RR_RATIO:
+        print(f"[SWING] RR={rr_ratio:.2f} < {MIN_RR_RATIO} — {symbol} נדחה")
+        send_msg(
+            f"⚠️ *RR נמוך — {symbol.replace('/USDT','')}*\n"
+            f"RR: {rr_ratio:.2f} | מינימום: {MIN_RR_RATIO:.0f}\n"
+            f"_העסקה נדחתה — יחס סיכון/תשואה לא מספיק_"
+        )
+        return
+
+    max_risk_usd = round(pos_size * sl_pct / 100, 2)
+    risk_pct_eq  = round(max_risk_usd / equity * 100, 2)
 
     trade = {
         'symbol':          symbol,
@@ -1860,10 +1951,14 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         'ema200':          round(ema200, 6) if ema200 is not None else None,
         'score_breakdown': reason,
         'opened_at':       now_il().isoformat(timespec='seconds'),
-        'pos_size':        pos_size,        # נשמר לחישובי P&L בניהול עסקאות
-        'margin':          effective_margin, # מרג'ין בפועל ($50 רגיל / $25 Sniper)
-        'fng_at_entry':    fng_v,           # FNG בזמן הכניסה
-        'sniper':          sniper_mode,     # האם נפתח כ-Sniper Exception
+        'pos_size':        pos_size,
+        'margin':          effective_margin,
+        'leverage':        leverage,
+        'fng_at_entry':    fng_v,
+        'sniper':          sniper_mode,
+        'track':           track,            # 🌊 Swing
+        'vol_usd':         round(vol_usd),
+        'slippage_pct':    0.0,              # Demo: ביצוע בדיוק במחיר הסריקה
     }
     place_order(trade, effective_margin)
 
@@ -1872,35 +1967,35 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     emoji      = "🟢" if direction == 'LONG' else "🔴"
     score_bar  = "█" * (score // 10) + "░" * (10 - score // 10)
 
-    # הסבר על הטיים-פריים שנבחר
     if not tf_reason:
         tf_reason = f"טרנד חזק ב-{timeframe}" if timeframe == '4H' else f"פריצה ב-{timeframe} (4H חלש)"
     tf_icon = "📊" if timeframe == '4H' else ("⏱️" if timeframe == '1H' else "⚡")
 
     msg  = f"{dir_header}\n\n"
     msg += f"{'─' * 26}\n"
-    msg += f"{emoji} *Professional Scoring System*\n"
-    msg += f"מטבע: `{symbol}`\n"
+    msg += f"🌊 *מסלול Swing — סבלנות ומבנה שוק*\n"
+    msg += f"{emoji} מטבע: `{symbol}` | נפח: ${vol_usd/1e6:.0f}M\n"
     msg += f"{tf_icon} גרף: *{timeframe}* — _{tf_reason}_\n"
     msg += f"פירוט: _{reason}_\n\n"
     msg += f"*ניקוד איתות: {score}/100*\n"
     msg += f"`{score_bar}` {'🟢 STRONG' if score >= 95 else '🟡 GOOD'}\n\n"
     msg += f"מחיר כניסה: `{price:.6g}`\n"
-    msg += f"🛑 SL  ({'-' if direction=='LONG' else '+'}{sl_pct}%): `{sl_price:.6g}` ← 3.5% קבוע\n"
-    msg += f"🔒 BE  ({'+' if direction=='LONG' else '-'}{be_pct}%): `{be_price:.6g}` ← SL→כניסה\n"
+    msg += f"🛑 SL  ({'-' if direction=='LONG' else '+'}{sl_pct}%): `{sl_price:.6g}` ← Swing רחב\n"
+    msg += f"🔒 BE  ({'+' if direction=='LONG' else '-'}{be_pct}%): `{be_price:.6g}` ← אחרי מבנה ברור\n"
     msg += f"🎯 TP1 ({'+' if direction=='LONG' else '-'}{tp1_pct}%): `{tp1_price:.6g}` ← סגירת 50%\n"
-    msg += f"🎯 TP  ({'+' if direction=='LONG' else '-'}{tp_pct}%): `{tp_price:.6g}` ← RR 1:3\n"
-    msg += f"📍 Trailing: {TRAIL_PCT}% מהשיא (מיידי עם הרווח הראשון)\n\n"
+    msg += f"🎯 TP  ({'+' if direction=='LONG' else '-'}{tp_pct}%): `{tp_price:.6g}` ← RR 1:2\n"
+    msg += f"📍 Trailing: {TRAIL_PCT}% מהשיא (אחרי TP1)\n\n"
     msg += f"{'─' * 26}\n"
-    msg += f"💼 *Leverage: {LEVERAGE}x (Isolated)*\n"
+    msg += f"💼 *Leverage: {leverage}x (Isolated) | מסלול Swing*\n"
     if sniper_mode:
-        msg += f"🎯 *Sniper Entry* — מרג'ין: ${effective_margin:.0f} \\(Half\\-Size\\) · נשלט: ${pos_size:.0f}\n"
+        msg += f"🎯 *Sniper Entry* — מרג'ין: ${effective_margin:.0f} (Half-Size) · נשלט: ${pos_size:.0f}\n"
     else:
         msg += f"💰 בטחון: ${effective_margin:.0f} · נשלט: ${pos_size:.0f}\n"
+    msg += f"🛡️ סיכון: ${max_risk_usd} ({risk_pct_eq:.2f}% מהון ${equity:.0f})\n"
     msg += f"{'─' * 26}\n"
     msg += f"📊 *Expected P&L*\n"
-    msg += f"✅ Est\\. Profit at TP: *+${est_profit_tp}*\n"
-    msg += f"❌ Est\\. Loss at SL:   *\\-${est_loss_sl}*\n"
+    msg += f"✅ Est. Profit at TP: *+${est_profit_tp}*\n"
+    msg += f"❌ Est. Loss at SL:   *-${est_loss_sl}*\n"
     msg += f"⚖️ Risk / Reward: *1 : {rr_ratio}*\n"
     msg += f"{'─' * 26}\n"
     msg += _wallet_opened_summary() + "\n\n"
@@ -1909,7 +2004,7 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     chart_buf = generate_chart(df_3h, symbol, price, sl_price, tp_price, direction) \
                 if df_3h is not None else None
     send_chart_alert(chart_buf, symbol, msg)
-    print(f"Trade opened: {symbol} {direction} @ {price:.6g} | SL={sl_price:.6g} TP={tp_price:.6g} | Score={score}")
+    print(f"[SWING] Trade opened: {symbol} {direction} @ {price:.6g} | SL={sl_pct}% TP={tp_pct}% | {leverage}x | margin=${effective_margin} | Risk=${max_risk_usd} ({risk_pct_eq}%)")
 
 
 def track_trades():
@@ -1939,6 +2034,8 @@ def track_trades():
             direction     = trade.get('direction', 'LONG')
             pos_size      = trade.get('pos_size', POSITION_SIZE)  # per-trade position size
             half          = pos_size / 2                          # חצי פוזיציה
+            tbadge        = track_badge(trade.get('track', 'Swing'))  # ⚡ Scalp / 🌊 Swing
+            t_leverage    = trade.get('leverage', LEVERAGE)
 
             # helpers: "profit direction" — True כאשר המחיר זזה לכיוון הרצוי
             def profit_dir(p):
@@ -1960,9 +2057,15 @@ def track_trades():
             # SCALP PHASE — SL / TP / Time exit
             # ════════════════════════════════════════════
             if trade.get('phase') == 'scalp':
+                scalp_pos   = trade.get('pos_size', SCALP_POS_SIZE)   # גודל מהעסקה
+                scalp_mar   = trade.get('margin',   SCALP_MARGIN)     # מרג'ין מהעסקה
+                scalp_lev   = trade.get('leverage', SCALP_LEVERAGE)
+                scalp_sl_p  = trade.get('sl_pct',   SCALP_SL_PCT)
+                scalp_tp_p  = trade.get('tp_pct',   SCALP_TP_PCT)
+
                 raw_pnl_pct = (current_price - entry) / entry * 100
                 scalp_pnl_pct = raw_pnl_pct if direction == 'LONG' else -raw_pnl_pct
-                scalp_pnl_usd = round(SCALP_POS_SIZE * scalp_pnl_pct / 100, 2)
+                scalp_pnl_usd = round(scalp_pos * scalp_pnl_pct / 100, 2)
 
                 elapsed_min = (time.time() - trade.get('scalp_opened_ts', time.time())) / 60
 
@@ -1972,38 +2075,57 @@ def track_trades():
                            (direction == 'SHORT' and current_price >= trade['sl'])
                 time_exp = elapsed_min >= SCALP_MAX_DURATION_MIN
 
+                # ── Scalp BE: 50% of way to TP1 ──────────────────────────
+                if not trade.get('be_triggered') and trade.get('be_lvl'):
+                    be_reached_s = ((direction == 'LONG' and current_price >= trade['be_lvl']) or
+                                    (direction == 'SHORT' and current_price <= trade['be_lvl']))
+                    if be_reached_s:
+                        trade['sl']          = entry   # SL → Breakeven
+                        trade['be_triggered'] = True
+                        be_trigger_pct = round(scalp_tp_p * SCALP_TRACK_BE_TRIGGER, 2)
+                        print(f"  [SCALP BE] {sym}: SL→BE @ {current_price:.6g} (+{be_trigger_pct}% = 50% to TP1)")
+                        send_msg(
+                            f"🔒 *Scalp BE הופעל — {sym.replace('/USDT','')}*\n"
+                            f"מחיר: `{current_price:.6g}` (+{be_trigger_pct}% — 50% of way to TP1)\n"
+                            f"SL הועבר לכניסה: `{entry:.6g}` | {tbadge}\n"
+                            f"💼 {scalp_lev}x · ההון מוגן!"
+                        )
+
                 if tp_hit_s or sl_hit_s or time_exp:
                     if tp_hit_s:
                         close_reason = 'Scalp-TP'
                         icon  = "✅"
-                        label = f"🎯 TP נגע \\(\\+{SCALP_TP_PCT}%\\)"
+                        label = f"🎯 TP נגע (+{scalp_tp_p}%)"
                         daily_stats['wins'] += 1
                     elif sl_hit_s:
                         close_reason = 'Scalp-SL'
                         icon  = "❌"
-                        label = f"🛑 SL נגע \\(\\-{SCALP_SL_PCT}%\\)"
+                        be_note = " (BE)" if trade.get('be_triggered') else ""
+                        label = f"🛑 SL נגע (-{scalp_sl_p}%){be_note}"
                         daily_stats['losses'] += 1
                     else:
                         close_reason = 'Scalp-Time'
                         icon  = "⏱"
-                        label = f"⏱ פג תוקף \\({elapsed_min:.0f} דקות\\)"
+                        label = f"⏱ פג תוקף ({elapsed_min:.0f} דקות)"
                         if scalp_pnl_usd >= 0:
                             daily_stats['wins'] += 1
                         else:
                             daily_stats['losses'] += 1
 
+                    slip = trade.get('slippage_pct', 0.0)
                     daily_stats['total_pnl'] += scalp_pnl_usd
-                    wallet_credit(scalp_pnl_usd, SCALP_MARGIN)
+                    wallet_credit(scalp_pnl_usd, scalp_mar)
                     _log_closed_trade(trade, close_reason, scalp_pnl_usd, current_price)
                     eq    = _get_equity()
                     emoji = "🟢" if direction == 'LONG' else "🔴"
                     pnl_icon = "📈" if scalp_pnl_usd >= 0 else "📉"
                     send_msg(
                         f"⚡ *Scalp סגור — {sym.replace('/USDT','')} {emoji}*\n"
-                        f"{label}\n\n"
+                        f"{label} | {tbadge}\n\n"
                         f"כניסה: `{entry:.6g}` → יציאה: `{current_price:.6g}`\n"
-                        f"{pnl_icon} *P&L: ${scalp_pnl_usd:+.2f}* \\({scalp_pnl_pct:+.2f}%\\)\n"
-                        f"💼 {SCALP_LEVERAGE}x · ${SCALP_MARGIN:.0f} מרג'ין\n"
+                        f"{pnl_icon} *P&L: ${scalp_pnl_usd:+.2f}* ({scalp_pnl_pct:+.2f}%)\n"
+                        f"💼 {scalp_lev}x · ${scalp_mar:.0f} מרג'ין · ${scalp_pos:.0f} נשלט\n"
+                        f"📊 Slippage: {slip:.2f}% (Demo)\n"
                         f"📊 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance', 0):.2f}`\n"
                         f"{pnl_icon} סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                     )
@@ -2076,8 +2198,10 @@ def track_trades():
                         else:
                             daily_stats['losses'] += 1
 
+                    cliff_mar_t = trade.get('margin', CLIFF_MARGIN)
+                    slip = trade.get('slippage_pct', 0.0)
                     daily_stats['total_pnl'] += cliff_pnl_usd
-                    wallet_credit(cliff_pnl_usd, CLIFF_MARGIN)
+                    wallet_credit(cliff_pnl_usd, cliff_mar_t)
                     _log_closed_trade(trade, close_reason, cliff_pnl_usd, current_price)
                     eq       = _get_equity()
                     emoji_d  = "🟢" if direction == 'LONG' else "🔴"
@@ -2085,10 +2209,11 @@ def track_trades():
                     pnl_icon  = "📈" if cliff_pnl_usd >= 0 else "📉"
                     send_msg(
                         f"⚡ *Velocity {trade_lbl} סגור — {sym.replace('/USDT','')} {emoji_d}*\n"
-                        f"{label}\n\n"
+                        f"{label} | {tbadge}\n\n"
                         f"כניסה: `{entry:.6g}` → יציאה: `{current_price:.6g}`\n"
-                        f"{pnl_icon} *P&L: ${cliff_pnl_usd:+.2f}* \\({cliff_pnl_pct:+.2f}%\\)\n"
-                        f"💼 {CLIFF_LEVERAGE}x · ${CLIFF_MARGIN:.0f} מרג'ין\n"
+                        f"{pnl_icon} *P&L: ${cliff_pnl_usd:+.2f}* ({cliff_pnl_pct:+.2f}%)\n"
+                        f"💼 {CLIFF_LEVERAGE}x · ${cliff_mar_t:.0f} מרג'ין\n"
+                        f"📊 Slippage: {slip:.2f}% (Demo)\n"
                         f"📊 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance', 0):.2f}`\n"
                         f"{pnl_icon} סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                     )
@@ -2141,11 +2266,13 @@ def track_trades():
                     _log_closed_trade(trade, 'Trailing', pnl_usd, current_price)
                     ref = trade['peak_price']
                     eq  = _get_equity()
+                    slip = trade.get('slippage_pct', 0.0)
                     send_msg(
                         f"📍 *Trailing Stop נגע — {sym}*\n"
                         f"{'שיא' if direction=='LONG' else 'שפל'}: `{ref:.6g}` → יציאה: `{current_price:.6g}`\n"
-                        f"{icon} *P&L: {pnl_usd:+.2f}$ ({pnl_pct_r:+.1f}% על מרג'ין)*\n"
-                        f"💼 {LEVERAGE}x Isolated · Trailing {TRAIL_PCT}%\n"
+                        f"{icon} *P&L: {pnl_usd:+.2f}$ ({pnl_pct_r:+.1f}% על מרג'ין)* | {tbadge}\n"
+                        f"💼 {t_leverage}x Isolated · Trailing {TRAIL_PCT}%\n"
+                        f"📊 Slippage: {slip:.2f}% (Demo)\n"
                         f"💼 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance',0):.2f}`\n"
                         f"{icon} סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                     )
@@ -2195,9 +2322,9 @@ def track_trades():
                     daily_stats['total_pnl'] += tp1_pnl
                     send_msg(
                         f"🎯 *TP1 הושג — {sym}!*\n"
-                        f"מחיר: `{current_price:.6g}` | {direction}\n"
-                        f"50% נסגרו · ✅ *Est\\. Profit at TP1: \\+${tp1_pnl}* (\\+{tp1_pct_r}%)\n"
-                        f"💼 {LEVERAGE}x · שאר 50% ($250) בטריילינג 2%\n"
+                        f"מחיר: `{current_price:.6g}` | {direction} | {tbadge}\n"
+                        f"50% נסגרו · ✅ *Profit at TP1: +${tp1_pnl}* (+{tp1_pct_r}%)\n"
+                        f"💼 {t_leverage}x · שאר 50% בטריילינג\n"
                         f"📍 Trailing SL: `{trade['trailing_sl']:.6g}`\n"
                         f"📈 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                     )
@@ -2205,6 +2332,7 @@ def track_trades():
 
                 # 3. SL נגע
                 if sl_hit(current_price):
+                    slip = trade.get('slippage_pct', 0.0)
                     if trade['be_triggered']:
                         daily_stats['losses'] += 1
                         daily_stats['close_reasons']['BE'] += 1
@@ -2215,7 +2343,8 @@ def track_trades():
                             f"🔒 *Break Even — יצאנו ב-{sym}*\n"
                             f"מחיר: `{current_price:.6g}` | כניסה: `{entry:.6g}`\n"
                             f"*ללא הפסד · ההון נשמר*\n"
-                            f"💼 {LEVERAGE}x Isolated\n"
+                            f"💼 {t_leverage}x Isolated | {tbadge}\n"
+                            f"📊 Slippage: {slip:.2f}% (Demo)\n"
                             f"💼 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance',0):.2f}`\n"
                             f"📊 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                         )
@@ -2232,8 +2361,9 @@ def track_trades():
                         send_msg(
                             f"🛑 *SL נגע — {sym}*\n"
                             f"כניסה: `{entry:.6g}` → SL: `{trade['sl']:.6g}`\n"
-                            f"❌ *Est\\. Loss at SL: \\-${loss}* ({loss_pct}% על מרג'ין)\n"
-                            f"💼 {LEVERAGE}x Isolated · בטחון: ${MARGIN}\n"
+                            f"❌ *Loss: -${loss}* ({loss_pct}% על מרג'ין)\n"
+                            f"💼 {t_leverage}x Isolated | {tbadge}\n"
+                            f"📊 Slippage: {slip:.2f}% (Demo)\n"
                             f"💼 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance',0):.2f}`\n"
                             f"📉 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                         )
@@ -2268,12 +2398,14 @@ def track_trades():
                     _log_closed_trade(trade, 'TP', total, current_price)
                     eq = _get_equity()
                     est_tp_full = round(abs(current_price - entry) / entry * half, 2)
+                    slip = trade.get('slippage_pct', 0.0)
                     send_msg(
                         f"✅ *TP מלא הושג — {sym}!* 🎉\n"
-                        f"מחיר: `{current_price:.6g}` | {direction}\n"
-                        f"שאר 50% נסגרו · ✅ *Est\\. Profit at TP: \\+${est_tp_full}*\n"
-                        f"TP1 \\+ TP סה\"כ: 📈 *\\+${total}*\n"
-                        f"💼 {LEVERAGE}x Isolated\n"
+                        f"מחיר: `{current_price:.6g}` | {direction} | {tbadge}\n"
+                        f"שאר 50% נסגרו · ✅ *Profit at TP: +${est_tp_full}*\n"
+                        f"TP1 + TP סה\"כ: 📈 *+${total}*\n"
+                        f"💼 {t_leverage}x Isolated\n"
+                        f"📊 Slippage: {slip:.2f}% (Demo)\n"
                         f"💼 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance',0):.2f}`\n"
                         f"📈 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                     )
@@ -2300,12 +2432,14 @@ def track_trades():
                     _log_closed_trade(trade, 'TP1+Trail', total, current_price)
                     eq = _get_equity()
                     ref_price = trade['peak_price']
+                    slip = trade.get('slippage_pct', 0.0)
                     send_msg(
                         f"📍 *Trailing Stop נגע — {sym}*\n"
                         f"{'שיא' if direction=='LONG' else 'שפל'}: `{ref_price:.6g}` → יציאה: `{current_price:.6g}`\n"
-                        f"50% נסגרו: {icon} *{half_pnl:+}$*\n"
+                        f"50% נסגרו: {icon} *{half_pnl:+}$* | {tbadge}\n"
                         f"TP1 + Trailing סה\"כ: {icon} *{total:+}$*\n"
-                        f"💼 {LEVERAGE}x Isolated\n"
+                        f"💼 {t_leverage}x Isolated\n"
+                        f"📊 Slippage: {slip:.2f}% (Demo)\n"
                         f"💼 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance',0):.2f}`\n"
                         f"{icon} סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                     )
@@ -4325,10 +4459,13 @@ def _check_quick_long(symbol: str, price: float):
 
 def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
     """
-    פותח עסקת Scalp — מינוף 5x, מרג'ין $15, SL 1.5%, TP 3%, תוקף 60 דקות.
-    עוקפת את Kill-Switch כי היא Mean Reversion ולא trend-following.
+    פותח עסקת Scalp — ⚡ מסלול Scalp.
+    SL=2% | TP1=4% (RR 1:2) | TP=8% (RR 1:4) | BE=50% of way to TP1
+    גודל פוזיציה לפי 1.5% סיכון מהון | Market Order | תוקף 60 דקות.
     """
     global active_trades
+
+    track = 'Scalp'
 
     with trades_lock:
         if any(t['symbol'] == symbol for t in active_trades):
@@ -4338,28 +4475,60 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
     if scalp_count >= MAX_SCALP_TRADES:
         print(f"SCALP: max scalp trades ({MAX_SCALP_TRADES}) reached — skip {symbol}")
         return
-    if wallet.get('balance', 0) < SCALP_MARGIN:
+
+    # ── בדיקת נפח (Scalp: מינימום $50M) ─────────────────────────────────────
+    vol_usd = fetch_symbol_volume_usd(symbol)
+    if vol_usd > 0 and vol_usd < SCALP_TRACK_VOL_MIN:
+        print(f"[SCALP] נפח נמוך עבור {symbol}: ${vol_usd/1e6:.1f}M < $50M — מדלג")
+        send_msg(
+            f"⚠️ *נפח נמוך — {symbol.replace('/USDT','')}*\n"
+            f"נפח 24h: ${vol_usd/1e6:.1f}M | מינימום Scalp: ${SCALP_TRACK_VOL_MIN/1e6:.0f}M\n"
+            f"_עסקת Scalp נדחתה — נזילות לא מספקת_"
+        )
+        return
+
+    # ── גודל פוזיציה לפי 1.5% סיכון מהון ────────────────────────────────────
+    equity = _get_equity()
+    eff_margin, pos_size, leverage, sl_pct, tp1_pct, tp_pct = calc_risk_position('Scalp', equity)
+
+    if wallet.get('balance', 0) < eff_margin:
         print(f"SCALP: insufficient balance (${wallet.get('balance', 0):.2f}) — skip {symbol}")
         return
 
-    sl_dist = price * SCALP_SL_PCT / 100
-    tp_dist = price * SCALP_TP_PCT / 100
+    # ── מחירי SL / TP1 / TP ──────────────────────────────────────────────────
+    sl_dist  = price * sl_pct  / 100
+    tp1_dist = price * tp1_pct / 100
+    tp_dist  = price * tp_pct  / 100
+
     if direction == 'LONG':
-        sl_price = round(price - sl_dist, 8)
-        tp_price = round(price + tp_dist, 8)
+        sl_price  = round(price - sl_dist,  8)
+        tp1_price = round(price + tp1_dist, 8)
+        tp_price  = round(price + tp_dist,  8)
+        # BE at 50% of the way to TP1
+        be_price  = round(price + tp1_dist * SCALP_TRACK_BE_TRIGGER, 8)
     else:
-        sl_price = round(price + sl_dist, 8)
-        tp_price = round(price - tp_dist, 8)
+        sl_price  = round(price + sl_dist,  8)
+        tp1_price = round(price - tp1_dist, 8)
+        tp_price  = round(price - tp_dist,  8)
+        be_price  = round(price - tp1_dist * SCALP_TRACK_BE_TRIGGER, 8)
+
+    # ── בדיקת RR ─────────────────────────────────────────────────────────────
+    est_profit = round(abs(tp_price  - price) / price * pos_size, 2)
+    est_loss   = round(abs(sl_price  - price) / price * pos_size, 2)
+    rr_ratio   = round(est_profit / est_loss, 2) if est_loss > 0 else 0
+
+    max_risk_usd = round(pos_size * sl_pct / 100, 2)
+    risk_pct_eq  = round(max_risk_usd / equity * 100, 2)
 
     trade = {
         'symbol':          symbol,
         'entry':           price,
         'sl':              sl_price,
         'tp':              tp_price,
-        'tp1':             tp_price,
-        'be_lvl':          tp_price,
-        'sl_pct':          SCALP_SL_PCT,
-        'tp_pct':          SCALP_TP_PCT,
+        'tp1':             tp1_price,
+        'be_lvl':          be_price,    # ← 50% of way to TP1
+        'sl_pct':          sl_pct,
+        'tp_pct':          tp_pct,
         'direction':       direction,
         'phase':           'scalp',
         'be_triggered':    False,
@@ -4374,29 +4543,38 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
         'ema200':          None,
         'score_breakdown': reason,
         'opened_at':       now_il().isoformat(timespec='seconds'),
-        'pos_size':        SCALP_POS_SIZE,
-        'margin':          SCALP_MARGIN,
+        'pos_size':        pos_size,
+        'margin':          eff_margin,
+        'leverage':        leverage,
         'fng_at_entry':    None,
         'sniper':          False,
         'scalp':           True,
         'scalp_opened_ts': time.time(),
+        'track':           track,          # ⚡ Scalp
+        'vol_usd':         round(vol_usd),
+        'slippage_pct':    0.0,            # Demo: Market Order, no slippage simulation
     }
-    place_order(trade, SCALP_MARGIN)
+    place_order(trade, eff_margin)
 
+    be_trigger_pct = round(tp1_pct * SCALP_TRACK_BE_TRIGGER, 2)
     emoji     = "🟢" if direction == 'LONG' else "🔴"
     dir_label = "Quick-Long (Dip Buy)" if direction == 'LONG' else "Scalp-Short (Bubble)"
     send_msg(
         f"⚡ *{dir_label}: {symbol.replace('/USDT', '')} {emoji}*\n"
-        f"_High Volatility Mode — Mean Reversion_\n\n"
-        f"💵 כניסה: `{price:.6g}`\n"
-        f"🛑 SL: `{sl_price:.6g}` (-{SCALP_SL_PCT}%)\n"
-        f"🎯 TP: `{tp_price:.6g}` (+{SCALP_TP_PCT}%)\n"
+        f"_מסלול Scalp — Market Order — Mean Reversion_\n\n"
+        f"💵 כניסה: `{price:.6g}` | נפח: ${vol_usd/1e6:.0f}M\n"
+        f"🛑 SL:  `{sl_price:.6g}` (-{sl_pct}%)\n"
+        f"🔒 BE:  `{be_price:.6g}` (+{be_trigger_pct}% ← 50% to TP1)\n"
+        f"🎯 TP1: `{tp1_price:.6g}` (+{tp1_pct}%)\n"
+        f"🎯 TP:  `{tp_price:.6g}` (+{tp_pct}%) ← RR 1:4\n"
         f"⏱ תוקף: {SCALP_MAX_DURATION_MIN} דקות\n"
-        f"💼 {SCALP_LEVERAGE}x · ${SCALP_MARGIN:.0f} מרג'ין · ${SCALP_POS_SIZE:.0f} נשלט\n\n"
+        f"💼 {leverage}x · ${eff_margin:.0f} מרג'ין · ${pos_size:.0f} נשלט\n"
+        f"🛡️ סיכון: ${max_risk_usd} ({risk_pct_eq:.2f}% מהון)\n"
+        f"⚖️ RR: 1:{rr_ratio}\n\n"
         + _wallet_opened_summary() + "\n\n"
         + f"📋 _{reason}_"
     )
-    print(f"SCALP {direction}: {symbol} @ {price:.6g} | SL={sl_price:.6g} TP={tp_price:.6g} | {reason}")
+    print(f"[SCALP] {direction}: {symbol} @ {price:.6g} | SL={sl_pct}% TP={tp_pct}% BE@{be_trigger_pct}% | {leverage}x margin=${eff_margin} risk=${max_risk_usd} ({risk_pct_eq}%)")
 
 
 def _cliff_detect(symbol: str) -> tuple[bool, str, float, float, bool]:
@@ -4552,6 +4730,8 @@ def open_cliff_trade(symbol: str, price: float, direction: str, move_pct: float,
         'scalp':           False,
         'cliff':           True,
         'cliff_opened_ts': time.time(),
+        'track':           'Scalp',      # ⚡ High-Velocity = מסלול Scalp
+        'slippage_pct':    0.0,
     }
     place_order(trade, CLIFF_MARGIN)
 
