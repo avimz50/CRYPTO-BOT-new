@@ -4064,29 +4064,24 @@ def handle_scan(message):
 
 def start_telegram_polling():
     """
-    Polling הטלגרם:
-    - DEV mode: לא מפעיל polling — Production bot מטפל בפקודות.
-    - PROD mode: infinity_polling עם reconnect אוטומטי לכל שגיאה.
-      ממתין 30 שניות לפני התחלה כדי לאפשר לinstance הישן לסגור.
+    Polling הטלגרם — פועל הן ב-DEV והן ב-PROD.
+    - PROD: ממתין 30 שניות לסיום instance ישן, מנקה webhook, מתחיל infinity_polling.
+    - DEV:  ממתין 10 שניות (קצר יותר), מנסה לפול. אם PROD רץ במקביל → 409 + retry.
+    טיפול ב-409 Conflict: ממתין 30s + מנקה webhook + מנסה שוב (לנצח).
     """
     is_deployed = bool(os.environ.get('REPLIT_DEPLOYMENT', ''))
+    mode_label  = "PROD" if is_deployed else "DEV"
 
-    if not is_deployed:
-        # DEV: לא מפעילים polling — הבוט הפרוס מטפל בפקודות.
-        # send_msg() עובד תמיד (HTTP POST ישיר).
-        print("[DEV] Telegram polling SKIPPED — Production bot handles commands.", flush=True)
-        return
+    wait_sec = 30 if is_deployed else 10
+    print(f"[{mode_label}] Polling — ממתין {wait_sec}s לפני התחלה...", flush=True)
+    time.sleep(wait_sec)
 
-    # PROD: ממתינים 30 שניות לסיום ה-instance הישן
-    print("[PROD] Waiting 30s for old instance to shut down...")
-    time.sleep(30)
-
-    # נקה webhook ו-pending updates
+    # נקה webhook + pending updates
     try:
         bot.delete_webhook(drop_pending_updates=True)
-        print("[PROD] Webhook cleared — starting infinity_polling...")
+        print(f"[{mode_label}] Webhook cleared — starting infinity_polling...", flush=True)
     except Exception as e:
-        print(f"[PROD] delete_webhook error (non-fatal): {e}")
+        print(f"[{mode_label}] delete_webhook error (non-fatal): {e}", flush=True)
 
     while True:
         try:
@@ -4098,14 +4093,17 @@ def start_telegram_polling():
         except Exception as e:
             err_str = str(e)
             if '409' in err_str:
-                print(f"⚠️  [PROD] Telegram 409 — ממתין 30s לסיום instance ישן...")
+                print(f"⚠️  [{mode_label}] Telegram 409 Conflict — ממתין 30s...", flush=True)
                 time.sleep(30)
                 try:
                     bot.delete_webhook(drop_pending_updates=True)
                 except Exception:
                     pass
+            elif '401' in err_str:
+                print(f"❌  [{mode_label}] Telegram 401 Unauthorized — TELEGRAM_TOKEN שגוי?", flush=True)
+                time.sleep(60)
             else:
-                print(f"[PROD] Polling error — restart in 5s: {e}")
+                print(f"[{mode_label}] Polling error — restart in 5s: {e}", flush=True)
                 time.sleep(5)
 
 # --- לולאת מעקב עסקאות — Thread נפרד ---
