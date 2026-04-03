@@ -1493,6 +1493,17 @@ TOP10_SYMBOLS = [
 # Sector-priority coins: get moved to front of candidates list
 SECTOR_PRIORITY_SYMBOLS = {'FET/USDT', 'RENDER/USDT', 'ONDO/USDT'}
 
+# 🏦 Major Coins Watch — מטבעות גדולים במעקב Momentum Breakout
+MAJOR_WATCH_COINS = [
+    'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'XRP/USDT',
+    'SOL/USDT', 'ADA/USDT', 'AVAX/USDT', 'DOGE/USDT',
+]
+MAJOR_WATCH_ICONS = {
+    'BTC': '₿',  'ETH': '🔷', 'BNB': '🟡', 'XRP': '🔵',
+    'SOL': '🌞', 'ADA': '🔶', 'AVAX': '🔺', 'DOGE': '🐕',
+}
+_major_watch_state: dict = {}   # {symbol: {decision, trend_ok, breakout}}
+
 # ── Low-Resource Logging ──────────────────────────────────────────────────────
 # False = only critical events (Entry, Exit, Errors) are printed.
 # True  = verbose per-symbol scoring breakdown (debugging only).
@@ -3959,6 +3970,63 @@ def handle_scanreport(message):
         send_msg(sandbox_msg)
 
 
+@bot.message_handler(commands=['major'])
+def handle_major(message):
+    """
+    /major — סיכום נוכחי של כל 8 המטבעות הגדולים במעקב.
+    מציג מצב (EXECUTE/WAIT/ABORT) + מחיר + RSI + Breakout לכל מטבע.
+    """
+    now_str = now_il().strftime('%H:%M')
+    btc_above_ema = _btc_above_ema20_15m()
+    btc_label     = "✅ מעל EMA20" if btc_above_ema else "⛔ מתחת EMA20"
+
+    lines = []
+    for symbol in MAJOR_WATCH_COINS:
+        try:
+            ticker_name = symbol.replace('/USDT', '')
+            coin_icon   = MAJOR_WATCH_ICONS.get(ticker_name, '🔹')
+            breakout, price_1h, h4_high, rsi = _coin_1h_breakout_above_4h_high(symbol)
+
+            if symbol == 'BTC/USDT':
+                try:
+                    df_btc4h = get_data('BTC/USDT', timeframe='4h', limit=60)
+                    ema50    = ta.ema(df_btc4h['close'], length=50)
+                    trend_ok = float(df_btc4h['close'].iloc[-1]) > float(ema50.iloc[-1]) \
+                               if ema50 is not None else True
+                except Exception:
+                    trend_ok = True
+            else:
+                trend_ok = btc_above_ema
+
+            if not trend_ok:
+                decision = 'ABORT'
+                dec_icon = '🔴'
+            elif breakout:
+                decision = 'EXECUTE'
+                dec_icon = '🟢'
+            else:
+                decision = 'WAIT'
+                dec_icon = '🟡'
+
+            rsi_str = f" | RSI:{rsi}" if rsi is not None else ""
+            bo_str  = f" ✅ Breakout" if breakout else f" ⏳ 4H:{h4_high:.4g}"
+            lines.append(f"{dec_icon} *{coin_icon}{ticker_name}* `${price_1h:.4g}`{rsi_str}{bo_str}")
+
+        except Exception as e:
+            lines.append(f"⚠️ {symbol.replace('/USDT','')} — שגיאה")
+
+    msg = (
+        f"🏦 *Major Coins Watch — {now_str}*\n"
+        f"{'─' * 26}\n"
+        f"₿ BTC 15m EMA20: {btc_label}\n"
+        f"{'─' * 26}\n\n"
+        + "\n".join(lines) +
+        f"\n\n{'─' * 26}\n"
+        f"🟢=EXECUTE | 🟡=WAIT | 🔴=ABORT"
+    )
+    send_msg(msg)
+
+
 @bot.message_handler(commands=['scan'])
 def handle_scan(message):
     """סריקה מיידית — מופעלת ב-Thread נפרד כדי לא לחסום את ה-polling."""
@@ -5606,6 +5674,150 @@ def sol_watch_loop():
             print(f"[SOL Watch] Error: {e}")
 
 
+def major_watch_loop():
+    """
+    Thread — מעקב מטבעות גדולים כל 15 דקות (Momentum Breakout).
+    אותה לוגיקה כמו SOL Watch אבל ל-8 מטבעות גדולים:
+      BTC, ETH, BNB, XRP, SOL, ADA, AVAX, DOGE.
+    שולח התראה רק כשמצב מטבע מסוים משתנה.
+    כשיש EXECUTE: פותח עסקת Swing אוטומטית.
+    """
+    global _major_watch_state
+    INTERVAL = 15 * 60
+
+    last = {sym: {'decision': None, 'trend_ok': None, 'breakout': None}
+            for sym in MAJOR_WATCH_COINS}
+    _major_watch_state = last
+
+    print(f"[Major Watch] Loop started — tracking {len(MAJOR_WATCH_COINS)} coins every 15 min", flush=True)
+
+    while True:
+        time.sleep(INTERVAL)
+        try:
+            btc_above_ema = _btc_above_ema20_15m()   # BTC trend filter (לשאר המטבעות)
+            now_str       = now_il().strftime('%H:%M')
+
+            for symbol in MAJOR_WATCH_COINS:
+                try:
+                    ticker_name = symbol.replace('/USDT', '')
+                    breakout, price_1h, h4_high, rsi = _coin_1h_breakout_above_4h_high(symbol)
+
+                    # BTC — פילטר עצמי (EMA50 4H במקום EMA20 15m)
+                    if symbol == 'BTC/USDT':
+                        try:
+                            df_btc4h = get_data('BTC/USDT', timeframe='4h', limit=60)
+                            ema50    = ta.ema(df_btc4h['close'], length=50)
+                            trend_ok = float(df_btc4h['close'].iloc[-1]) > float(ema50.iloc[-1]) \
+                                       if ema50 is not None else True
+                        except Exception:
+                            trend_ok = True
+                    else:
+                        trend_ok = btc_above_ema
+
+                    # החלטה
+                    if not trend_ok:
+                        decision = 'ABORT'
+                    elif breakout:
+                        decision = 'EXECUTE'
+                    else:
+                        decision = 'WAIT'
+
+                    prev          = last[symbol]
+                    prev_decision = prev['decision']
+                    changes       = []
+
+                    if prev['decision'] is not None and decision != prev['decision']:
+                        changes.append(f"📌 החלטה: `{prev['decision']}` → `{decision}`")
+
+                    if prev['trend_ok'] is not None and trend_ok != prev['trend_ok']:
+                        if trend_ok:
+                            changes.append("🟢 מגמה חיובית — BTC EMA חזר ✅")
+                        else:
+                            changes.append("🔴 מגמה שלילית — BTC מתחת EMA ⛔")
+
+                    if prev['breakout'] is not None and breakout != prev['breakout']:
+                        if breakout:
+                            changes.append(f"🚀 פריצה מעל 4H High\\! `${price_1h:.5g}` > `${h4_high:.5g}` ✅")
+                        else:
+                            changes.append(f"📉 ירד מתחת 4H High \\(`${h4_high:.5g}`\\) ❌")
+
+                    # עדכון מצב
+                    last[symbol]['decision']  = decision
+                    last[symbol]['trend_ok']  = trend_ok
+                    last[symbol]['breakout']  = breakout
+                    last[symbol]['price']     = price_1h
+                    last[symbol]['h4_high']   = h4_high
+                    last[symbol]['rsi']       = rsi
+
+                    if not changes:
+                        if VERBOSE_LOG:
+                            print(f"[Major Watch] {ticker_name}: no change — {decision}")
+                        continue
+
+                    # ── בניית הודעה ────────────────────────────────────────────
+                    dec_emoji      = {'EXECUTE': '🟢 ✅', 'WAIT': '🟡 ⏳', 'ABORT': '🔴 ⛔'}.get(decision, '⏳')
+                    change_lines   = "\n".join(f"  {c}" for c in changes)
+                    coin_icon      = MAJOR_WATCH_ICONS.get(ticker_name, '🔹')
+                    trend_label    = "✅ מעל EMA" if trend_ok else "⛔ מתחת EMA"
+                    breakout_label = (f"✅ פרץ \\(`${price_1h:.5g}` > `${h4_high:.5g}`\\)"
+                                     if breakout
+                                     else f"⏳ ממתין \\(4H High: `${h4_high:.5g}`\\)")
+
+                    msg = (
+                        f"🔔 *{coin_icon} {ticker_name} Watch — שינוי זוהה\\!*\n"
+                        f"⏰ {now_str}\n"
+                        f"{'─' * 26}\n\n"
+                        f"{change_lines}\n\n"
+                        f"💰 מחיר: `${price_1h:.5g}`\n"
+                    )
+                    if rsi is not None:
+                        rsi_tag = "🔥 Overbought" if rsi > 70 else ("❄️ Oversold" if rsi < 30 else "")
+                        msg += f"🔍 RSI 4H: `{rsi}` {rsi_tag}\n"
+                    if symbol != 'BTC/USDT':
+                        msg += f"₿  BTC 15m EMA20: {'✅ מעל' if btc_above_ema else '⛔ מתחת'}\n"
+                    else:
+                        msg += f"₿  BTC EMA50 4H: {trend_label}\n"
+                    msg += (
+                        f"📈 Breakout 1H>4H: {breakout_label}\n\n"
+                        f"🎯 *החלטה: {decision}* {dec_emoji}\n"
+                    )
+                    if decision == 'ABORT':
+                        msg += f"\n_⛔ מגמה שלילית — לא נכנסים_"
+                    elif decision == 'WAIT':
+                        msg += f"\n_⏳ ממתין לפריצה מעל 4H High: `${h4_high:.5g}`_"
+                    else:
+                        msg += f"\n_💡 /major לסיכום כל המטבעות_"
+
+                    send_msg(msg)
+                    print(f"[Major Watch] Alert: {ticker_name} → {decision} | breakout={breakout}")
+
+                    # ── פתיחת עסקה אוטומטית ב-EXECUTE ─────────────────────────
+                    if decision == 'EXECUTE' and prev_decision != 'EXECUTE':
+                        threading.Thread(
+                            target=open_demo_trade,
+                            kwargs=dict(
+                                symbol    = symbol,
+                                direction = 'LONG',
+                                price     = price_1h,
+                                score     = 88,
+                                reason    = f"Major Watch Breakout — 1H > 4H High (${h4_high:.5g})",
+                                df_3h     = None,
+                                atr       = round(price_1h * 0.012, 6),
+                                timeframe = '1H',
+                                tf_reason = f"פריצה מעל 4H High",
+                                rsi       = rsi,
+                                fng_v     = None,
+                            ),
+                            daemon=True,
+                        ).start()
+
+                except Exception as coin_err:
+                    print(f"[Major Watch] Error for {symbol}: {coin_err}")
+
+        except Exception as e:
+            print(f"[Major Watch] Loop error: {e}")
+
+
 def watch_loop():
     """
     Thread נפרד — בודק כל מטבע ב-Watch List כל 15 דקות.
@@ -5828,6 +6040,10 @@ def main():
     # Thread 9 — High-Velocity: נר 5m >2.5% + Vol >4× → LONG/SHORT מיידי, כל 2 דקות
     cliff_hanger_thread = threading.Thread(target=cliff_hanger_loop, daemon=True)
     cliff_hanger_thread.start()
+
+    # Thread 10 — Major Coins Watch: BTC/ETH/BNB/XRP/SOL/ADA/AVAX/DOGE — כל 15 דקות
+    major_watch_thread = threading.Thread(target=major_watch_loop, daemon=True)
+    major_watch_thread.start()
 
     if IS_DEPLOYED:
         send_msg(
