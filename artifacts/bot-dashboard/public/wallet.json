@@ -1,1 +1,1 @@
-{"balance": 200.0, "starting": 200.0, "total_pnl": 0.0, "trades_opened": 0, "equity_history": []}
+{"balance": 171.33, "starting": 200.0, "total_pnl": -9.63, "trades_opened": 2, "equity_history": [{"t": "04/03 18:09", "eq": 200.0}, {"t": "04/05 15:47", "eq": 230.74}, {"t": "04/05 15:47", "eq": 190.37}]}
