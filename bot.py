@@ -1408,7 +1408,7 @@ RSI_VETO_LONG  = 70   # Anti-FOMO: RSI מעל 70 = לא קונים (overbought c
 RSI_VETO_SHORT = 28   # RSI מתחת זה = לא מוכרים (oversold)
 EMA_PROXIMITY_PCT = 2.5  # מחיר חייב להיות תוך 2.5% מ-EMA200 (Anti-Chase)
 BE_BUFFER_PCT  = 1.5  # % רווח להפעלת Trailing Stop (Phase 2)
-TRAIL_PCT      = 1.0  # % Trailing Stop מהשיא — אגרסיבי
+TRAIL_PCT      = 1.5  # % Trailing Stop מהשיא — רווח לנשימה (היה 1.0)
 SL_PCT_FIXED   = 2.5  # % SL קבוע
 TP1_PCT_FIXED  = 3.0  # % TP1 — סגירת 50% ומעבר ל-Breakeven
 TP_PCT_FIXED   = 10.0 # % TP מלא — 50% הנותרים רצים ל-10%
@@ -1442,7 +1442,7 @@ CLIFF_RSI_OVERBOUGHT    = 70.0   # RSI 15m מעל ערך זה = High-Conviction 
 CLIFF_SL_PCT            = 2.5    # Stop Loss — זהה לאסטרטגיה הרגילה
 CLIFF_TP_PCT            = 3.0    # Take Profit (RR 1:1.2)
 CLIFF_BE_TRIGGER_PCT    = 1.5    # ב-1.5% רווח → Trailing Stop פעיל
-CLIFF_TRAIL_PCT         = 1.0    # Trailing Stop — 1% מהשיא/שפל
+CLIFF_TRAIL_PCT         = 1.5    # Trailing Stop — 1.5% מהשיא/שפל (היה 1.0)
 CLIFF_LEVERAGE          = 10
 CLIFF_MARGIN            = 50.0   # $50 מרג'ין לכל עסקה — אחיד עם האסטרטגיה הרגילה
 CLIFF_POS_SIZE          = CLIFF_MARGIN * CLIFF_LEVERAGE  # $500 controlled
@@ -1605,12 +1605,13 @@ def score_symbol(df_3h, df_1h, symbol, direction='LONG'):
     direction='LONG'  → גיינרים, מחפש עלייה
     direction='SHORT' → לוזרים,  מחפש ירידה
 
-    ניקוד:
-      Trend     (30): EMA200 ב-4H (+20) + ב-1H (+10)
-      Momentum  (25): MACD מעל/מתחת Signal (+15) + Histogram מתחזק (+10)
-      RSI       (20): Sweet-spot (+20), Acceptable (+10)
-      BB+Volume (15): מחיר מעל/מתחת MidBB (+10) + Volume ×1.2 (+5)
-      Candles   (10): תבנית נרות יפניים חזקה על 4H (+10), חלשה (+5)
+    ניקוד (v2 — High-Performance):
+      Trend     (25): EMA200 ב-4H (+15) + ב-1H (+10)
+      MACD      (15): Signal Cross (+10) + Histogram (+5)
+      RSI       (10): Sweet-spot (+10), Acceptable (+5)
+      BB        (20): מחיר מעל MidBB (+12) + נגיעה בBand הנכון (+8)
+      Volume    (30): ×1.2 (+10) | ×1.5 (+20) | ×2.0 (+30) | <×1.2 → VETO!
+      Candles    (0): לא נלקחים בחשבון (רעש)
 
     מחזיר: (score: int, breakdown: str, atr: float)
     """
@@ -1689,37 +1690,37 @@ def score_symbol(df_3h, df_1h, symbol, direction='LONG'):
             return 0, f"Wick rejection SHORT (lower wick {c_lower:.4g} > body {c_body:.4g})", atr_v
 
         # ════════════════════════════════
-        # 1. TREND — 30 נקודות
+        # 1. TREND / EMA200 — 25 נקודות
         # ════════════════════════════════
-        t1h  = price > ema200_v  if direction == 'LONG' else price < ema200_v
+        t1h  = price > ema200_v   if direction == 'LONG' else price < ema200_v
         t15m = price > ema200_15v if direction == 'LONG' else price < ema200_15v
 
         t_pts = 0
-        if t1h:        t_pts += 20
-        if t1h and t15m: t_pts += 10
+        if t1h:  t_pts += 15          # EMA200 4H — מגמה ראשית
+        if t15m: t_pts += 10          # EMA200 1H — אישור משני
         score += t_pts
-        parts.append(f"Trend={t_pts}/30")
+        parts.append(f"Trend={t_pts}/25")
         if VERBOSE_LOG:
             print(f"  [{symbol}] {direction} | Trend={t_pts} "
                   f"(4H={'✓' if t1h else '✗'} 1H={'✓' if t15m else '✗'})")
 
         # ════════════════════════════════
-        # 2. MOMENTUM (MACD) — 25 נקודות
+        # 2. MOMENTUM (MACD) — 15 נקודות
         # ════════════════════════════════
         macd_ok = (macd_v > sig_v)  if direction == 'LONG' else (macd_v < sig_v)
         hist_ok = (hist_v > hist_p) if direction == 'LONG' else (hist_v < hist_p)
 
         m_pts = 0
-        if macd_ok: m_pts += 15
-        if hist_ok: m_pts += 10
+        if macd_ok: m_pts += 10
+        if hist_ok: m_pts += 5
         score += m_pts
-        parts.append(f"MACD={m_pts}/25")
+        parts.append(f"MACD={m_pts}/15")
         if VERBOSE_LOG:
             print(f"  [{symbol}] {direction} | MACD={m_pts} "
                   f"(aligned={'✓' if macd_ok else '✗'} hist={'✓' if hist_ok else '✗'})")
 
         # ════════════════════════════════
-        # 3. RSI STRENGTH — 20 נקודות
+        # 3. RSI STRENGTH — 10 נקודות
         # ════════════════════════════════
 
         # וטו קשה — RSI קיצוני = פסילה מוחלטת
@@ -1735,35 +1736,65 @@ def score_symbol(df_3h, df_1h, symbol, direction='LONG'):
             rsi_ideal = 35 <= rsi_v <= 50
             rsi_ok    = 30 <= rsi_v <= 55
 
-        r_pts = 20 if rsi_ideal else (10 if rsi_ok else 0)
+        r_pts = 10 if rsi_ideal else (5 if rsi_ok else 0)
         score += r_pts
-        parts.append(f"RSI={r_pts}/20(={rsi_v:.0f})")
+        parts.append(f"RSI={r_pts}/10(={rsi_v:.0f})")
         if VERBOSE_LOG:
             print(f"  [{symbol}] {direction} | RSI={r_pts} (rsi={rsi_v:.1f})")
 
         # ════════════════════════════════
-        # 4. BOLLINGER + VOLUME — 15 נקודות
+        # 4. BOLLINGER BANDS — 20 נקודות
         # ════════════════════════════════
-        bb_ok  = (price > bb_mid) if direction == 'LONG' else (price < bb_mid)
-        vol_ok = vol_rat >= 1.2
+        # קבל Upper/Lower מ-bbands
+        try:
+            bb_lower_col = next(c for c in bb_df.columns if 'BBL_' in c)
+            bb_upper_col = next(c for c in bb_df.columns if 'BBU_' in c)
+            bb_lower     = bb_df[bb_lower_col].iloc[-1]
+            bb_upper     = bb_df[bb_upper_col].iloc[-1]
+        except Exception:
+            bb_lower = bb_upper = None
+
+        bb_mid_ok = (price > bb_mid) if direction == 'LONG' else (price < bb_mid)
+
+        # "value zone" — מחיר קרוב לBand הנכון (תוך 2% מ-Lower/Upper)
+        bb_band_touch = False
+        if bb_lower is not None and bb_upper is not None and bb_upper != bb_lower:
+            if direction == 'LONG':
+                bb_band_touch = price <= bb_lower * 1.02   # קרוב ל-Lower band
+            else:
+                bb_band_touch = price >= bb_upper * 0.98   # קרוב ל-Upper band
 
         b_pts = 0
-        if bb_ok:  b_pts += 10
-        if vol_ok: b_pts += 5
+        if bb_mid_ok:    b_pts += 12
+        if bb_band_touch: b_pts += 8
         score += b_pts
-        parts.append(f"BB+Vol={b_pts}/15")
+        parts.append(f"BB={b_pts}/20")
         if VERBOSE_LOG:
-            print(f"  [{symbol}] {direction} | BB+Vol={b_pts} "
-                  f"(bb={'✓' if bb_ok else '✗'} vol×{vol_rat:.1f}={'✓' if vol_ok else '✗'})")
+            print(f"  [{symbol}] {direction} | BB={b_pts} "
+                  f"(mid={'✓' if bb_mid_ok else '✗'} band={'✓' if bb_band_touch else '✗'})")
 
-        # ════════════════════════════════
-        # 5. CANDLES (נרות יפניים) — 10 נקודות
-        # ════════════════════════════════
-        c_pts, pattern_name = score_candles(df_3h, direction)
-        score += c_pts
-        parts.append(f"Candles={c_pts}/10({pattern_name})")
+        # ════════════════════════════════════════
+        # 5. VOLUME — 30 נקודות | HARD VETO <×1.2
+        # ════════════════════════════════════════
+        if vol_rat < 1.2:
+            # Volume מתחת לסף מינימום — לא נכנסים!
+            return 0, f"Volume VETO: {vol_rat:.2f}× < 1.2× avg (no real move)", atr_v
+
+        if   vol_rat >= 2.0: v_pts = 30   # ספייק חזק ×2 — אישור מלא
+        elif vol_rat >= 1.5: v_pts = 20   # ספייק טוב ×1.5
+        else:                v_pts = 10   # ספייק מינימלי ×1.2
+
+        score += v_pts
+        parts.append(f"Vol={v_pts}/30(×{vol_rat:.1f})")
         if VERBOSE_LOG:
-            print(f"  [{symbol}] {direction} | Candles={c_pts} ({pattern_name})")
+            print(f"  [{symbol}] {direction} | Volume={v_pts} (×{vol_rat:.2f})")
+
+        # ════════════════════════════════════════
+        # 6. CANDLES — 0 נקודות (מוסרות — רעש)
+        # ════════════════════════════════════════
+        # נרות יפניים על TF נמוך (1m/5m/15m) הוכחו כרועשים.
+        # המערכת מסתמכת על Volume, EMA200 ו-BB כאישור מספק.
+        parts.append("Candles=0/0(filtered)")
 
         # ════════════════════════════════════
         # 6. FEAR & GREED INDEX — ±5 נקודות
