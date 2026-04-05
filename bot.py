@@ -1598,6 +1598,112 @@ def score_candles(df_15m, direction):
         return 0, "error"
 
 
+def detect_flag(df, direction):
+    """
+    זיהוי תבנית דגל — Bull Flag (LONG) / Bear Flag (SHORT).
+
+    שלבים:
+      1. Pole  : עלייה/ירידה ≥3% ב-3–5 נרות עם נפח גבוה
+      2. Flag  : 4–10 נרות התגבשות צרה, נפח יורד, דריפט קל נגד המגמה
+      3. Breakout: שבירת גג/תחתית הדגל בנר האחרון עם נפח ≥1.5× ממוצע
+
+    מחזיר: (is_flag: bool, description: str)
+    """
+    try:
+        if len(df) < 25:
+            return False, "not enough data"
+
+        recent  = df.iloc[-25:].reset_index(drop=True)
+        closes  = recent['close'].values
+        highs   = recent['high'].values
+        lows    = recent['low'].values
+        vols    = recent['volume'].values
+        vol_avg = vols[:-2].mean() if len(vols) > 2 else 1.0
+
+        # ── שלב 1: מציאת העמוד (Pole) ────────────────────────────────
+        best_pole_end     = None
+        best_pole_move    = 0.0
+        best_pole_vol_avg = 0.0
+
+        for pole_len in range(3, 6):           # חלון 3–5 נרות
+            for start in range(0, 15):         # עמדות התחלה ישנות יותר
+                end = start + pole_len
+                if end >= len(recent) - 4:     # חייבים ≥4 נרות לדגל אחר כך
+                    continue
+                start_price = closes[start]
+                end_price   = closes[end - 1]
+                if start_price == 0:
+                    continue
+                pct_move  = (end_price - start_price) / start_price * 100
+                pole_vol  = vols[start:end].mean()
+
+                if direction == 'LONG' and pct_move >= 3.0 and pole_vol > vol_avg * 1.2:
+                    if pct_move > best_pole_move:
+                        best_pole_move    = pct_move
+                        best_pole_end     = end
+                        best_pole_vol_avg = pole_vol
+
+                elif direction == 'SHORT' and pct_move <= -3.0 and pole_vol > vol_avg * 1.2:
+                    if abs(pct_move) > abs(best_pole_move):
+                        best_pole_move    = pct_move
+                        best_pole_end     = end
+                        best_pole_vol_avg = pole_vol
+
+        if best_pole_end is None:
+            return False, "no pole found"
+
+        # ── שלב 2: בדיקת הדגל (Consolidation) ───────────────────────
+        flag_df   = recent.iloc[best_pole_end:-1]   # ללא הנר הנוכחי (עדיין פתוח)
+        flag_len  = len(flag_df)
+
+        if flag_len < 4 or flag_len > 10:
+            return False, f"flag length {flag_len} not in 4–10 range"
+
+        flag_high  = flag_df['high'].max()
+        flag_low   = flag_df['low'].min()
+        flag_range = flag_high - flag_low
+
+        # טווח הדגל חייב להיות צר — פחות מ-60% מגודל העמוד
+        pole_price_start = closes[best_pole_end - (int(best_pole_move / abs(best_pole_move)) > 0 and 1 or 1)]
+        pole_range       = abs(closes[best_pole_end - 1] - closes[max(0, best_pole_end - 5)])
+        if pole_range > 0 and flag_range > pole_range * 0.6:
+            return False, f"flag too wide ({flag_range:.4g} > 60% of pole {pole_range:.4g})"
+
+        # נפח בדגל חייב לרדת ביחס לעמוד
+        flag_vol_avg = flag_df['volume'].mean()
+        if flag_vol_avg >= best_pole_vol_avg * 0.85:
+            return False, f"volume not declining in flag ({flag_vol_avg:.0f} vs pole {best_pole_vol_avg:.0f})"
+
+        # דריפט קל נגד המגמה (לא יותר מ-2% בכיוון שלנו)
+        flag_drift = (flag_df['close'].iloc[-1] - flag_df['close'].iloc[0]) / flag_df['close'].iloc[0] * 100
+        if direction == 'LONG'  and flag_drift >  2.0:
+            return False, f"flag drifting up {flag_drift:.1f}% (should be flat/down)"
+        if direction == 'SHORT' and flag_drift < -2.0:
+            return False, f"flag drifting down {flag_drift:.1f}% (should be flat/up)"
+
+        # ── שלב 3: Breakout ──────────────────────────────────────────
+        bo_candle = recent.iloc[-2]             # הנר הסגור האחרון
+        bo_vol    = bo_candle['volume']
+
+        if direction == 'LONG':
+            breakout_ok = bo_candle['close'] > flag_high
+        else:
+            breakout_ok = bo_candle['close'] < flag_low
+
+        if not breakout_ok:
+            return False, f"no breakout (high={flag_high:.4g} low={flag_low:.4g})"
+
+        if vol_avg > 0 and bo_vol < vol_avg * 1.5:
+            return False, f"breakout vol weak ({bo_vol/vol_avg:.2f}× < 1.5×)"
+
+        lbl = "Bull" if direction == 'LONG' else "Bear"
+        return True, (f"{lbl} Flag ✓ Pole{best_pole_move:+.1f}% "
+                      f"| Flag {flag_len}c | BO×{bo_vol/vol_avg:.1f}")
+
+    except Exception as e:
+        return False, f"flag error: {str(e)[:50]}"
+
+
 def score_symbol(df_3h, df_1h, symbol, direction='LONG'):
     """
     מערכת ניקוד מקצועית 0–100 נקודות.
@@ -1796,8 +1902,23 @@ def score_symbol(df_3h, df_1h, symbol, direction='LONG'):
         # המערכת מסתמכת על Volume, EMA200 ו-BB כאישור מספק.
         parts.append("Candles=0/0(filtered)")
 
+        # ════════════════════════════════════════
+        # 7. FLAG PATTERN BONUS — +15 נקודות
+        # ════════════════════════════════════════
+        # בדיקה על 1H DataFrame (df_1h) — TF מהימן לתבניות דגל
+        is_flag, flag_desc = detect_flag(df_1h, direction)
+        if is_flag:
+            score += 15
+            parts.append(f"Flag=+15({flag_desc})")
+            if VERBOSE_LOG:
+                print(f"  [{symbol}] {direction} | FLAG DETECTED: {flag_desc}")
+        else:
+            parts.append(f"Flag=0(no:{flag_desc[:30]})")
+            if VERBOSE_LOG:
+                print(f"  [{symbol}] {direction} | no flag: {flag_desc}")
+
         # ════════════════════════════════════
-        # 6. FEAR & GREED INDEX — ±5 נקודות
+        # 8. FEAR & GREED INDEX — ±5 נקודות
         # ════════════════════════════════════
         fng_v, fng_lbl = get_fear_greed()
         if direction == 'LONG':
