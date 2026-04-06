@@ -1,6 +1,6 @@
 {
-  "scan_time": "2026-04-06T20:23:18+03:00",
-  "total_scanned": 32,
+  "scan_time": "2026-04-06T21:34:47+03:00",
+  "total_scanned": 31,
   "signals_found": 0,
   "active_trades_count": 1,
   "max_trades": 3,
@@ -8,15 +8,26 @@
   "btc_regime": "BULL",
   "fng_value": 13,
   "fng_label": "Extreme Fear",
-  "market_sentiment_factor": "Fear & Greed=13 (Extreme Fear) — Kill-Switch הפעיל: כל הסריקות בוטלו",
+  "market_sentiment_factor": "Fear & Greed=13 (Extreme Fear) — ⚡ BTC BULL Compass: Kill-Switch מבוטל! סורק בחופשיות",
   "rejected_coins": [
     {
       "symbol": "PEPE/USDT",
       "direction": "LONG",
       "best_score": 92,
-      "reason": "Fear Filter: RSI=56.3 ≥ 30 (ב-Sentiment FEAR נדרש RSI<30)",
+      "reason": "Claude NO-GO: The combination of the Pepe meme coin and the Extreme Fear m",
       "scores": {
         "4H": 92,
+        "1H": 0,
+        "15m": 0
+      }
+    },
+    {
+      "symbol": "KITE/USDT",
+      "direction": "LONG",
+      "best_score": 82,
+      "reason": "Claude NO-GO: The market context is in extreme fear with a neutral Bitcoin",
+      "scores": {
+        "4H": 82,
         "1H": 0,
         "15m": 0
       }
@@ -25,7 +36,7 @@
       "symbol": "RIVER/USDT",
       "direction": "LONG",
       "best_score": 72,
-      "reason": "Fear Filter: RSI=51.2 ≥ 30 (ב-Sentiment FEAR נדרש RSI<30)",
+      "reason": "Claude NO-GO: The market context is bearish with extreme fear, and the tec",
       "scores": {
         "4H": 72,
         "1H": 0,
@@ -33,111 +44,100 @@
       }
     },
     {
-      "symbol": "KITE/USDT",
+      "symbol": "SUI/USDT",
       "direction": "LONG",
       "best_score": 72,
-      "reason": "Fear Filter: RSI=55.1 ≥ 30 (ב-Sentiment FEAR נדרש RSI<30)",
+      "reason": "Claude NO-GO: While the technical analysis signals are generally positive,",
       "scores": {
-        "4H": 72,
+        "4H": 0,
+        "1H": 72,
+        "15m": 0
+      }
+    },
+    {
+      "symbol": "PRL/USDT",
+      "direction": "LONG",
+      "best_score": 68,
+      "reason": "Claude NO-GO: The signal score of 68/100 is below the required 75/100 thre",
+      "scores": {
+        "4H": 0,
         "1H": 0,
-        "15m": 0
-      }
-    },
-    {
-      "symbol": "APR/USDT",
-      "direction": "LONG",
-      "best_score": 70,
-      "reason": "Fear Filter: RSI=55.0 ≥ 30 (ב-Sentiment FEAR נדרש RSI<30)",
-      "scores": {
-        "4H": 0,
-        "1H": 70,
-        "15m": 0
-      }
-    },
-    {
-      "symbol": "AVAX/USDT",
-      "direction": "LONG",
-      "best_score": 70,
-      "reason": "Fear Filter: RSI=54.6 ≥ 30 (ב-Sentiment FEAR נדרש RSI<30)",
-      "scores": {
-        "4H": 0,
-        "1H": 70,
-        "15m": 0
+        "15m": 68
       }
     }
   ],
   "system_message": "אף מטבע לא הגיע לציון 60/100. הטוב ביותר: PEPE/USDT עם 92/100",
-  "scan_duration_s": 7.5,
+  "scan_duration_s": 17.4,
   "bubble_watch": [
     {
       "symbol": "TRU/USDT",
-      "change_pct": 112.3,
+      "change_pct": 60.71,
       "direction": "LONG",
-      "price": 0.00949,
-      "volume_usd": 1930308
+      "price": 0.00945,
+      "volume_usd": 1928204
     },
     {
       "symbol": "APR/USDT",
-      "change_pct": 30.9,
+      "change_pct": 28.74,
       "direction": "LONG",
-      "price": 0.22197,
-      "volume_usd": 6206386
+      "price": 0.21687,
+      "volume_usd": 6217499
     },
     {
       "symbol": "RLS/USDT",
-      "change_pct": -29.54,
-      "direction": "SHORT",
-      "price": 0.00365,
-      "volume_usd": 2002317
-    },
-    {
-      "symbol": "LAB/USDT",
-      "change_pct": 22.95,
-      "direction": "LONG",
-      "price": 0.29466,
-      "volume_usd": 1633340
-    },
-    {
-      "symbol": "PRL/USDT",
-      "change_pct": 19.91,
-      "direction": "LONG",
-      "price": 0.2015,
-      "volume_usd": 1911504
-    },
-    {
-      "symbol": "SOLV/USDT",
-      "change_pct": -16.23,
+      "change_pct": -26.96,
       "direction": "SHORT",
       "price": 0.00382,
-      "volume_usd": 11433180
+      "volume_usd": 2020582
     },
     {
       "symbol": "STO/USDT",
-      "change_pct": -16.15,
+      "change_pct": -18.15,
       "direction": "SHORT",
-      "price": 0.15066,
-      "volume_usd": 12952969
+      "price": 0.14597,
+      "volume_usd": 12564028
     },
     {
-      "symbol": "JCT/USDT",
-      "change_pct": -12.71,
-      "direction": "SHORT",
-      "price": 0.003296,
-      "volume_usd": 2483739
+      "symbol": "LAB/USDT",
+      "change_pct": 14.95,
+      "direction": "LONG",
+      "price": 0.28439,
+      "volume_usd": 1598493
+    },
+    {
+      "symbol": "TRIA/USDT",
+      "change_pct": 14.78,
+      "direction": "LONG",
+      "price": 0.027322,
+      "volume_usd": 2447227
+    },
+    {
+      "symbol": "RIVER/USDT",
+      "change_pct": 14.71,
+      "direction": "LONG",
+      "price": 12.7133,
+      "volume_usd": 9968187
     },
     {
       "symbol": "MEZO/USDT",
-      "change_pct": -11.49,
+      "change_pct": -14.67,
       "direction": "SHORT",
-      "price": 0.04323,
-      "volume_usd": 36835390
+      "price": 0.04131,
+      "volume_usd": 26747317
     },
     {
-      "symbol": "CYS/USDT",
-      "change_pct": -11.41,
+      "symbol": "JCT/USDT",
+      "change_pct": -12.72,
       "direction": "SHORT",
-      "price": 0.21713,
-      "volume_usd": 1019821
+      "price": 0.0033,
+      "volume_usd": 2444194
+    },
+    {
+      "symbol": "SOLV/USDT",
+      "change_pct": -12.22,
+      "direction": "SHORT",
+      "price": 0.00388,
+      "volume_usd": 11263041
     }
   ],
   "sandbox_analysis": []

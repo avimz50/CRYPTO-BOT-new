@@ -293,8 +293,10 @@ def check_sector_concentration(symbol: str, direction: str) -> tuple[bool, str]:
 
 
 # ═══════════════════════════════════════════════════════════════
-# Claude AI Final Filter — GO / NO-GO per signal
+# Claude AI Risk Advisor — ADVISOR MODE (לא חוסם עסקאות)
 # ═══════════════════════════════════════════════════════════════
+# Claude Filter Disabled as Judge — Technical Hunter Mode Active.
+# Claude מספק הערת סיכון בלבד. ציון ≥ 60 + BTC BULL = כניסה חובה.
 
 def claude_filter(symbol: str, direction: str, score: int, breakdown: str,
                   price: float, timeframe: str, btc_regime: str,
@@ -306,78 +308,59 @@ def claude_filter(symbol: str, direction: str, score: int, breakdown: str,
                   change_24h: float | None = None,
                   daily_pnl: float = 0.0) -> tuple[bool, str]:
     """
-    מסנן סופי מוסדי: שולח נתוני האיתות ל-Claude 3 Haiku.
-    מחזיר (go: bool, reason: str).
-    breakdown הוא STRING (פלט של score_symbol).
-    אם המפתח לא מוגדר / שגיאת API → GO כברירת מחדל (לא חוסם עסקאות).
+    ADVISOR MODE: Claude אינו חוסם עסקאות. תמיד מחזיר GO=True.
+    Claude מספק הערת סיכון בלבד — נרשמת בלוג ובטלגרם כ-info.
+    ציון טכני ≥ MIN_SCORE + BTC Regime = החלטה הסופית.
     """
     api_key = os.environ.get('ANTHROPIC_API_KEY', '')
     if not api_key:
-        print(f"  [Claude] ANTHROPIC_API_KEY לא מוגדר — דילוג על פילטר")
-        return True, "Claude filter skipped (no API key)"
+        return True, "Advisor skipped (no API key)"
 
     try:
         import anthropic as _anthropic
 
-        # breakdown הוא string מ-score_symbol — משתמשים ישירות
         breakdown_str = str(breakdown) if breakdown else "N/A"
-
-        # RSI context בכל הטיים-פריימים
         rsi_parts = []
         if rsi_4h  is not None: rsi_parts.append(f"4H={rsi_4h:.1f}")
         if rsi_1h  is not None: rsi_parts.append(f"1H={rsi_1h:.1f}")
         if rsi_15m is not None: rsi_parts.append(f"15m={rsi_15m:.1f}")
         rsi_str = "  |  ".join(rsi_parts) if rsi_parts else "N/A"
-
         vol_str = f"{volume_ratio:.2f}× avg" if volume_ratio is not None else "N/A"
         chg_str = f"{change_24h:+.2f}%" if change_24h is not None else "N/A"
 
         prompt = (
-            f"You are a senior crypto quant risk validator at a professional trading desk. "
-            f"Make a strict GO/NO-GO decision on this trade signal.\n\n"
+            f"You are a crypto risk ADVISOR (NOT a gatekeeper). "
+            f"The trade WILL execute regardless of your opinion — the technical score already approved it. "
+            f"Your job: provide ONE concise risk note for the log.\n\n"
             f"=== SIGNAL ===\n"
             f"Symbol: {symbol}  |  Direction: {direction}  |  Entry TF: {timeframe}\n"
-            f"Score: {score}/100  |  Entry Price: {price:.6g}\n\n"
-            f"=== MARKET CONTEXT ===\n"
-            f"BTC Regime: {btc_regime}\n"
-            f"Fear & Greed Index: {fng_v} ({fng_lbl})\n"
-            f"24h Price Change: {chg_str}\n"
-            f"Bot P&L today: ${daily_pnl:.2f}  (circuit breaker at -$30)\n\n"
-            f"=== TECHNICAL DATA ===\n"
+            f"Technical Score: {score}/100 (threshold: 60) — APPROVED\n"
+            f"BTC Regime: {btc_regime} — {'LONG entries enabled' if btc_regime == 'BULL' else 'SHORT entries enabled'}\n\n"
+            f"=== MARKET DATA ===\n"
+            f"Fear & Greed: {fng_v} ({fng_lbl}) — informational only, does NOT block trade\n"
             f"Multi-TF RSI: {rsi_str}\n"
             f"Volume vs 10-bar avg: {vol_str}\n"
+            f"24h Change: {chg_str}\n"
             f"Score Breakdown: {breakdown_str}\n\n"
-            f"=== HARD REJECTION RULES ===\n"
-            f"- Reject if any RSI > 72 on a LONG (overbought confirmation)\n"
-            f"- Reject if any RSI < 28 on a SHORT (oversold confirmation)\n"
-            f"- Reject if 24h change > 15% (chasing a pump/dump)\n"
-            f"- Reject if volume < 0.8× avg (no real participation)\n\n"
-            f"=== RISK PARAMETERS ===\n"
-            f"$500 notional | $50 margin | 10× leverage\n"
-            f"SL: 3.5% | TP1: 5.0% (50% close) | TP Full: 10.5% (RR 1:3)\n\n"
-            f"Respond with EXACTLY one line: 'GO: <1 sentence reason>' or 'NO-GO: <1 sentence reason>'"
+            f"Respond with EXACTLY one line: 'RISK NOTE: <1 concise sentence about the main risk>'"
         )
 
         client = _anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
             model="claude-3-haiku-20240307",
-            max_tokens=100,
+            max_tokens=80,
             messages=[{"role": "user", "content": prompt}]
         )
 
         raw = response.content[0].text.strip()
-        print(f"  [Claude] {symbol} {direction}: {raw}")
-
-        if raw.upper().startswith("GO"):
-            reason = raw.split(":", 1)[1].strip() if ":" in raw else raw
-            return True, reason
-        else:
-            reason = raw.split(":", 1)[1].strip() if ":" in raw else raw
-            return False, reason
+        note = raw.replace("RISK NOTE:", "").strip() if "RISK NOTE:" in raw.upper() else raw
+        print(f"  [Advisor] 📝 {symbol}: {note}")
+        # תמיד GO — Claude הוא יועץ בלבד
+        return True, f"Advisor note: {note}"
 
     except Exception as e:
-        print(f"  [Claude] שגיאה: {e} — ממשיך ללא פילטר (GO)")
-        return True, f"Claude error (fallback GO): {str(e)[:60]}"
+        print(f"  [Advisor] שגיאה: {e} — GO")
+        return True, f"Advisor error (GO): {str(e)[:50]}"
 
 
 def sniper_claude_check(symbol: str, score: int, direction: str,
@@ -4578,8 +4561,10 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
 
                 _change_24h = candidate.get('change', None)
 
-                # ── Claude AI Final Filter ───────────────────────────────────────
-                claude_go, claude_reason = claude_filter(
+                # ── Claude Risk Advisor (ADVISOR MODE — אינו חוסם) ──────────────
+                # Claude Filter Disabled as Judge — Technical Hunter Mode Active.
+                # ציון ≥ MIN_SCORE + BTC Regime = כניסה. Claude = הערה בלבד.
+                _, claude_note = claude_filter(
                     symbol=symbol, direction=direction, score=score,
                     breakdown=breakdown, price=price, timeframe=chosen_tf,
                     btc_regime=btc_regime, fng_v=fng_v_scan, fng_lbl=fng_lbl_scan,
@@ -4587,22 +4572,8 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                     volume_ratio=_vol_ratio, change_24h=_change_24h,
                     daily_pnl=daily_stats.get('total_pnl', 0.0),
                 )
-                if not claude_go:
-                    print(f"  [Claude] ❌ NO-GO: {symbol} {direction} — {claude_reason}")
-                    send_msg(
-                        f"🤖 *Claude AI — NO\\-GO*\n\n"
-                        f"{'🟢' if direction == 'LONG' else '🔴'} `{symbol}` {direction} · {chosen_tf}\n"
-                        f"📊 ציון: *{score}/100* ✅ עבר\n"
-                        f"🚫 *Claude חסם:* _{claude_reason}_"
-                    )
-                    rejected_out.append({
-                        'symbol': symbol, 'direction': direction, 'best_score': score,
-                        'reason': f'Claude NO-GO: {claude_reason[:60]}',
-                        'scores': {'4H': score_4h, '1H': score_1h, '15m': score_15m},
-                    })
-                    continue
-
-                print(f"  [Claude] ✅ GO: {symbol} {direction} — {claude_reason}")
+                # תמיד ממשיך — Claude GO/NO-GO מבוטל
+                print(f"  [Advisor] ✅ Proceeding: {symbol} {direction} — {claude_note}")
 
                 # ── IG-3: Sector Concentration Guard ────────────────────────────
                 sect_blocked, sect_reason = check_sector_concentration(symbol, direction)
