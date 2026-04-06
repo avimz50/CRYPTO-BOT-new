@@ -1402,11 +1402,12 @@ def get_btc_regime():
 # מנוע ניקוד מקצועי — Professional Scoring System
 # ═══════════════════════════════════════════════════════════════
 
-MIN_SCORE  = 90   # סף מינימום לפתיחת עסקה (90 = alignment כמעט מושלם)
+MIN_SCORE  = 60   # סף כניסה — Hunter Mode (היה 90)
 MAX_TRADES = 3    # מקסימום 3 עסקאות פתוחות במקביל
-RSI_VETO_LONG  = 70   # Anti-FOMO: RSI מעל 70 = לא קונים (overbought ceiling)
-RSI_VETO_SHORT = 28   # RSI מתחת זה = לא מוכרים (oversold)
-EMA_PROXIMITY_PCT = 2.5  # מחיר חייב להיות תוך 2.5% מ-EMA200 (Anti-Chase)
+RSI_VETO_LONG  = 85   # RSI וטו LONG — הורחב ל-85 (היה 70); גבולות Upper BB מבטלים גם זאת
+RSI_VETO_SHORT = 20   # RSI וטו SHORT — הורחב ל-20 (היה 28)
+EMA_PROXIMITY_PCT   = 5.0   # Anti-Chase EMA200 — הורחב ל-5% (היה 2.5)
+VOL_EMA_BYPASS_MULT = 1.5   # Volume ≥ ×1.5 → מבטל את וטו EMA200 לגמרי (Breakout IS the trend)
 TRAIL_ACTIVATION_PCT = 2.5   # % רווח מינימלי להפעלת Trailing (לא לפני)
 BE_BUFFER_PCT        = 3.0   # % רווח לבלימת הון: SL → Entry+0.1%
 BE_LOCK_BUFFER_PCT   = 0.1   # % מעל הכניסה שאליו SL עובר ב-Break-Even
@@ -1416,7 +1417,7 @@ TP1_PCT_FIXED        = 3.0   # % TP1 — סגירת 50% ומעבר ל-Breakeven
 TP_PCT_FIXED         = 10.0  # % TP מלא — 50% הנותרים רצים ל-10%
 
 # ─── Sniper Exception — Override Kill-Switch under STRICT conditions ───────────
-SNIPER_MIN_SCORE   = 95    # ציון מינימום 4H — מעל 90 הרגיל
+SNIPER_MIN_SCORE   = 60    # ציון מינימום Sniper — מותאם ל-Hunter Mode
 SNIPER_EMA_PCT     = 5.0   # מחיר חייב תוך 5% מ-EMA200 (אין רדיפת פאמפים)
 SNIPER_VOL_MIN     = 2.5   # Volume לפחות 2.5× הממוצע — אישור כניסה
 SNIPER_MARGIN_MULT = 0.5   # Half-Size Entry: 50% מגודל הפוזיציה הרגיל
@@ -1781,11 +1782,16 @@ def score_symbol(df_3h, df_1h, symbol, direction='LONG'):
         # ════════════════════════════════════════════════
 
         # ── וטו 1: EMA200 Proximity — Anti-Chase ──
-        ema_gap_pct = (price - ema200_v) / ema200_v * 100
-        if direction == 'LONG' and ema_gap_pct > EMA_PROXIMITY_PCT:
-            return 0, f"EMA200 chase veto ({ema_gap_pct:.1f}% above EMA200)", atr_v
-        if direction == 'SHORT' and ema_gap_pct < -EMA_PROXIMITY_PCT:
-            return 0, f"EMA200 chase veto ({abs(ema_gap_pct):.1f}% below EMA200)", atr_v
+        # BYPASS: אם Volume ≥ ×1.5 → הפריצה עצמה היא המגמה החדשה, EMA200 לא רלוונטי
+        ema_gap_pct      = (price - ema200_v) / ema200_v * 100
+        vol_ema_bypassed = (vol_rat >= VOL_EMA_BYPASS_MULT)
+        if vol_ema_bypassed and abs(ema_gap_pct) > EMA_PROXIMITY_PCT:
+            parts.append(f"EMA_bypass(vol×{vol_rat:.1f}≥{VOL_EMA_BYPASS_MULT})")
+        else:
+            if direction == 'LONG' and ema_gap_pct > EMA_PROXIMITY_PCT:
+                return 0, f"EMA200 chase veto ({ema_gap_pct:.1f}% above EMA200)", atr_v
+            if direction == 'SHORT' and ema_gap_pct < -EMA_PROXIMITY_PCT:
+                return 0, f"EMA200 chase veto ({abs(ema_gap_pct):.1f}% below EMA200)", atr_v
 
         # ── וטו 2: Wick Rejection — Anti-False Breakout ──
         last_c  = df_3h.iloc[-2]
@@ -1831,18 +1837,46 @@ def score_symbol(df_3h, df_1h, symbol, direction='LONG'):
         # 3. RSI STRENGTH — 10 נקודות
         # ════════════════════════════════
 
-        # וטו קשה — RSI קיצוני = פסילה מוחלטת
+        # וטו קשה — RSI קיצוני = פסילה מוחלטת (כעת 85/20 — הורחב מ-70/28)
         if direction == 'LONG' and rsi_v > RSI_VETO_LONG:
-            return 0, f"Anti-FOMO RSI veto ({rsi_v:.1f} > {RSI_VETO_LONG} ceiling)", atr_v
+            return 0, f"RSI veto ({rsi_v:.1f} > {RSI_VETO_LONG} extreme overbought)", atr_v
         if direction == 'SHORT' and rsi_v < RSI_VETO_SHORT:
-            return 0, f"RSI veto ({rsi_v:.1f} oversold)", atr_v
+            return 0, f"RSI veto ({rsi_v:.1f} < {RSI_VETO_SHORT} extreme oversold)", atr_v
+
+        # RSI Override: RSI 70–85 מותר אם המחיר גם "חובק" את Upper BB (פריצה אמיתית)
+        rsi_bb_override = False
+        if direction == 'LONG' and rsi_v > 70:
+            try:
+                _bbu_col = next(c for c in bb_df.columns if 'BBU_' in c)
+                _bbu_val = float(bb_df[_bbu_col].iloc[-1])
+                if price >= _bbu_val * 0.985:          # תוך 1.5% מ-Upper Band
+                    rsi_bb_override = True
+                    parts.append(f"RSI_BB_override(RSI={rsi_v:.0f}@UBB)")
+                else:
+                    # RSI גבוה + לא בBand → עדיין חוסם (FOMO ללא אישור טכני)
+                    return 0, (f"RSI overbought ({rsi_v:.1f}>70) — "
+                               f"not at Upper BB (price={price:.4g} BB={_bbu_val:.4g})"), atr_v
+            except Exception:
+                pass   # אם BB חסר, נמשיך (ה-RSI_VETO_LONG מעל הגן)
+        if direction == 'SHORT' and rsi_v < 30:
+            try:
+                _bbl_col = next(c for c in bb_df.columns if 'BBL_' in c)
+                _bbl_val = float(bb_df[_bbl_col].iloc[-1])
+                if price <= _bbl_val * 1.015:
+                    rsi_bb_override = True
+                    parts.append(f"RSI_BB_override(RSI={rsi_v:.0f}@LBB)")
+                else:
+                    return 0, (f"RSI oversold ({rsi_v:.1f}<30) — "
+                               f"not at Lower BB"), atr_v
+            except Exception:
+                pass
 
         if direction == 'LONG':
-            rsi_ideal = 50 <= rsi_v <= 65
-            rsi_ok    = 45 <= rsi_v <= 70
+            rsi_ideal = 50 <= rsi_v <= 70     # ממש אידיאלי
+            rsi_ok    = 45 <= rsi_v <= 80     # מקובל (כולל overbought עם BB confirmation)
         else:
-            rsi_ideal = 35 <= rsi_v <= 50
-            rsi_ok    = 30 <= rsi_v <= 55
+            rsi_ideal = 30 <= rsi_v <= 50
+            rsi_ok    = 20 <= rsi_v <= 55
 
         r_pts = 10 if rsi_ideal else (5 if rsi_ok else 0)
         score += r_pts
