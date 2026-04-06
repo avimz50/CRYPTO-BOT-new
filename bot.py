@@ -139,9 +139,11 @@ def sentiment_check(context: str = "scan"):
     global _last_sentiment_action
     fng_v, lbl = get_fear_greed()
     if fng_v < EXTREME_FEAR_THRESHOLD:
-        action = f"KILL-SWITCH (FNG={fng_v})"
+        # Hunter Mode: BTC BULL overrides Kill-Switch in _scan_batch.
+        # Label as FEAR — informational only, not a blocker when BTC is BULL.
+        action = f"FEAR (FNG={fng_v})"
     elif fng_v <= FEAR_THRESHOLD:
-        action = f"FEAR FILTER (FNG={fng_v})"
+        action = f"FEAR (FNG={fng_v})"
     elif fng_v >= GREED_THRESHOLD:
         action = f"GREED FILTER (FNG={fng_v})"
     else:
@@ -806,17 +808,20 @@ def save_scan_results(
     # top 5 near-misses — הגבוהים ביותר שלא עברו
     near_misses = sorted(all_rejections, key=lambda x: x.get('best_score', 0), reverse=True)[:5]
 
-    # Sentiment impact sentence
-    if fng_value < 20:
-        sentiment_note = f"Fear & Greed={fng_value} (Extreme Fear) — Kill-Switch הפעיל: כל הסריקות בוטלו"
+    # Sentiment impact sentence — Hunter Mode: BTC Regime is the master, FNG is informational only
+    btc_r_now = get_btc_regime()
+    if fng_value < 20 and btc_r_now == 'BULL':
+        sentiment_note = f"Fear & Greed={fng_value} (Extreme Fear) — ⚡ BTC BULL Compass: Kill-Switch מבוטל! סורק בחופשיות"
+    elif fng_value < 20:
+        sentiment_note = f"Fear & Greed={fng_value} (Extreme Fear) — BTC BEAR: Kill-Switch פעיל (ממתין לסיגנל BTC)"
     elif fng_value <= 30:
-        sentiment_note = f"Fear & Greed={fng_value} (Fear) — ל-LONG דרוש RSI<30; SL הורחב ב-{FEAR_EXTRA_SL_PCT}%"
+        sentiment_note = f"Fear & Greed={fng_value} (Fear) — Hunter Mode: RSI וSL רגילים (לא מוגבל)"
     elif fng_value >= 75:
-        sentiment_note = f"Fear & Greed={fng_value} (Extreme Greed) — פוזיציה צומצמה ל-60%; BE מהיר הופעל"
+        sentiment_note = f"Fear & Greed={fng_value} (Extreme Greed) — Greed: פוזיציה צומצמה ל-60%"
     elif fng_value >= 60:
-        sentiment_note = f"Fear & Greed={fng_value} (Greed) — זהירות קלה; ±2 נקודות על ציון"
+        sentiment_note = f"Fear & Greed={fng_value} (Greed) — זהירות קלה"
     else:
-        sentiment_note = f"Fear & Greed={fng_value} ({fng_label}) — מצב ניטרלי, אין השפעה על פתיחות"
+        sentiment_note = f"Fear & Greed={fng_value} ({fng_label}) — מצב ניטרלי"
 
     report = {
         'scan_time':               now_il().isoformat(timespec='seconds'),
@@ -2127,9 +2132,8 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         pos_size         = round(pos_size * 0.60)
         effective_margin = round(pos_size / leverage, 2)
         print(f"  [SENTIMENT] GREED ({fng_v}) → Swing פוזיציה צומצמה ל-${pos_size}")
-    if fng_v <= FEAR_THRESHOLD:
-        sl_pct = min(sl_pct + FEAR_EXTRA_SL_PCT, 8.0)   # בטווח 5-8%
-        print(f"  [SENTIMENT] FEAR ({fng_v}) → Swing SL מורחב ל-{sl_pct}%")
+    # Fear SL extension: REMOVED — Hunter Mode uses fixed SL_PCT_FIXED (3.5%) regardless of FNG
+    # if fng_v <= FEAR_THRESHOLD: sl_pct extended — disabled to allow entries in fear markets
 
     # Hunter Mode: TP1 = 1:1 RR, TP = 1:3 RR
     if hunter:
@@ -4290,7 +4294,12 @@ def handle_scan(message):
                            "😟" if fng_v_m < 40 else
                            "😐" if fng_v_m < 60 else
                            "😊" if fng_v_m < 75 else "🤑")
-            ks_note_m = " 🔒 Kill\\-Switch" if fng_v_m < EXTREME_FEAR_THRESHOLD else ""
+            btc_regime_now = get_btc_regime()
+            ks_note_m = (
+                " ⚡ BTC BULL — Hunter Active" if fng_v_m < EXTREME_FEAR_THRESHOLD and btc_regime_now == 'BULL'
+                else " 🔒 Kill\\-Switch" if fng_v_m < EXTREME_FEAR_THRESHOLD and btc_regime_now != 'BULL'
+                else ""
+            )
             send_msg(
                 f"✅ *סריקה ידנית הושלמה*\n\n"
                 f"🔍 נסרקו: *{total_scanned}* מטבעות\n"
@@ -4553,18 +4562,8 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                 except Exception:
                     _last_rsi = _last_ema = None
 
-                # ── Fear Filter: LONG requires RSI < 30 ─────────────────────
-                if fng_v_scan <= FEAR_THRESHOLD and direction == 'LONG':
-                    rsi_ok = _last_rsi is not None and _last_rsi < 30
-                    if not rsi_ok:
-                        rsi_str = f"{_last_rsi:.1f}" if _last_rsi else "N/A"
-                        print(f"  [SENTIMENT] FEAR FILTER: {symbol} LONG rejected — RSI={rsi_str} ≥ 30 (דרוש RSI<30 במצב פחד)")
-                        rejected_out.append({
-                            'symbol': symbol, 'direction': direction, 'best_score': best_score,
-                            'reason': f'Fear Filter: RSI={rsi_str} ≥ 30 (ב-Sentiment FEAR נדרש RSI<30)',
-                            'scores': {'4H': score_4h, '1H': score_1h, '15m': score_15m},
-                        })
-                        continue
+                # ── Fear Filter RSI: REMOVED — Hunter Mode uses RSI_VETO_LONG (85) only ──
+                # FNG sentiment does NOT restrict RSI for LONG entries anymore.
 
                 # ── IG-2: Multi-TF RSI + Volume context for Claude ──────────────
                 try:
