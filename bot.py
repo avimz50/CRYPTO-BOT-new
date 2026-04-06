@@ -1407,11 +1407,13 @@ MAX_TRADES = 3    # מקסימום 3 עסקאות פתוחות במקביל
 RSI_VETO_LONG  = 70   # Anti-FOMO: RSI מעל 70 = לא קונים (overbought ceiling)
 RSI_VETO_SHORT = 28   # RSI מתחת זה = לא מוכרים (oversold)
 EMA_PROXIMITY_PCT = 2.5  # מחיר חייב להיות תוך 2.5% מ-EMA200 (Anti-Chase)
-BE_BUFFER_PCT  = 1.5  # % רווח להפעלת Trailing Stop (Phase 2)
-TRAIL_PCT      = 1.5  # % Trailing Stop מהשיא — רווח לנשימה (היה 1.0)
-SL_PCT_FIXED   = 2.5  # % SL קבוע
-TP1_PCT_FIXED  = 3.0  # % TP1 — סגירת 50% ומעבר ל-Breakeven
-TP_PCT_FIXED   = 10.0 # % TP מלא — 50% הנותרים רצים ל-10%
+TRAIL_ACTIVATION_PCT = 2.5   # % רווח מינימלי להפעלת Trailing (לא לפני)
+BE_BUFFER_PCT        = 3.0   # % רווח לבלימת הון: SL → Entry+0.1%
+BE_LOCK_BUFFER_PCT   = 0.1   # % מעל הכניסה שאליו SL עובר ב-Break-Even
+TRAIL_PCT            = 3.5   # % Trailing Stop מהשיא — Swing mindset (היה 1.5)
+SL_PCT_FIXED         = 3.5   # % SL קבוע מהכניסה (היה 2.5)
+TP1_PCT_FIXED        = 3.0   # % TP1 — סגירת 50% ומעבר ל-Breakeven
+TP_PCT_FIXED         = 10.0  # % TP מלא — 50% הנותרים רצים ל-10%
 
 # ─── Sniper Exception — Override Kill-Switch under STRICT conditions ───────────
 SNIPER_MIN_SCORE   = 95    # ציון מינימום 4H — מעל 90 הרגיל
@@ -2485,10 +2487,13 @@ def track_trades():
             # ════════════════════════════════════════════
             if trade['phase'] == 'initial':
 
-                # 0. עדכון Trailing SL ברגע שיש רווח כלשהו (1.5% מהשיא)
-                in_profit = (direction == 'LONG' and current_price > entry) or \
-                            (direction == 'SHORT' and current_price < entry)
-                if in_profit:
+                # 0. Trailing SL — מופעל רק אחרי +2.5% רווח (TRAIL_ACTIVATION_PCT)
+                raw_profit_pct = (current_price - entry) / entry * 100 \
+                                 if direction == 'LONG' \
+                                 else (entry - current_price) / entry * 100
+                trailing_active = raw_profit_pct >= TRAIL_ACTIVATION_PCT
+
+                if trailing_active:
                     trail_factor = 1 - TRAIL_PCT / 100 if direction == 'LONG' \
                                    else 1 + TRAIL_PCT / 100
                     new_trail = round(current_price * trail_factor, 8)
@@ -2539,29 +2544,34 @@ def track_trades():
                     save_active_trades()
                     continue
 
+                # ── חישוב רמת BE (Entry + 0.1% לLONG / Entry - 0.1% לSHORT) ──
+                be_lock_price = round(entry * (1 + BE_LOCK_BUFFER_PCT / 100), 8) \
+                                if direction == 'LONG' \
+                                else round(entry * (1 - BE_LOCK_BUFFER_PCT / 100), 8)
+
                 # 1a. Greed Early BE — FNG≥70: BE at +2% (immediately, before TP1)
                 if not trade['be_triggered'] and fng_v_mgr >= GREED_THRESHOLD:
                     greed_profit_pct = abs(current_price - entry) / entry * 100
                     if profit_dir(current_price) and greed_profit_pct >= GREED_EARLY_BE_PCT:
-                        trade['sl']           = entry
+                        trade['sl']           = be_lock_price
                         trade['be_triggered'] = True
-                        print(f"  [SENTIMENT] GREED EARLY BE: {sym} SL→BE @ {current_price:.6g} (+{greed_profit_pct:.2f}%, FNG={fng_v_mgr})")
+                        print(f"  [SENTIMENT] GREED EARLY BE: {sym} SL→{be_lock_price:.6g} @ {current_price:.6g} (+{greed_profit_pct:.2f}%, FNG={fng_v_mgr})")
                         send_msg(
                             f"🔒 *Greed Early BE — {sym}*\n"
                             f"מחיר: `{current_price:.6g}` (+{greed_profit_pct:.2f}% רווח)\n"
-                            f"SL הועבר לכניסה: `{entry:.6g}` 🛡️ (FNG={fng_v_mgr} — מצב חמדנות)\n"
-                            f"💼 {LEVERAGE}x Isolated · ההון מוגן!"
+                            f"SL הועבר ל: `{be_lock_price:.6g}` (+{BE_LOCK_BUFFER_PCT}% מעל כניסה) 🛡️\n"
+                            f"(FNG={fng_v_mgr} — מצב חמדנות) | ההון מוגן!"
                         )
 
-                # 1b. Break Even (סטנדרטי — 2% רווח)
+                # 1b. Break Even סטנדרטי — ב-+3% רווח, SL → Entry+0.1%
                 if not trade['be_triggered'] and be_hit(current_price):
-                    trade['sl']           = entry
+                    trade['sl']           = be_lock_price
                     trade['be_triggered'] = True
                     send_msg(
                         f"🔒 *Break Even מופעל — {sym}*\n"
                         f"מחיר: `{current_price:.6g}` (+{BE_BUFFER_PCT}% מהכניסה)\n"
-                        f"SL הועבר לכניסה: `{entry:.6g}`\n"
-                        f"💼 {LEVERAGE}x Isolated · ההון מוגן!"
+                        f"SL הועבר ל: `{be_lock_price:.6g}` (+{BE_LOCK_BUFFER_PCT}% מעל כניסה)\n"
+                        f"💼 {LEVERAGE}x Isolated · ההון מוגן ✅"
                     )
 
                 # 2. TP1 — סגור 50%, הפעל Trailing (+ auto-BE ב-Hunter Mode)
