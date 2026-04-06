@@ -5149,63 +5149,74 @@ def scalp_scan_loop():
                 time.sleep(SCALP_SCAN_INTERVAL_WAIT)   # 10 min when at capacity
                 continue
 
-            print(f"[Scalp] FNG={fng_v} — scanning...")
+            # ── BTC Compass Filter ─────────────────────────────────────────
+            btc_above_ema = _btc_above_ema20_15m()
+            btc_compass   = "✅ BTC מעל EMA20" if btc_above_ema else "⛔ BTC מתחת EMA20"
+            print(f"[Scalp] FNG={fng_v} | {btc_compass} — scanning...")
             tickers = exchange.fetch_tickers()
 
             # ── SCALP-SHORT: Bubble Watch — עלה >30% ב-24h ───────────────────────
-            bubble_candidates = sorted(
-                [
-                    {'symbol': s, 'change_pct': t.get('percentage', 0), 'price': t.get('last', 0)}
-                    for s, t in tickers.items()
-                    if s.endswith('/USDT')
-                    and t.get('percentage', 0) >= SCALP_BUBBLE_MIN_PCT
-                    and t.get('last', 0) > 0
-                    and (t.get('quoteVolume') or 0) >= 1_000_000
-                ],
-                key=lambda x: x['change_pct'], reverse=True
-            )[:5]
+            # ₿ BTC Compass: שורט רק כשBTC יורד/נייטרל — לא כשBTC מטפס
+            if btc_above_ema:
+                print("[Scalp] ₿ SHORT skipped — BTC bullish compass (no counter-trend shorts)")
+            else:
+                bubble_candidates = sorted(
+                    [
+                        {'symbol': s, 'change_pct': t.get('percentage', 0), 'price': t.get('last', 0)}
+                        for s, t in tickers.items()
+                        if s.endswith('/USDT')
+                        and t.get('percentage', 0) >= SCALP_BUBBLE_MIN_PCT
+                        and t.get('last', 0) > 0
+                        and (t.get('quoteVolume') or 0) >= 1_000_000
+                    ],
+                    key=lambda x: x['change_pct'], reverse=True
+                )[:5]
 
-            if VERBOSE_LOG and bubble_candidates:
-                print(f"[Scalp] SHORT candidates: {[c['symbol'] for c in bubble_candidates]}")
+                if VERBOSE_LOG and bubble_candidates:
+                    print(f"[Scalp] SHORT candidates: {[c['symbol'] for c in bubble_candidates]}")
 
-            for cand in bubble_candidates:
-                with trades_lock:
-                    if any(t['symbol'] == cand['symbol'] for t in active_trades):
-                        continue
-                    if sum(1 for t in active_trades if t.get('scalp')) >= MAX_SCALP_TRADES:
-                        break
+                for cand in bubble_candidates:
+                    with trades_lock:
+                        if any(t['symbol'] == cand['symbol'] for t in active_trades):
+                            continue
+                        if sum(1 for t in active_trades if t.get('scalp')) >= MAX_SCALP_TRADES:
+                            break
 
-                sym   = cand['symbol']
-                price = cand['price']
-                ok, rsi15, ema9 = _check_scalp_short(sym, price)
-                if ok:
-                    reason = (f"Bubble +{cand['change_pct']:.1f}% 24h · "
-                              f"RSI 15m={rsi15:.1f} >82 · "
-                              f"Price {price:.6g} < EMA9(5m) {ema9:.6g}")
-                    open_scalp_trade(sym, 'SHORT', price, reason)
-                    time.sleep(2)
+                    sym   = cand['symbol']
+                    price = cand['price']
+                    ok, rsi15, ema9 = _check_scalp_short(sym, price)
+                    if ok:
+                        reason = (f"Bubble +{cand['change_pct']:.1f}% 24h · "
+                                  f"RSI 15m={rsi15:.1f} >82 · "
+                                  f"Price {price:.6g} < EMA9(5m) {ema9:.6g}")
+                        open_scalp_trade(sym, 'SHORT', price, reason)
+                        time.sleep(2)
 
             # ── QUICK-LONG: Flash Crash — ירד >20% ב-2h ──────────────────────────
-            for sym, ticker in tickers.items():
-                if not sym.endswith('/USDT'):
-                    continue
-                with trades_lock:
-                    if sum(1 for t in active_trades if t.get('scalp')) >= MAX_SCALP_TRADES:
-                        break
-                    if any(t['symbol'] == sym for t in active_trades):
+            # ₿ BTC Compass: LONG רק כשBTC עולה — לא ל-catch falling knives בBTC יורד
+            if not btc_above_ema:
+                print("[Scalp] ₿ LONG skipped — BTC bearish compass (no longs vs trend)")
+            else:
+                for sym, ticker in tickers.items():
+                    if not sym.endswith('/USDT'):
+                        continue
+                    with trades_lock:
+                        if sum(1 for t in active_trades if t.get('scalp')) >= MAX_SCALP_TRADES:
+                            break
+                        if any(t['symbol'] == sym for t in active_trades):
+                            continue
+
+                    price = ticker.get('last', 0)
+                    if price <= 0 or (ticker.get('quoteVolume') or 0) < 1_000_000:
                         continue
 
-                price = ticker.get('last', 0)
-                if price <= 0 or (ticker.get('quoteVolume') or 0) < 1_000_000:
-                    continue
-
-                ok, rsi15, drop_pct, bounce_pct = _check_quick_long(sym, price)
-                if ok:
-                    reason = (f"Flash Crash -{drop_pct:.1f}% (2h) · "
-                              f"RSI 15m={rsi15:.1f} <18 · "
-                              f"Bounce +{bounce_pct:.2f}% from low")
-                    open_scalp_trade(sym, 'LONG', price, reason)
-                    time.sleep(2)
+                    ok, rsi15, drop_pct, bounce_pct = _check_quick_long(sym, price)
+                    if ok:
+                        reason = (f"Flash Crash -{drop_pct:.1f}% (2h) · "
+                                  f"RSI 15m={rsi15:.1f} <18 · "
+                                  f"Bounce +{bounce_pct:.2f}% from low")
+                        open_scalp_trade(sym, 'LONG', price, reason)
+                        time.sleep(2)
 
         except Exception as e:
             print(f"[Scalp] ⚠️ error: {e}")
@@ -5664,9 +5675,9 @@ def cliff_hanger_loop():
     Thread 9 — High-Velocity Scanner (Rocket LONG + Cliff SHORT), כל 2 דקות.
 
     מחפש נרות 5m עם תנועה >2.5% + Volume >400% ממוצע:
-      🚀 Rocket: עלייה  → LONG מיידי (ללא RSI/4H/BTC filter)
-      🪂 Cliff:  ירידה  → SHORT מיידי
-    Trailing Stop 1% מהשיא · Break-Even ב-1.5% · תוקף 30 דקות.
+      🚀 Rocket: עלייה  → LONG — רק כשBTC מעל EMA20 (₿ Compass)
+      🪂 Cliff:  ירידה  → SHORT — רק כשBTC מתחת EMA20 (₿ Compass)
+    Trailing Stop · Break-Even · תוקף 30 דקות.
     """
     print("Thread 9 (High-Velocity: Rocket+Cliff) started.")
 
@@ -5681,6 +5692,9 @@ def cliff_hanger_loop():
                 continue
             if wallet.get('balance', 0) < CLIFF_MARGIN:
                 continue
+
+            # ── ₿ BTC Compass — בודק כיוון פעם אחת לכל מחזור ──────────────
+            btc_above_ema = _btc_above_ema20_15m()
 
             existing_syms = {t['symbol'] for t in active_trades}
 
@@ -5697,6 +5711,15 @@ def cliff_hanger_loop():
                 if not is_velocity:
                     continue
 
+                # ── ₿ BTC Compass Filter ────────────────────────────────────
+                # Rocket LONG רק כשBTC עולה | Cliff SHORT רק כשBTC יורד
+                if vel_dir == 'LONG' and not btc_above_ema:
+                    print(f"[Velocity] 🚀 {sym} LONG skipped — BTC bearish compass")
+                    continue
+                if vel_dir == 'SHORT' and btc_above_ema:
+                    print(f"[Velocity] 🪂 {sym} SHORT skipped — BTC bullish compass")
+                    continue
+
                 # שלוף מחיר נוכחי
                 try:
                     ticker = exchange.fetch_ticker(sym)
@@ -5706,7 +5729,7 @@ def cliff_hanger_loop():
 
                 label = "🚀 Rocket" if vel_dir == 'LONG' else "🪂 Cliff"
                 div_tag = " ⚡RSI-Div" if rsi_div else ""
-                print(f"[Velocity] {label}{div_tag} {sym} — Move={move_pct:.1f}% Vol={vol_ratio:.1f}×")
+                print(f"[Velocity] {label}{div_tag} {sym} — Move={move_pct:.1f}% Vol={vol_ratio:.1f}× ₿OK")
                 open_cliff_trade(sym, price, vel_dir, move_pct, vol_ratio, rsi_div)
                 existing_syms.add(sym)
                 time.sleep(1)
