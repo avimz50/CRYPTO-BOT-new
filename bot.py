@@ -54,7 +54,7 @@ CHAT_ID = os.environ['CHAT_ID']
 print("[BOOT] Telegram bot OK.", flush=True)
 
 # רשימה קבועה לאסטרטגיית EMA בלבד
-ENERGY_GEO = ['PAXG/USDT', 'POWR/USDT', 'HNT/USDT']
+ENERGY_GEO = ['POWR/USDT', 'HNT/USDT', 'WLD/USDT']  # הוסר PAXG (זהב — לא מומנטום קריפטו)
 
 # נתיב לקובץ המועמדים החמים (לדאשבורד)
 HOT_CANDIDATES_FILE   = 'artifacts/bot-dashboard/public/hot_candidates.json'
@@ -4408,7 +4408,14 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
 
     # ── Sentiment Kill-Switch (Extreme Fear < EXTREME_FEAR_THRESHOLD) ────────
     fng_v_scan, fng_lbl_scan, fng_action = sentiment_check("scan")
-    kill_switch_active = fng_v_scan < EXTREME_FEAR_THRESHOLD
+
+    # BTC COMPASS OVERRIDE: אם ה-BTC Regime הוא BULL — הקומפס ינצח את ה-Kill-Switch.
+    # "הזדמנויות הטובות ביותר קורות בזמן פחד קיצוני + BTC בשבירה"
+    btc_overrides_killswitch = (btc_regime == 'BULL')
+    kill_switch_active = (fng_v_scan < EXTREME_FEAR_THRESHOLD) and not btc_overrides_killswitch
+
+    if btc_overrides_killswitch and fng_v_scan < EXTREME_FEAR_THRESHOLD:
+        print(f"⚡ BTC COMPASS OVERRIDE: FNG={fng_v_scan} (Extreme Fear) אך BTC BULL — Kill-Switch מבוטל! ממשיך לסרוק...")
     if kill_switch_active:
         print(f"SENTIMENT KILL-SWITCH: FNG={fng_v_scan} < {EXTREME_FEAR_THRESHOLD} — בודק Sniper Exception לכל מועמד...")
 
@@ -4732,7 +4739,10 @@ def _run_watch_check(symbol: str, entry: dict, silent: bool = False) -> int:
 
         if score >= MIN_SCORE:
             fng_v, _, _ = sentiment_check("watch")
-            if fng_v < EXTREME_FEAR_THRESHOLD:
+            btc_r = get_btc_regime()
+            if fng_v < EXTREME_FEAR_THRESHOLD and btc_r == 'BULL':
+                msg += f"\n⚡ _BTC BULL Compass מבטל Kill\\-Switch \\(FNG\\={fng_v}\\) — בסריקה הבאה ייפתח_"
+            elif fng_v < EXTREME_FEAR_THRESHOLD:
                 msg += f"\n⚠️ _Kill\\-Switch פעיל \\(FNG\\={fng_v}\\) — Sniper Exception יבדוק בסריקה_"
             else:
                 msg += f"\n✅ _הבוט יפתח עסקה בסריקה הבאה אם הציון יחזיק_"
@@ -5314,7 +5324,7 @@ def _coin_1h_breakout_above_4h_high(symbol: str) -> tuple[bool, float, float, fl
 
 
 # ── Breakout Strategy Constants ───────────────────────────────────────────────
-BREAKOUT_FNG_LONG_MIN  = 20   # FNG מינימום ל-LONG (מתחת = פחד קיצוני, לא קונים)
+BREAKOUT_FNG_LONG_MIN  = 0    # FNG מינימום ל-LONG — Hunter Mode: BTC BULL + כל FNG → קונים! (היה 20)
 BREAKOUT_FNG_SHORT_MAX = 65   # FNG מקסימום ל-SHORT (מעל = חמדנות, לא שורטים)
 RSI_VETO_SHORT         = 35   # RSI מינימום ל-SHORT (מתחת = oversold, לא שורטים)
 BREAKOUT_MIN_VOL       = 1.5  # volume ratio מינימלי (150% מהממוצע = 50% מעל)
