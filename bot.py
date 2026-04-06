@@ -5443,7 +5443,7 @@ def top10_breakout_loop():
     מרג'ין = 10% מהיתרה הפנויה | RR 1:3 | Trailing 2.5%
     הרצה ראשונה מיידית (כולל ETH).
     """
-    TOP10_INTERVAL = 15 * 60
+    TOP10_INTERVAL = 5 * 60   # 5 דקות — היה 15
     print("Thread 7 (Top10 Breakout) started.")
     first_run = True
 
@@ -5828,23 +5828,27 @@ def sol_watch_loop():
 
 def major_watch_loop():
     """
-    Thread — מעקב מטבעות גדולים כל 15 דקות (Momentum Breakout).
+    Thread — מעקב מטבעות גדולים כל 5 דקות (Momentum Breakout).
     אותה לוגיקה כמו SOL Watch אבל ל-8 מטבעות גדולים:
       BTC, ETH, BNB, XRP, SOL, ADA, AVAX, DOGE.
     שולח התראה רק כשמצב מטבע מסוים משתנה.
     כשיש EXECUTE: פותח עסקת Swing אוטומטית.
+    הרצה ראשונה מיידית — אין המתנה כלל.
     """
     global _major_watch_state
-    INTERVAL = 15 * 60
+    INTERVAL   = 5 * 60   # 5 דקות — היה 15
+    first_run  = True
 
     last = {sym: {'decision': None, 'trend_ok': None, 'breakout': None}
             for sym in MAJOR_WATCH_COINS}
     _major_watch_state = last
 
-    print(f"[Major Watch] Loop started — tracking {len(MAJOR_WATCH_COINS)} coins every 15 min", flush=True)
+    print(f"[Major Watch] Loop started — tracking {len(MAJOR_WATCH_COINS)} coins every 5 min", flush=True)
 
     while True:
-        time.sleep(INTERVAL)
+        if not first_run:
+            time.sleep(INTERVAL)
+        first_run = False
         try:
             btc_above_ema = _btc_above_ema20_15m()   # BTC trend filter (לשאר המטבעות)
             now_str       = now_il().strftime('%H:%M')
@@ -5876,22 +5880,29 @@ def major_watch_loop():
 
                     prev          = last[symbol]
                     prev_decision = prev['decision']
+                    is_first_seen = (prev_decision is None)   # הרצה ראשונה לסמל זה
                     changes       = []
 
-                    if prev['decision'] is not None and decision != prev['decision']:
-                        changes.append(f"📌 החלטה: `{prev['decision']}` → `{decision}`")
+                    if is_first_seen:
+                        # הרצה ראשונה — מדווחים רק על EXECUTE (פריצה קיימת עם תחילת הבוט)
+                        if decision == 'EXECUTE':
+                            changes.append(f"🚀 *זוהה פריצה קיימת בהפעלת הבוט\\!*")
+                            changes.append(f"  `${price_1h:.5g}` > 4H High `${h4_high:.5g}`")
+                    else:
+                        if decision != prev_decision:
+                            changes.append(f"📌 החלטה: `{prev_decision}` → `{decision}`")
 
-                    if prev['trend_ok'] is not None and trend_ok != prev['trend_ok']:
-                        if trend_ok:
-                            changes.append("🟢 מגמה חיובית — BTC EMA חזר ✅")
-                        else:
-                            changes.append("🔴 מגמה שלילית — BTC מתחת EMA ⛔")
+                        if prev['trend_ok'] is not None and trend_ok != prev['trend_ok']:
+                            if trend_ok:
+                                changes.append("🟢 מגמה חיובית — BTC EMA חזר ✅")
+                            else:
+                                changes.append("🔴 מגמה שלילית — BTC מתחת EMA ⛔")
 
-                    if prev['breakout'] is not None and breakout != prev['breakout']:
-                        if breakout:
-                            changes.append(f"🚀 פריצה מעל 4H High\\! `${price_1h:.5g}` > `${h4_high:.5g}` ✅")
-                        else:
-                            changes.append(f"📉 ירד מתחת 4H High \\(`${h4_high:.5g}`\\) ❌")
+                        if prev['breakout'] is not None and breakout != prev['breakout']:
+                            if breakout:
+                                changes.append(f"🚀 פריצה מעל 4H High\\! `${price_1h:.5g}` > `${h4_high:.5g}` ✅")
+                            else:
+                                changes.append(f"📉 ירד מתחת 4H High \\(`${h4_high:.5g}`\\) ❌")
 
                     # עדכון מצב
                     last[symbol]['decision']  = decision
