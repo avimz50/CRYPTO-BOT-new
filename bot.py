@@ -946,14 +946,30 @@ def send_msg(text):
 wallet: dict = {}
 
 def _get_unrealized_pnl() -> float:
-    """Floating P&L של כל העסקאות הפתוחות לפי current_price."""
+    """Floating P&L של כל העסקאות הפתוחות — מחיר חי מ-Bitget API."""
+    if not active_trades:
+        return 0.0
     total = 0.0
+    # ניסיון לקבל מחירים חיים לכל הסימבולים בפעם אחת (batch)
+    live_prices: dict[str, float] = {}
+    try:
+        symbols = list({t['symbol'] for t in active_trades})
+        for sym in symbols:
+            ticker = exchange.fetch_ticker(sym)
+            live_prices[sym] = float(ticker['last'])
+    except Exception:
+        pass  # אם נכשל — נחזור ל-current_price שמור
+
     for t in active_trades:
-        curr  = t.get('current_price', t.get('entry', 0))
+        sym   = t.get('symbol', '')
+        curr  = live_prices.get(sym) or t.get('current_price', t.get('entry', 0))
         entry = t.get('entry', 0)
         pos   = t.get('pos_size', POSITION_SIZE)
         if entry <= 0:
             continue
+        # עדכן current_price בתוך ה-trade לסינכרון עם הדשבורד
+        if sym in live_prices:
+            t['current_price'] = live_prices[sym]
         if t.get('direction') == 'LONG':
             total += (curr - entry) / entry * pos
         else:
@@ -1396,10 +1412,13 @@ RSI_VETO_LONG  = 85   # RSI וטו LONG — הורחב ל-85 (היה 70); גבו
 RSI_VETO_SHORT = 20   # RSI וטו SHORT — הורחב ל-20 (היה 28)
 EMA_PROXIMITY_PCT   = 5.0   # Anti-Chase EMA200 — הורחב ל-5% (היה 2.5)
 VOL_EMA_BYPASS_MULT = 1.5   # Volume ≥ ×1.5 → מבטל את וטו EMA200 לגמרי (Breakout IS the trend)
-TRAIL_ACTIVATION_PCT = 2.5   # % רווח מינימלי להפעלת Trailing (לא לפני)
-BE_BUFFER_PCT        = 3.0   # % רווח לבלימת הון: SL → Entry+0.1%
+TRAIL_ACTIVATION_PCT = 2.0   # % רווח מינימלי להפעלת Trailing — הופחת ל-2% (היה 2.5)
+BE_BUFFER_PCT        = 2.0   # % רווח להפעלת Break-Even — הופחת ל-2% (היה 3.0)
 BE_LOCK_BUFFER_PCT   = 0.1   # % מעל הכניסה שאליו SL עובר ב-Break-Even
-TRAIL_PCT            = 3.5   # % Trailing Stop מהשיא — Swing mindset (היה 1.5)
+TRAIL_PCT            = 3.5   # % Trailing Stop מינימלי (fallback אם ATR קטן)
+ATR_TRAIL_MULT       = 1.5   # מכפיל ATR ל-Trailing Stop (1.5× ATR מהשיא)
+PARTIAL_25_TRIGGER   = 3.0   # % רווח שממנו מעקבים ל-"נפילה" לסגירת 25%
+PARTIAL_25_DROP      = 0.8   # % ירידה מהשיא שמפעילה סגירת 25%
 SL_PCT_FIXED         = 3.5   # % SL קבוע מהכניסה (היה 2.5)
 TP1_PCT_FIXED        = 3.0   # % TP1 — סגירת 50% ומעבר ל-Breakeven
 TP_PCT_FIXED         = 10.0  # % TP מלא — 50% הנותרים רצים ל-10%
@@ -2187,15 +2206,16 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         'be_lvl':          be_price,
         'sl_pct':          sl_pct,
         'tp_pct':          tp_pct,
-        'direction':       direction,
-        'phase':           'initial',
-        'be_triggered':    False,
-        'tp1_triggered':   False,
-        'tp1_pnl':         0.0,
-        'peak_price':      price,
-        'trailing_sl':     None,
-        'score':           score,
-        'atr':             round(atr, 6),
+        'direction':            direction,
+        'phase':                'initial',
+        'be_triggered':         False,
+        'tp1_triggered':        False,
+        'partial_25_triggered': False,
+        'tp1_pnl':              0.0,
+        'peak_price':           price,
+        'trailing_sl':          None,
+        'score':                score,
+        'atr':                  round(atr, 6),
         'timeframe':       timeframe,
         'rsi':             round(rsi, 2) if rsi is not None else None,
         'ema200':          round(ema200, 6) if ema200 is not None else None,
@@ -2508,24 +2528,33 @@ def track_trades():
             # ════════════════════════════════════════════
             if trade['phase'] == 'initial':
 
-                # 0. Trailing SL — מופעל רק אחרי +2.5% רווח (TRAIL_ACTIVATION_PCT)
+                # 0. Trailing SL — ATR-based (1.5× ATR מהשיא) + fallback TRAIL_PCT%
                 raw_profit_pct = (current_price - entry) / entry * 100 \
                                  if direction == 'LONG' \
                                  else (entry - current_price) / entry * 100
                 trailing_active = raw_profit_pct >= TRAIL_ACTIVATION_PCT
 
                 if trailing_active:
-                    trail_factor = 1 - TRAIL_PCT / 100 if direction == 'LONG' \
-                                   else 1 + TRAIL_PCT / 100
-                    new_trail = round(current_price * trail_factor, 8)
+                    # עדכון peak_price
                     if direction == 'LONG':
                         if current_price > trade['peak_price']:
                             trade['peak_price'] = current_price
-                        if trade['trailing_sl'] is None or new_trail > trade['trailing_sl']:
-                            trade['trailing_sl'] = new_trail
                     else:
                         if current_price < trade['peak_price']:
                             trade['peak_price'] = current_price
+
+                    # חישוב מרחק Trailing: max(1.5×ATR, TRAIL_PCT%)
+                    atr_val      = trade.get('atr', 0) or 0
+                    atr_dist     = ATR_TRAIL_MULT * atr_val
+                    pct_dist     = trade['peak_price'] * TRAIL_PCT / 100
+                    trail_dist   = max(atr_dist, pct_dist)   # הגדול = מגן יותר
+
+                    if direction == 'LONG':
+                        new_trail = round(trade['peak_price'] - trail_dist, 8)
+                        if trade['trailing_sl'] is None or new_trail > trade['trailing_sl']:
+                            trade['trailing_sl'] = new_trail
+                    else:
+                        new_trail = round(trade['peak_price'] + trail_dist, 8)
                         if trade['trailing_sl'] is None or new_trail < trade['trailing_sl']:
                             trade['trailing_sl'] = new_trail
 
@@ -2584,7 +2613,7 @@ def track_trades():
                             f"(FNG={fng_v_mgr} — מצב חמדנות) | ההון מוגן!"
                         )
 
-                # 1b. Break Even סטנדרטי — ב-+3% רווח, SL → Entry+0.1%
+                # 1b. Break Even סטנדרטי — ב-+2% רווח, SL → Entry+0.1%
                 if not trade['be_triggered'] and be_hit(current_price):
                     trade['sl']           = be_lock_price
                     trade['be_triggered'] = True
@@ -2594,6 +2623,42 @@ def track_trades():
                         f"SL הועבר ל: `{be_lock_price:.6g}` (+{BE_LOCK_BUFFER_PCT}% מעל כניסה)\n"
                         f"💼 {LEVERAGE}x Isolated · ההון מוגן ✅"
                     )
+
+                # 1c. Partial 25% Close — הגיע ל-+3%, עכשיו יורד מהשיא ב-0.8%+
+                if (not trade.get('partial_25_triggered')
+                        and not trade.get('tp1_triggered')
+                        and profit_dir(current_price)):
+                    peak_profit_pct = (
+                        (trade['peak_price'] - entry) / entry * 100
+                        if direction == 'LONG'
+                        else (entry - trade['peak_price']) / entry * 100
+                    )
+                    drop_from_peak = (
+                        (trade['peak_price'] - current_price) / trade['peak_price'] * 100
+                        if direction == 'LONG'
+                        else (current_price - trade['peak_price']) / trade['peak_price'] * 100
+                    )
+                    if peak_profit_pct >= PARTIAL_25_TRIGGER and drop_from_peak >= PARTIAL_25_DROP:
+                        quarter_pos    = round(pos_size * 0.25, 2)
+                        quarter_margin = round(trade.get('margin', MARGIN) * 0.25, 2)
+                        dist_pct       = abs(current_price - entry) / entry * 100
+                        partial_pnl    = round(quarter_pos * dist_pct / 100, 2)
+                        trade['partial_25_triggered'] = True
+                        trade['pos_size'] = round(pos_size - quarter_pos, 2)
+                        trade['margin']   = round(trade.get('margin', MARGIN) - quarter_margin, 2)
+                        daily_stats['total_pnl'] += partial_pnl
+                        wallet_credit(partial_pnl, quarter_margin)
+                        save_active_trades()
+                        print(f"  [Partial25] {sym}: סגר 25% @ {current_price:.6g} "
+                              f"(שיא={trade['peak_price']:.6g} ירד {drop_from_peak:.1f}%) "
+                              f"PnL={partial_pnl:+.2f}$")
+                        send_msg(
+                            f"⚡ *Partial Close 25% — {sym}*\n\n"
+                            f"המחיר הגיע ל\\+{peak_profit_pct:.1f}% ואז ירד {drop_from_peak:.1f}% מהשיא\n"
+                            f"סגרנו 25% מהפוזיציה @ `{current_price:.6g}`\n"
+                            f"💰 P&L חלקי: *{partial_pnl:+.2f}$*\n"
+                            f"75% נשאר פתוח · SL: `{trade['sl']:.6g}`"
+                        )
 
                 # 2. TP1 — סגור 50%, הפעל Trailing (+ auto-BE ב-Hunter Mode)
                 if tp1_hit(current_price):
