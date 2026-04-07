@@ -844,6 +844,11 @@ HEARTBEAT_INTERVAL    = 1800   # 30 דקות בשניות
 
 @flask_app.route('/api/trades')
 def api_trades():
+    # רענן מחירים חיים לפני החזרת הנתונים לדשבורד
+    try:
+        _get_unrealized_pnl()
+    except Exception:
+        pass
     with trades_lock:
         snapshot = list(active_trades)
     return flask_jsonify({
@@ -3088,33 +3093,65 @@ def handle_test(message):
 
 @bot.message_handler(commands=['status'])
 def handle_status(message):
+    # רענן מחירים חיים לפני הצגת הסטטוס
+    try:
+        total_unrealized = _get_unrealized_pnl()
+    except Exception:
+        total_unrealized = 0.0
+
     msg = wallet_status_text() + "\n\n"
     if not active_trades:
         msg += "📭 *אין עסקאות פעילות כרגע.*\n"
         msg += f"_סף: {MIN_SCORE}/100 · מקס {MAX_TRADES} עסקאות · Anti-FOMO: RSI≤{RSI_VETO_LONG} · EMA±{EMA_PROXIMITY_PCT}% · Wick Filter_"
         send_msg(msg)
         return
+
     msg += f"📋 *עסקאות פעילות ({len(active_trades)}/{MAX_TRADES}):*\n\n"
     for i, t in enumerate(active_trades, 1):
         phase_label = "🔄 Trailing" if t.get('phase') == 'trailing' else "📊 Initial"
         be_label    = " · 🔒 BE" if t.get('be_triggered') else ""
+        p25_label   = " · ⚡25%" if t.get('partial_25_triggered') else ""
         tp1_label   = " · TP1✅" if t.get('tp1_triggered') else ""
         dirlab      = "🟢 LONG" if t.get('direction', 'LONG') == 'LONG' else "🔴 SHORT"
+        direction   = t.get('direction', 'LONG')
         score       = t.get('score', 0)
         tf          = t.get('timeframe', '4H')
+        entry       = t['entry']
+        curr_p      = t.get('current_price', entry)
+        pos_size    = t.get('pos_size', POSITION_SIZE)
+
+        # P&L חי לעסקה זו
+        if direction == 'LONG':
+            trade_pnl = round(pos_size * (curr_p - entry) / entry, 2)
+        else:
+            trade_pnl = round(pos_size * (entry - curr_p) / entry, 2)
+        dist_pct  = round(abs(curr_p - entry) / entry * 100, 2)
+        pnl_icon  = "📈" if trade_pnl >= 0 else "📉"
+        tp1_bonus = f" \\+TP1: \\+${t.get('tp1_pnl', 0):.2f}" if t.get('tp1_triggered') else ""
+
         msg += (
-            f"*{i}. {t['symbol']}* {dirlab} [{tf}] · {phase_label}{be_label}{tp1_label}\n"
+            f"*{i}. {t['symbol']}* {dirlab} [{tf}] · {phase_label}{be_label}{p25_label}{tp1_label}\n"
             f"   ניקוד: *{score}/100* | ATR: `{t.get('atr', 0):.6g}`\n"
-            f"   כניסה: `{t['entry']:.6g}`\n"
+            f"   כניסה: `{entry:.6g}` → נוכחי: `{curr_p:.6g}` ({'+' if curr_p>=entry else ''}{dist_pct:.2f}%)\n"
+            f"   {pnl_icon} *P&L: `{trade_pnl:+.2f}$`*{tp1_bonus}\n"
             f"   🛑 SL: `{t['sl']:.6g}` | 🎯 TP: `{t['tp']:.6g}`\n"
-            f"   🔒 BE: `{t['be_lvl']:.6g}` | 🎯 TP1: `{t['tp1']:.6g}`\n"
         )
         if t.get('trailing_sl'):
-            ref = "שיא" if t.get('direction', 'LONG') == 'LONG' else "שפל"
+            ref = "שיא" if direction == 'LONG' else "שפל"
             msg += f"   📍 Trailing SL: `{t['trailing_sl']:.6g}` | {ref}: `{t['peak_price']:.6g}`\n"
         msg += "\n"
-    msg += f"_לעדכון SL/TP: /update SYMBOL SL TP_\n"
-    msg += f"_לסגירה ידנית: /close SYMBOL_"
+
+    # סיכום unrealized כולל
+    total_icon = "📈" if total_unrealized >= 0 else "📉"
+    realized   = round(wallet.get('total_pnl', 0.0), 2)
+    real_icon  = "📈" if realized >= 0 else "📉"
+    msg += (
+        f"━━━━━━━━━━━━━━━━\n"
+        f"{total_icon} *Unrealized כולל: `{total_unrealized:+.2f}$`*\n"
+        f"{real_icon} *Realized היום: `{round(daily_stats.get('total_pnl', 0), 2):+.2f}$`*\n\n"
+        f"_לעדכון SL/TP: /update SYMBOL SL TP_\n"
+        f"_לסגירה ידנית: /close SYMBOL_"
+    )
     send_msg(msg)
 
 @bot.message_handler(commands=['update'])
@@ -4348,15 +4385,40 @@ def handle_scan(message):
                 else " 🔒 Kill\\-Switch" if fng_v_m < EXTREME_FEAR_THRESHOLD and btc_regime_now != 'BULL'
                 else ""
             )
+            # Unrealized P&L בזמן אמת לסיכום הסריקה
+            try:
+                unreal_m = _get_unrealized_pnl()
+            except Exception:
+                unreal_m = 0.0
+            unreal_icon_m = "📈" if unreal_m >= 0 else "📉"
+
+            # שורות P&L פר עסקה פתוחה
+            per_trade_lines = ""
+            for t_m in active_trades:
+                dir_m   = t_m.get('direction', 'LONG')
+                e_m     = t_m.get('entry', 0)
+                cp_m    = t_m.get('current_price', e_m)
+                ps_m    = t_m.get('pos_size', POSITION_SIZE)
+                if e_m > 0:
+                    tpnl_m = round(ps_m * (cp_m - e_m) / e_m, 2) if dir_m == 'LONG' \
+                             else round(ps_m * (e_m - cp_m) / e_m, 2)
+                    tpnl_icon = "📈" if tpnl_m >= 0 else "📉"
+                    per_trade_lines += (
+                        f"  {tpnl_icon} {t_m['symbol'].replace('/USDT','')} "
+                        f"`{tpnl_m:+.2f}$` @ `{cp_m:.6g}`\n"
+                    )
+
             send_msg(
                 f"✅ *סריקה ידנית הושלמה*\n\n"
                 f"🔍 נסרקו: *{total_scanned}* מטבעות\n"
                 f"📊 איתותים: *{signals_found}*\n"
                 f"{fng_emoji_m} Fear & Greed: *{fng_v_m}* — _{fng_lbl_m}_{ks_note_m}\n"
                 f"📊 עסקאות פעילות: *{len(active_trades)}*\n"
-                f"💰 P&L היום: *${pnl_today:+}*"
+                + (f"\n*P&L פר עסקה \\(חי\\):*\n{per_trade_lines}" if per_trade_lines else "")
+                + f"{unreal_icon_m} Unrealized: *${unreal_m:+.2f}*\n"
+                f"💰 Realized היום: *${pnl_today:+}*"
                 f"{bub_note}\n"
-                f"_השתמש ב /scanreport לדוח מלא_"
+                f"_השתמש ב /status לפרטים מלאים_"
             )
 
             # שמירת דוח סריקה

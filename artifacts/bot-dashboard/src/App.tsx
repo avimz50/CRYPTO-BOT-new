@@ -219,6 +219,8 @@ interface Trade {
   be_triggered: boolean;
   tp1_triggered: boolean;
   tp1_pnl?: number;
+  partial_25_triggered?: boolean;
+  pos_size?: number;
   score: number;
   atr: number;
   peak_price: number;
@@ -354,22 +356,24 @@ function TradeCard({ trade }: { trade: Trade }) {
   const isLong  = trade.direction === "LONG";
   const dirColor = isLong ? "text-green-400" : "text-red-400";
   const dirBg   = isLong ? "bg-green-500/10 border-green-500/25" : "bg-red-500/10 border-red-500/25";
-  const phase   = trade.phase === "trailing" ? "🔄 Trailing" : "📊 Initial";
-  const beLabel = trade.be_triggered ? " · 🔒 BE" : "";
+  const phase    = trade.phase === "trailing" ? "🔄 Trailing" : "📊 Initial";
+  const beLabel  = trade.be_triggered ? " · 🔒 BE" : "";
+  const p25Label = trade.partial_25_triggered ? " · ⚡25%" : "";
   const tp1Label = trade.tp1_triggered ? " · TP1 ✅" : "";
-  const tf      = trade.timeframe ?? "4H";
+  const tf       = trade.timeframe ?? "4H";
 
-  // Floating P&L for this trade
-  const cp      = trade.current_price ?? trade.entry;
-  const rawPct  = (cp - trade.entry) / trade.entry * 100;
-  const pnlPct  = isLong ? rawPct : -rawPct;
-  const pnlUsd  = trade.tp1_triggered
-    ? (trade.tp1_pnl ?? 0) + 250 * pnlPct / 100
-    : 500 * pnlPct / 100;
+  // Floating P&L for this trade — use live pos_size from bot (accounts for partial closes)
+  const cp       = trade.current_price ?? trade.entry;
+  const rawPct   = (cp - trade.entry) / trade.entry * 100;
+  const pnlPct   = isLong ? rawPct : -rawPct;
+  const posSize  = trade.pos_size ?? 500;   // live remaining position from bot
+  const pnlUsd   = trade.tp1_triggered
+    ? (trade.tp1_pnl ?? 0) + posSize * pnlPct / 100
+    : posSize * pnlPct / 100;
   const isProfit = pnlUsd >= 0;
 
-  // Expected P&L at TP and SL  (position size = $500 = $50 margin × 10x leverage)
-  const POSITION = 500;
+  // Expected P&L at TP and SL  (position size from bot or default $500)
+  const POSITION = posSize;
   const estProfit = trade.tp && trade.entry
     ? Math.abs(trade.tp - trade.entry) / trade.entry * POSITION
     : null;
@@ -414,7 +418,7 @@ function TradeCard({ trade }: { trade: Trade }) {
               📈 גרף Bitget
             </a>
           </div>
-          <p className="text-xs text-gray-500 mt-0.5">{phase}{beLabel}{tp1Label}</p>
+          <p className="text-xs text-gray-500 mt-0.5">{phase}{beLabel}{p25Label}{tp1Label}</p>
         </div>
         <ScoreBar score={trade.score} />
       </div>
@@ -544,6 +548,7 @@ interface ScanData {
   system_message: string;
   scan_duration_s: number;
   bubble_watch?: BubbleCoin[];
+  min_score?: number;
 }
 
 function LastScanStatus({ scan }: { scan: ScanData | null }) {
@@ -868,12 +873,13 @@ export default function App() {
   // Floating P&L — prefer authoritative value from API, fall back to client-side calc
   const floatingAPI = walletData?.unrealized_pnl;
   const floatingCalc = trades.reduce((sum, t) => {
-    const cp  = t.current_price ?? t.entry;
-    const raw = (cp - t.entry) / t.entry * 100;
-    const pct = t.direction === "LONG" ? raw : -raw;
+    const cp     = t.current_price ?? t.entry;
+    const raw    = (cp - t.entry) / t.entry * 100;
+    const pct    = t.direction === "LONG" ? raw : -raw;
+    const tSize  = t.pos_size ?? 500;   // use live pos_size from bot
     const usd = t.tp1_triggered
-      ? (t.tp1_pnl ?? 0) + 250 * pct / 100
-      : 500 * pct / 100;
+      ? (t.tp1_pnl ?? 0) + tSize * pct / 100
+      : tSize * pct / 100;
     return sum + usd;
   }, 0);
   const floating = floatingAPI ?? floatingCalc;
