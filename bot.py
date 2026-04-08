@@ -92,7 +92,7 @@ def get_fear_greed():
 
 # ─── Global Sentiment Thresholds ──────────────────────────────────────────────
 _FNG_SETTINGS_FILE = os.path.join(os.path.dirname(__file__), 'fng_settings.json')
-_FNG_DEFAULTS      = {'extreme_fear': 13, 'fear': 30, 'greed': 70}
+_FNG_DEFAULTS      = {'extreme_fear': 25, 'fear': 30, 'greed': 70}   # Adaptive Sniper: Extreme Fear = <25
 
 def _load_fng_settings() -> dict:
     try:
@@ -464,8 +464,8 @@ IS_DEPLOYED = bool(os.environ.get('REPLIT_DEPLOYMENT', ''))
 
 # --- פרמטרי מינוף (דמו) ---
 LEVERAGE       = 10          # מינוף 10x
-MARGIN         = 50          # בטחון ($) לכל עסקה
-POSITION_SIZE  = MARGIN * LEVERAGE   # $500 נשלט
+MARGIN         = 40          # בטחון ($) לכל עסקה — Adaptive Sniper: $40 per slot
+POSITION_SIZE  = MARGIN * LEVERAGE   # $400 נשלט
 
 # רשימה למעקב אחרי עסקאות דמו פתוחות
 active_trades      = []
@@ -1411,25 +1411,34 @@ def get_btc_regime():
 # מנוע ניקוד מקצועי — Professional Scoring System
 # ═══════════════════════════════════════════════════════════════
 
-MIN_SCORE  = 60   # סף כניסה — Hunter Mode (היה 90)
-MAX_TRADES = 3    # מקסימום 3 עסקאות פתוחות במקביל
-RSI_VETO_LONG  = 85   # RSI וטו LONG — הורחב ל-85 (היה 70); גבולות Upper BB מבטלים גם זאת
-RSI_VETO_SHORT = 20   # RSI וטו SHORT — הורחב ל-20 (היה 28)
-EMA_PROXIMITY_PCT   = 5.0   # Anti-Chase EMA200 — הורחב ל-5% (היה 2.5)
-VOL_EMA_BYPASS_MULT = 1.5   # Volume ≥ ×1.5 → מבטל את וטו EMA200 לגמרי (Breakout IS the trend)
-TRAIL_ACTIVATION_PCT = 2.0   # % רווח מינימלי להפעלת Trailing — הופחת ל-2% (היה 2.5)
-BE_BUFFER_PCT        = 2.0   # % רווח להפעלת Break-Even — הופחת ל-2% (היה 3.0)
+# ════════════════════════════════════════════════════════════════
+#  Adaptive Sniper 2026 — Strategy Parameters
+# ════════════════════════════════════════════════════════════════
+MIN_SCORE  = 92   # סף כניסה — Adaptive Sniper (היה 60)
+MAX_TRADES = 5    # מקסימום 5 עסקאות פתוחות — 5 Slots
+RSI_VETO_LONG  = 85   # RSI וטו LONG — גבולות Upper BB מבטלים גם זאת
+RSI_VETO_SHORT = 20   # RSI וטו SHORT
+EMA_PROXIMITY_PCT   = 5.0   # Anti-Chase EMA200 ±5%
+VOL_EMA_BYPASS_MULT = 1.5   # Volume ≥ ×1.5 → מבטל וטו EMA200 (Breakout IS the trend)
+TRAIL_ACTIVATION_PCT = 5.0   # % רווח להפעלת Trailing — מיושר עם TP1=5%
+BE_BUFFER_PCT        = 5.0   # % רווח להפעלת Break-Even — מיושר עם TP1 (5%)
 BE_LOCK_BUFFER_PCT   = 0.1   # % מעל הכניסה שאליו SL עובר ב-Break-Even
-TRAIL_PCT            = 3.5   # % Trailing Stop מינימלי (fallback אם ATR קטן)
+TRAIL_PCT            = 4.0   # % Trailing Stop מינימלי (fallback אם ATR קטן)
 ATR_TRAIL_MULT       = 1.5   # מכפיל ATR ל-Trailing Stop (1.5× ATR מהשיא)
-PARTIAL_25_TRIGGER   = 3.0   # % רווח שממנו מעקבים ל-"נפילה" לסגירת 25%
-PARTIAL_25_DROP      = 0.8   # % ירידה מהשיא שמפעילה סגירת 25%
-SL_PCT_FIXED         = 3.5   # % SL קבוע מהכניסה (היה 2.5)
-TP1_PCT_FIXED        = 3.0   # % TP1 — סגירת 50% ומעבר ל-Breakeven
-TP_PCT_FIXED         = 10.0  # % TP מלא — 50% הנותרים רצים ל-10%
+PARTIAL_25_TRIGGER   = 5.0   # % רווח לסגירת 25% — מיושר עם TP1=5%
+PARTIAL_25_DROP      = 1.0   # % ירידה מהשיא שמפעילה סגירת 25%
+SL_PCT_FIXED         = 3.0   # % SL קבוע מהכניסה — Adaptive Sniper: 3% (היה 3.5)
+TP1_PCT_FIXED        = 5.0   # % TP1 — סגירת 50% ומעבר ל-BE (היה 3.0)
+TP_PCT_FIXED         = 15.0  # % TP מלא — 50% הנותרים רצים ל-15% (היה 10.0)
+
+# ── Slow-Movers Blacklist — מטבעות איטיים שלא נסחר בהם ────────────────────────
+SLOW_MOVERS = {'TRX/USDT', 'ADA/USDT'}   # Adaptive Sniper: ignore low-momentum coins
+
+# ── Extreme Fear Adaptive Logic ────────────────────────────────────────────────
+EXTREME_FEAR_LONG_MIN_SCORE = 95   # בפחד קיצוני: LONG רק עם ציון >95 (מאוד סלקטיבי)
 
 # ─── Sniper Exception — Override Kill-Switch under STRICT conditions ───────────
-SNIPER_MIN_SCORE   = 60    # ציון מינימום Sniper — מותאם ל-Hunter Mode
+SNIPER_MIN_SCORE   = 92    # ציון מינימום Sniper — Adaptive Sniper (היה 60)
 SNIPER_EMA_PCT     = 5.0   # מחיר חייב תוך 5% מ-EMA200 (אין רדיפת פאמפים)
 SNIPER_VOL_MIN     = 2.5   # Volume לפחות 2.5× הממוצע — אישור כניסה
 SNIPER_MARGIN_MULT = 0.5   # Half-Size Entry: 50% מגודל הפוזיציה הרגיל
@@ -1930,13 +1939,13 @@ def score_symbol(df_3h, df_1h, symbol, direction='LONG'):
         # ════════════════════════════════════════
         # 5. VOLUME — 30 נקודות | HARD VETO <×1.2
         # ════════════════════════════════════════
-        if vol_rat < 1.2:
-            # Volume מתחת לסף מינימום — לא נכנסים!
-            return 0, f"Volume VETO: {vol_rat:.2f}× < 1.2× avg (no real move)", atr_v
+        if vol_rat < 1.5:
+            # Volume מתחת לסף מינימום — Adaptive Sniper: חייב ×1.5 לפחות
+            return 0, f"Volume VETO: {vol_rat:.2f}× < 1.5× avg (Adaptive Sniper threshold)", atr_v
 
         if   vol_rat >= 2.0: v_pts = 30   # ספייק חזק ×2 — אישור מלא
-        elif vol_rat >= 1.5: v_pts = 20   # ספייק טוב ×1.5
-        else:                v_pts = 10   # ספייק מינימלי ×1.2
+        elif vol_rat >= 1.5: v_pts = 20   # ספייק טוב ×1.5 — סף מינימום Adaptive Sniper
+        else:                v_pts = 10   # (לא ייגע לכאן יותר)
 
         score += v_pts
         parts.append(f"Vol={v_pts}/30(×{vol_rat:.1f})")
@@ -4564,6 +4573,19 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
             print(f"Max trades ({MAX_TRADES}) reached — skipping rest of batch")
             break
         symbol = candidate['symbol']
+
+        # ── Slow-Movers Blacklist — Adaptive Sniper ignores low-momentum coins ──
+        if symbol in SLOW_MOVERS:
+            print(f"  [SLOW_MOVERS] {symbol} — blacklisted (low momentum), skipping")
+            if rejected_out is not None:
+                rejected_out.append({
+                    'symbol': symbol, 'direction': direction, 'best_score': 0,
+                    'reason': 'Slow-Mover Blacklist (TRX/ADA — low momentum)',
+                    'scores': {},
+                })
+            continue
+
+        # ── 1 trade per symbol enforcement ──
         if any(t['symbol'] == symbol for t in active_trades):
             continue
 
@@ -4665,6 +4687,24 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                         tf_reason = f'Scalp Entry ב-15m (4H={score_4h}, 1H={score_1h} < {MIN_SCORE})'
 
             if score >= MIN_SCORE:
+                # ── Extreme Fear: LONG מותנה — Adaptive Sniper ────────────────────
+                # בפחד קיצוני (FNG < EXTREME_FEAR_THRESHOLD) ו-BTC לא BULL:
+                # LONG דורש ציון > EXTREME_FEAR_LONG_MIN_SCORE (95) — מאוד סלקטיבי
+                # SHORT — מועדף ולא מוגבל
+                if (direction == 'LONG'
+                        and fng_v_scan < EXTREME_FEAR_THRESHOLD
+                        and not btc_overrides_killswitch
+                        and score < EXTREME_FEAR_LONG_MIN_SCORE):
+                    print(f"  [EXTREME_FEAR_FILTER] {symbol} LONG rejected: "
+                          f"FNG={fng_v_scan}<{EXTREME_FEAR_THRESHOLD}, "
+                          f"Score={score}<{EXTREME_FEAR_LONG_MIN_SCORE} (need >{EXTREME_FEAR_LONG_MIN_SCORE} in fear)")
+                    rejected_out.append({
+                        'symbol': symbol, 'direction': direction, 'best_score': score,
+                        'reason': f'Extreme Fear Filter: LONG requires score>{EXTREME_FEAR_LONG_MIN_SCORE} (FNG={fng_v_scan})',
+                        'scores': {'4H': score_4h, '1H': score_1h, '15m': score_15m},
+                    })
+                    continue
+
                 # חישוב RSI ו-EMA200 רגע לפני פתיחה לשמירה בדוח
                 try:
                     _last_rsi   = ta.rsi(chosen_df['close'], length=14).iloc[-1]
@@ -4672,8 +4712,8 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                 except Exception:
                     _last_rsi = _last_ema = None
 
-                # ── Fear Filter RSI: REMOVED — Hunter Mode uses RSI_VETO_LONG (85) only ──
-                # FNG sentiment does NOT restrict RSI for LONG entries anymore.
+                # ── Fear Filter RSI: REMOVED — Adaptive Sniper uses RSI_VETO_LONG (85) only ──
+                # FNG sentiment controlled via EXTREME_FEAR_LONG_MIN_SCORE for LONGs.
 
                 # ── IG-2: Multi-TF RSI + Volume context for Claude ──────────────
                 try:

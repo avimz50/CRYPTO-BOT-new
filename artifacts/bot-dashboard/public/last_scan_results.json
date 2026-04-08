@@ -1,64 +1,64 @@
 {
-  "scan_time": "2026-04-06T21:45:57+03:00",
-  "total_scanned": 32,
-  "signals_found": 7,
-  "active_trades_count": 2,
+  "scan_time": "2026-04-07T12:39:05+03:00",
+  "total_scanned": 33,
+  "signals_found": 2,
+  "active_trades_count": 1,
   "max_trades": 3,
   "min_score": 60,
   "btc_regime": "BULL",
-  "fng_value": 13,
+  "fng_value": 11,
   "fng_label": "Extreme Fear",
-  "market_sentiment_factor": "Fear & Greed=13 (Extreme Fear) — ⚡ BTC BULL Compass: Kill-Switch מבוטל! סורק בחופשיות",
+  "market_sentiment_factor": "Fear & Greed=11 (Extreme Fear) — ⚡ BTC BULL Compass: Kill-Switch מבוטל! סורק בחופשיות",
   "rejected_coins": [
     {
-      "symbol": "HNT/USDT",
+      "symbol": "POWER/USDT",
       "direction": "LONG",
-      "best_score": 43,
-      "reason": "ניקוד 43/100 — MACD חסר (10/25), RSI חלש (0/20)",
+      "best_score": 57,
+      "reason": "ניקוד 57/100 — MACD חסר (10/25), RSI חלש (10/20)",
       "scores": {
-        "4H": 43,
+        "4H": 57,
         "1H": 0,
         "15m": 0
       }
     },
     {
-      "symbol": "TRU/USDT",
+      "symbol": "POWR/USDT",
       "direction": "LONG",
-      "best_score": 0,
-      "reason": "ניקוד 0/100 — כלל הפילטרים",
+      "best_score": 50,
+      "reason": "ניקוד 50/100 — MACD חסר (5/25), RSI חלש (5/20)",
+      "scores": {
+        "4H": 0,
+        "1H": 50,
+        "15m": 0
+      }
+    },
+    {
+      "symbol": "BANK/USDT",
+      "direction": "LONG",
+      "best_score": 48,
+      "reason": "ניקוד 48/100 — MACD חסר (0/25), RSI חלש (0/20)",
+      "scores": {
+        "4H": 47,
+        "1H": 0,
+        "15m": 48
+      }
+    },
+    {
+      "symbol": "KITE/USDT",
+      "direction": "LONG",
+      "best_score": 48,
+      "reason": "ניקוד 48/100 — MACD חסר (0/25), RSI חלש (0/20)",
       "scores": {
         "4H": 0,
         "1H": 0,
-        "15m": 0
+        "15m": 48
       }
     },
     {
-      "symbol": "LAB/USDT",
+      "symbol": "RED/USDT",
       "direction": "LONG",
       "best_score": 0,
-      "reason": "ניקוד 0/100 — כלל הפילטרים",
-      "scores": {
-        "4H": 0,
-        "1H": 0,
-        "15m": 0
-      }
-    },
-    {
-      "symbol": "TRIA/USDT",
-      "direction": "LONG",
-      "best_score": 0,
-      "reason": "Volume VETO: 0.77× < 1.2× avg (no real move)",
-      "scores": {
-        "4H": 0,
-        "1H": 0,
-        "15m": 0
-      }
-    },
-    {
-      "symbol": "PRL/USDT",
-      "direction": "LONG",
-      "best_score": 0,
-      "reason": "ניקוד 0/100 — כלל הפילטרים",
+      "reason": "EMA200 chase veto (64.2% above EMA200)",
       "scores": {
         "4H": 0,
         "1H": 0,
@@ -66,79 +66,120 @@
       }
     }
   ],
-  "system_message": "7 עסקה/ות נפתחו — סריקה ידנית",
-  "scan_duration_s": 18.1,
+  "system_message": "2 עסקה/ות נפתחו — סריקה ידנית",
+  "scan_duration_s": 13.2,
   "bubble_watch": [
     {
-      "symbol": "TRU/USDT",
-      "change_pct": 61.66,
+      "symbol": "RED/USDT",
+      "change_pct": 58.11,
       "direction": "LONG",
-      "price": 0.00957,
-      "volume_usd": 1922937
+      "price": 0.2095,
+      "volume_usd": 1212895
     },
     {
-      "symbol": "APR/USDT",
-      "change_pct": 28.25,
+      "symbol": "TRU/USDT",
+      "change_pct": -38.05,
+      "direction": "SHORT",
+      "price": 0.00806,
+      "volume_usd": 1571880
+    },
+    {
+      "symbol": "LAB/USDT",
+      "change_pct": 23.75,
       "direction": "LONG",
-      "price": 0.2165,
-      "volume_usd": 6261926
+      "price": 0.31981,
+      "volume_usd": 1492398
+    },
+    {
+      "symbol": "BANK/USDT",
+      "change_pct": 23.14,
+      "direction": "LONG",
+      "price": 0.03449,
+      "volume_usd": 1235756
     },
     {
       "symbol": "RLS/USDT",
-      "change_pct": -26.21,
+      "change_pct": -21.48,
       "direction": "SHORT",
-      "price": 0.0038,
-      "volume_usd": 2024960
+      "price": 0.00307,
+      "volume_usd": 1714569
+    },
+    {
+      "symbol": "BSB/USDT",
+      "change_pct": -20.87,
+      "direction": "SHORT",
+      "price": 0.16467,
+      "volume_usd": 1405560
+    },
+    {
+      "symbol": "POWER/USDT",
+      "change_pct": 19.69,
+      "direction": "LONG",
+      "price": 0.103962,
+      "volume_usd": 1390889
     },
     {
       "symbol": "STO/USDT",
-      "change_pct": -18.36,
+      "change_pct": -13.54,
       "direction": "SHORT",
-      "price": 0.1472,
-      "volume_usd": 12522720
+      "price": 0.1377,
+      "volume_usd": 5348498
     },
     {
-      "symbol": "LAB/USDT",
-      "change_pct": 15.62,
-      "direction": "LONG",
-      "price": 0.284,
-      "volume_usd": 1603308
-    },
-    {
-      "symbol": "TRIA/USDT",
-      "change_pct": 15.12,
-      "direction": "LONG",
-      "price": 0.027475,
-      "volume_usd": 2457026
+      "symbol": "ARIA/USDT",
+      "change_pct": -13.1,
+      "direction": "SHORT",
+      "price": 0.54442,
+      "volume_usd": 1341821
     },
     {
       "symbol": "RIVER/USDT",
-      "change_pct": 14.44,
+      "change_pct": 13.0,
       "direction": "LONG",
-      "price": 12.722,
-      "volume_usd": 10028770
-    },
-    {
-      "symbol": "MEZO/USDT",
-      "change_pct": -14.39,
-      "direction": "SHORT",
-      "price": 0.04134,
-      "volume_usd": 26745180
-    },
-    {
-      "symbol": "PRL/USDT",
-      "change_pct": 14.32,
-      "direction": "LONG",
-      "price": 0.18657,
-      "volume_usd": 2076241
-    },
-    {
-      "symbol": "JCT/USDT",
-      "change_pct": -12.77,
-      "direction": "SHORT",
-      "price": 0.003287,
-      "volume_usd": 2450666
+      "price": 11.9361,
+      "volume_usd": 10811070
     }
   ],
-  "sandbox_analysis": []
+  "sandbox_analysis": [
+    {
+      "symbol": "RED/USDT",
+      "direction": "LONG",
+      "change_24h": 58.11,
+      "price": 0.209,
+      "rsi_4h": 81.0,
+      "rsi_1h": 64.0,
+      "rsi_15m": 57.8,
+      "volume_ratio": 1.29,
+      "score": 0,
+      "verdict": "REJECT ❌",
+      "analysis": "The RSI is overextended across all timeframes, indicating a potential pullback.",
+      "ema200_4h": 0.127324,
+      "fib_500": 0.20055,
+      "fib_618": 0.190697,
+      "entry_zone": "0.121948 - 0.190697",
+      "entry_reason": "Fib 0.618 pullback",
+      "rsi_wait": "Wait for RSI 15m to drop below 45",
+      "overextended": true
+    },
+    {
+      "symbol": "TRU/USDT",
+      "direction": "SHORT",
+      "change_24h": -38.05,
+      "price": 0.00806,
+      "rsi_4h": 60.1,
+      "rsi_1h": 46.5,
+      "rsi_15m": 43.7,
+      "volume_ratio": 0.23,
+      "score": 0,
+      "verdict": "REJECT ❌",
+      "analysis": "The move appears overextended with RSI divergence across multiple timeframes.",
+      "ema200_4h": 0.005265,
+      "fib_500": 0.00938,
+      "fib_618": 0.009769,
+      "entry_zone": "0.005265 - 0.009769",
+      "entry_reason": "EMA200 4H retest",
+      "rsi_wait": "Wait for RSI 15m to drop below 45",
+      "overextended": true
+    }
+  ]
 }
