@@ -5387,8 +5387,8 @@ def scalp_scan_loop():
                         if any(t['symbol'] == sym for t in active_trades):
                             continue
 
-                    price = ticker.get('last', 0)
-                    if price <= 0 or (ticker.get('quoteVolume') or 0) < 1_000_000:
+                    price = ticker.get('last') or 0
+                    if not price or price <= 0 or (ticker.get('quoteVolume') or 0) < 1_000_000:
                         continue
 
                     ok, rsi15, drop_pct, bounce_pct = _check_quick_long(sym, price)
