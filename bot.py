@@ -1055,12 +1055,22 @@ def wallet_credit(pnl_usd: float, amount: float = MARGIN):
 def place_order(trade: dict, margin: float = MARGIN) -> bool:
     """
     רושם עסקה חדשה:
+      • בדיקת כפילות גלובלית — One Trade Per Symbol (חסין לכל סקאנר)
       • מוסיף ל-active_trades (עם trades_lock)
       • מנכה מרג'ין מהארנק (wallet_deduct)
       • שומר active_trades ל-disk (save_active_trades)
-    מחזיר True בהצלחה.
-    הבודק-יתרה ובדיקת-כפילות הם אחריות הקורא לפני הקריאה.
+    מחזיר True בהצלחה, False אם נחסם (כפילות / יתרה).
     """
+    symbol = trade.get('symbol', '')
+
+    # ══ GLOBAL DUPLICATE GUARD — One Trade Per Symbol ══════════════════
+    with trades_lock:
+        existing_symbols = [t['symbol'] for t in active_trades]
+    if symbol in existing_symbols:
+        print(f"[place_order] 🚫 Signal detected for {symbol}, but skipped - Position already exists.")
+        return False
+    # ═══════════════════════════════════════════════════════════════════
+
     with trades_lock:
         active_trades.append(trade)
     wallet_deduct(margin)
