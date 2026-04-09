@@ -366,7 +366,7 @@ function TradeCard({ trade }: { trade: Trade }) {
   const cp       = trade.current_price ?? trade.entry;
   const rawPct   = (cp - trade.entry) / trade.entry * 100;
   const pnlPct   = isLong ? rawPct : -rawPct;
-  const posSize  = trade.pos_size ?? 400;   // live remaining position from bot (Adaptive Sniper: $40 × 10x = $400)
+  const posSize  = trade.pos_size ?? 500;   // live remaining position from bot ($50 × 10x = $500)
   const pnlUsd   = trade.tp1_triggered
     ? (trade.tp1_pnl ?? 0) + posSize * pnlPct / 100
     : posSize * pnlPct / 100;
@@ -868,7 +868,7 @@ export default function App() {
   const realized = walletData?.total_pnl ?? 0;
   const history  = walletData?.equity_history ?? [];
 
-  const MARGIN = 40;   // Adaptive Sniper: $40 margin per slot
+  const MARGIN = 50;   // $50 margin per slot (March 26-27 config)
 
   // Floating P&L — prefer authoritative value from API, fall back to client-side calc
   const floatingAPI = walletData?.unrealized_pnl;

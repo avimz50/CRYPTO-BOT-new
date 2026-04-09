@@ -464,8 +464,8 @@ IS_DEPLOYED = bool(os.environ.get('REPLIT_DEPLOYMENT', ''))
 
 # --- פרמטרי מינוף (דמו) ---
 LEVERAGE       = 10          # מינוף 10x
-MARGIN         = 40          # בטחון ($) לכל עסקה — Adaptive Sniper: $40 per slot
-POSITION_SIZE  = MARGIN * LEVERAGE   # $400 נשלט
+MARGIN         = 50          # בטחון ($) לכל עסקה — חזרה לפרמטרים של מרץ 26-27 ($50)
+POSITION_SIZE  = MARGIN * LEVERAGE   # $500 נשלט
 
 # רשימה למעקב אחרי עסקאות דמו פתוחות
 active_trades      = []
@@ -1414,16 +1414,16 @@ def get_btc_regime():
 # ════════════════════════════════════════════════════════════════
 #  Adaptive Sniper 2026 — Strategy Parameters
 # ════════════════════════════════════════════════════════════════
-MIN_SCORE  = 92   # סף כניסה — Adaptive Sniper (היה 60)
-MAX_TRADES = 5    # מקסימום 5 עסקאות פתוחות — 5 Slots
-RSI_VETO_LONG  = 85   # RSI וטו LONG — גבולות Upper BB מבטלים גם זאת
+MIN_SCORE  = 92   # סף כניסה — Adaptive Sniper
+MAX_TRADES = 3    # מקסימום 3 עסקאות — Focus on quality (חזרה למרץ 26-27)
+RSI_VETO_LONG  = 65   # RSI וטו LONG — 65 כמו מרץ 26-27 (לא לרדוף פאמפים)
 RSI_VETO_SHORT = 20   # RSI וטו SHORT
-EMA_PROXIMITY_PCT   = 5.0   # Anti-Chase EMA200 ±5%
+EMA_PROXIMITY_PCT   = 2.5   # Anti-Chase EMA200 — 2.5% בלבד (הדוק, כמו מרץ 26-27)
 VOL_EMA_BYPASS_MULT = 1.5   # Volume ≥ ×1.5 → מבטל וטו EMA200 (Breakout IS the trend)
-TRAIL_ACTIVATION_PCT = 5.0   # % רווח להפעלת Trailing — מיושר עם TP1=5%
-BE_BUFFER_PCT        = 5.0   # % רווח להפעלת Break-Even — מיושר עם TP1 (5%)
+TRAIL_ACTIVATION_PCT = 2.0   # % רווח להפעלת Trailing — מוקדם (מיושר עם BE=2%)
+BE_BUFFER_PCT        = 2.0   # % רווח להפעלת Break-Even — 2% כמו מרץ 26-27 (מוקדם!)
 BE_LOCK_BUFFER_PCT   = 0.1   # % מעל הכניסה שאליו SL עובר ב-Break-Even
-TRAIL_PCT            = 4.0   # % Trailing Stop מינימלי (fallback אם ATR קטן)
+TRAIL_PCT            = 1.5   # % Trailing Stop — 1.5% כמו מרץ 26-27 (לנעול רווח מהר)
 ATR_TRAIL_MULT       = 1.5   # מכפיל ATR ל-Trailing Stop (1.5× ATR מהשיא)
 PARTIAL_25_TRIGGER   = 5.0   # % רווח לסגירת 25% — מיושר עם TP1=5%
 PARTIAL_25_DROP      = 1.0   # % ירידה מהשיא שמפעילה סגירת 25%
