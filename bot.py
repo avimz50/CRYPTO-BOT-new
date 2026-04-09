@@ -1028,8 +1028,14 @@ def load_active_trades():
 
 def save_wallet():
     try:
+        locked = sum(t.get('margin', MARGIN) for t in active_trades)
+        snapshot = {
+            **wallet,
+            'locked_balance':    round(locked, 2),
+            'available_balance': round(wallet.get('balance', STARTING_BALANCE), 2),
+        }
         with open(WALLET_FILE, 'w') as f:
-            json.dump(wallet, f)
+            json.dump(snapshot, f)
     except Exception as e:
         print(f"Wallet save error: {e}")
 

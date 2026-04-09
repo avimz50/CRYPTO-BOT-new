@@ -259,7 +259,11 @@ function useClock() {
 }
 
 function useJson<T>(primaryUrl: string, fallbackUrl: string, interval = 30_000) {
-  const [data, setData] = useState<T | null>(null);
+  const [data, setData]       = useState<T | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const refetch = useCallback(() => setRefreshKey(k => k + 1), []);
+
   useEffect(() => {
     const fetch_ = () =>
       fetch(primaryUrl + "?t=" + Date.now())
@@ -274,8 +278,9 @@ function useJson<T>(primaryUrl: string, fallbackUrl: string, interval = 30_000) 
     fetch_();
     const id = setInterval(fetch_, interval);
     return () => clearInterval(id);
-  }, [primaryUrl, fallbackUrl, interval]);
-  return data;
+  }, [primaryUrl, fallbackUrl, interval, refreshKey]);
+
+  return { data, refetch };
 }
 
 function fmt(n: number) {
@@ -842,11 +847,18 @@ function FngSettingsPanel({ botApi }: { botApi: string }) {
 
 export default function App() {
   const now        = useClock();
-  const hotData    = useJson<HotData>(`${BOT_API}/api/hot`,    "/hot_candidates.json", 60_000);
-  const tradesData = useJson<TradesData>(`${BOT_API}/api/trades`, "/active_trades.json", 30_000);
-  const walletData = useJson<WalletData>(`${BOT_API}/api/wallet`, "/wallet.json",        30_000);
-  const fngData    = useJson<FngData>(`${BOT_API}/api/fng`,    "/fng.json",             120_000);
-  const scanData   = useJson<ScanData>(`${BOT_API}/api/last_scan`, "/last_scan_results.json", 120_000);
+  const { data: hotData,   refetch: refetchHot   } = useJson<HotData>(`${BOT_API}/api/hot`,       "/hot_candidates.json",      60_000);
+  const { data: tradesData, refetch: refetchTrades } = useJson<TradesData>(`${BOT_API}/api/trades`, "/active_trades.json",       30_000);
+  const { data: walletData, refetch: refetchWallet } = useJson<WalletData>(`${BOT_API}/api/wallet`, "/wallet.json",              30_000);
+  const { data: fngData,   refetch: refetchFng   } = useJson<FngData>(`${BOT_API}/api/fng`,       "/fng.json",                120_000);
+  const { data: scanData,  refetch: refetchScan  } = useJson<ScanData>(`${BOT_API}/api/last_scan`, "/last_scan_results.json",  120_000);
+
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshAll = useCallback(() => {
+    setRefreshing(true);
+    refetchHot(); refetchTrades(); refetchWallet(); refetchFng(); refetchScan();
+    setTimeout(() => setRefreshing(false), 1200);
+  }, [refetchHot, refetchTrades, refetchWallet, refetchFng, refetchScan]);
 
   const SCAN_INTERVAL = 3600; // seconds
   // חישוב "סריקה הבאה" לפי זמן הסריקה האחרונה + שעה — לא לפי שעה עגולה
@@ -909,6 +921,15 @@ export default function App() {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            <button
+              onClick={refreshAll}
+              disabled={refreshing}
+              className="flex items-center gap-1.5 bg-orange-500/10 border border-orange-500/30 rounded-full px-3 py-1.5 hover:bg-orange-500/20 transition-colors disabled:opacity-60"
+              title="רענן נתונים"
+            >
+              <span className={`text-base ${refreshing ? "animate-spin" : ""}`}>🔄</span>
+              <span className="text-orange-400 text-sm font-medium">{refreshing ? "מרענן..." : "סנכרן"}</span>
+            </button>
             <a
               href={`${BOT_API}/api/audit`}
               target="_blank"
