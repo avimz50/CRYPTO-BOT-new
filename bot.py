@@ -3586,11 +3586,12 @@ def _register_sol_trade(price: float, sl: float, tp: float, rsi: float | None):
     tp1_price = tp
     be_price  = round(price * 1.02, 6)                   # BE at +2%
 
-    # ── ATR חישוב ──────────────────────────────────────────────────────
+    # ── ATR חישוב + נתונים לגרף ─────────────────────────────────────────
     sol_atr = 0.0
+    df_sol  = None
     try:
-        df_atr = get_data(sym, timeframe='1h', limit=30)
-        atr_s  = ta.atr(df_atr['high'], df_atr['low'], df_atr['close'], length=14)
+        df_sol = get_data(sym, timeframe='1h', limit=80)
+        atr_s  = ta.atr(df_sol['high'], df_sol['low'], df_sol['close'], length=14)
         if atr_s is not None and not atr_s.isna().all():
             sol_atr = round(float(atr_s.iloc[-1]), 8)
     except Exception:
@@ -3627,7 +3628,7 @@ def _register_sol_trade(price: float, sl: float, tp: float, rsi: float | None):
         'sol_strategy':    True,
     }
     place_order(trade, MARGIN)
-    send_msg(
+    sol_msg = (
         f"✅ *SOL/USDT נרשמה כעסקה פעילה* 🟢\n\n"
         f"💵 כניסה: `{price:.3f}`\n"
         f"🛑 SL: `{sl:.3f}` (-{sl_pct}%)\n"
@@ -3636,6 +3637,9 @@ def _register_sol_trade(price: float, sl: float, tp: float, rsi: float | None):
         + _wallet_opened_summary() + "\n\n"
         + "_מעקב SL/TP פעיל — יתרה תעודכן אוטומטית_"
     )
+    sol_chart = generate_chart(df_sol, sym, price, sl, tp, 'LONG') \
+                if df_sol is not None else None
+    send_chart_alert(sol_chart, sym, sol_msg)
     print(f"[SOL] Trade registered: entry={price} SL={sl} TP={tp} RSI={rsi}")
 
 
@@ -5137,7 +5141,7 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
     be_trigger_pct = round(tp1_pct * SCALP_TRACK_BE_TRIGGER, 2)
     emoji     = "🟢" if direction == 'LONG' else "🔴"
     dir_label = "Quick-Long (Dip Buy)" if direction == 'LONG' else "Scalp-Short (Bubble)"
-    send_msg(
+    scalp_msg = (
         f"⚡ *{dir_label}: {symbol.replace('/USDT', '')} {emoji}*\n"
         f"_מסלול Scalp — Market Order — Mean Reversion_\n\n"
         f"💵 כניסה: `{price:.6g}` | נפח: ${vol_usd/1e6:.0f}M\n"
@@ -5152,6 +5156,13 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
         + _wallet_opened_summary() + "\n\n"
         + f"📋 _{reason}_"
     )
+    try:
+        df_scalp = get_data(symbol, timeframe='1h', limit=80)
+        chart_buf = generate_chart(df_scalp, symbol, price, sl_price, tp1_price, direction) \
+                    if df_scalp is not None else None
+    except Exception:
+        chart_buf = None
+    send_chart_alert(chart_buf, symbol, scalp_msg)
     print(f"[SCALP] {direction}: {symbol} @ {price:.6g} | SL={sl_pct}% TP={tp_pct}% BE@{be_trigger_pct}% | {leverage}x margin=${eff_margin} risk=${max_risk_usd} ({risk_pct_eq}%)")
 
 
@@ -5575,11 +5586,12 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
         f"FNG={fng_v} | RSI={rsi_str} | Vol×{vol_ratio:.1f}"
     )
 
-    # ── ATR חישוב אמיתי לשימוש ב-Trailing Stop ──────────────────────────
+    # ── נתוני 1H: לגם ATR וגם גרף (80 נרות = ~3.3 ימים) ─────────────────
+    df_1h   = None
     atr_val = 0.0
     try:
-        df_atr  = get_data(symbol, timeframe='1h', limit=30)
-        atr_s   = ta.atr(df_atr['high'], df_atr['low'], df_atr['close'], length=14)
+        df_1h = get_data(symbol, timeframe='1h', limit=80)
+        atr_s = ta.atr(df_1h['high'], df_1h['low'], df_1h['close'], length=14)
         if atr_s is not None and not atr_s.isna().all():
             atr_val = round(float(atr_s.iloc[-1]), 8)
     except Exception:
@@ -5631,7 +5643,9 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
         f"💼 {LEVERAGE}x · ${margin:.0f} מרג'ין · ${pos_size:.0f} נשלט\n\n"
         + _wallet_opened_summary()
     )
-    send_msg(msg)
+    chart_buf = generate_chart(df_1h, symbol, price, sl_price, tp1_price, direction) \
+                if df_1h is not None else None
+    send_chart_alert(chart_buf, symbol, msg)
     print(f"[Breakout] ✅ {direction} {symbol} @ {price:.6g} | margin=${margin:.0f} | RSI={rsi_str} | FNG={fng_v}")
 
 
