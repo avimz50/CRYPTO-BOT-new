@@ -3586,6 +3586,16 @@ def _register_sol_trade(price: float, sl: float, tp: float, rsi: float | None):
     tp1_price = tp
     be_price  = round(price * 1.02, 6)                   # BE at +2%
 
+    # ── ATR חישוב ──────────────────────────────────────────────────────
+    sol_atr = 0.0
+    try:
+        df_atr = get_data(sym, timeframe='1h', limit=30)
+        atr_s  = ta.atr(df_atr['high'], df_atr['low'], df_atr['close'], length=14)
+        if atr_s is not None and not atr_s.isna().all():
+            sol_atr = round(float(atr_s.iloc[-1]), 8)
+    except Exception:
+        pass
+
     trade = {
         'symbol':          sym,
         'entry':           price,
@@ -3603,7 +3613,7 @@ def _register_sol_trade(price: float, sl: float, tp: float, rsi: float | None):
         'peak_price':      price,
         'trailing_sl':     None,
         'score':           100,
-        'atr':             0.0,
+        'atr':             sol_atr,
         'timeframe':       '4H',
         'rsi':             round(rsi, 2) if rsi else None,
         'ema200':          None,
@@ -5565,6 +5575,16 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
         f"FNG={fng_v} | RSI={rsi_str} | Vol×{vol_ratio:.1f}"
     )
 
+    # ── ATR חישוב אמיתי לשימוש ב-Trailing Stop ──────────────────────────
+    atr_val = 0.0
+    try:
+        df_atr  = get_data(symbol, timeframe='1h', limit=30)
+        atr_s   = ta.atr(df_atr['high'], df_atr['low'], df_atr['close'], length=14)
+        if atr_s is not None and not atr_s.isna().all():
+            atr_val = round(float(atr_s.iloc[-1]), 8)
+    except Exception:
+        pass
+
     trade = {
         'symbol':          symbol,
         'entry':           price,
@@ -5582,7 +5602,7 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
         'peak_price':      price,
         'trailing_sl':     None,
         'score':           95,
-        'atr':             0.0,
+        'atr':             atr_val,
         'timeframe':       'Breakout',
         'rsi':             round(rsi, 2) if rsi is not None else None,
         'ema200':          None,
