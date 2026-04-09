@@ -1414,10 +1414,10 @@ def get_btc_regime():
 # ════════════════════════════════════════════════════════════════
 #  Adaptive Sniper 2026 — Strategy Parameters
 # ════════════════════════════════════════════════════════════════
-MIN_SCORE  = 92   # סף כניסה — Adaptive Sniper
+MIN_SCORE  = 88   # סף כניסה — March Logic + 88-Score Optimization
 MAX_TRADES = 3    # מקסימום 3 עסקאות — Focus on quality (חזרה למרץ 26-27)
 RSI_VETO_LONG  = 65   # RSI וטו LONG — 65 כמו מרץ 26-27 (לא לרדוף פאמפים)
-RSI_VETO_SHORT = 20   # RSI וטו SHORT
+RSI_VETO_SHORT = 28   # RSI וטו SHORT — 28 כמו מרץ 26-27 (לא לשרטט oversold)
 EMA_PROXIMITY_PCT   = 2.5   # Anti-Chase EMA200 — 2.5% בלבד (הדוק, כמו מרץ 26-27)
 VOL_EMA_BYPASS_MULT = 1.5   # Volume ≥ ×1.5 → מבטל וטו EMA200 (Breakout IS the trend)
 TRAIL_ACTIVATION_PCT = 2.0   # % רווח להפעלת Trailing — מוקדם (מיושר עם BE=2%)
@@ -1427,7 +1427,7 @@ TRAIL_PCT            = 1.5   # % Trailing Stop — 1.5% כמו מרץ 26-27 (ל�
 ATR_TRAIL_MULT       = 1.5   # מכפיל ATR ל-Trailing Stop (1.5× ATR מהשיא)
 PARTIAL_25_TRIGGER   = 5.0   # % רווח לסגירת 25% — מיושר עם TP1=5%
 PARTIAL_25_DROP      = 1.0   # % ירידה מהשיא שמפעילה סגירת 25%
-SL_PCT_FIXED         = 3.0   # % SL קבוע מהכניסה — Adaptive Sniper: 3% (היה 3.5)
+SL_PCT_FIXED         = 3.5   # % SL קבוע מהכניסה — 3.5% כמו מרץ 26-27 (buffer מ-EMA whipsaw)
 TP1_PCT_FIXED        = 5.0   # % TP1 — סגירת 50% ומעבר ל-BE (היה 3.0)
 TP_PCT_FIXED         = 15.0  # % TP מלא — 50% הנותרים רצים ל-15% (היה 10.0)
 
