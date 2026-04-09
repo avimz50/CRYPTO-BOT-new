@@ -1063,16 +1063,20 @@ def place_order(trade: dict, margin: float = MARGIN) -> bool:
     """
     symbol = trade.get('symbol', '')
 
-    # ══ GLOBAL DUPLICATE GUARD — One Trade Per Symbol ══════════════════
+    # ══ GLOBAL GUARDS — אטומי תחת trades_lock ══════════════════════════
     with trades_lock:
+        # 1) One Trade Per Symbol
         existing_symbols = [t['symbol'] for t in active_trades]
-    if symbol in existing_symbols:
-        print(f"[place_order] 🚫 Signal detected for {symbol}, but skipped - Position already exists.")
-        return False
-    # ═══════════════════════════════════════════════════════════════════
-
-    with trades_lock:
+        if symbol in existing_symbols:
+            print(f"[place_order] 🚫 Signal detected for {symbol}, but skipped - Position already exists.")
+            return False
+        # 2) MAX_TRADES hard cap — מונע race-condition בין סקאנרים
+        if len(active_trades) >= MAX_TRADES:
+            print(f"[place_order] 🚫 {symbol} skipped — MAX_TRADES ({MAX_TRADES}) reached (atomic check).")
+            return False
+        # ✅ Passed all guards — add to list
         active_trades.append(trade)
+    # ═══════════════════════════════════════════════════════════════════
     wallet_deduct(margin)
     save_active_trades()
     available = wallet.get('balance', STARTING_BALANCE)
