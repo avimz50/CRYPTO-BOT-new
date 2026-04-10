@@ -1870,6 +1870,89 @@ def detect_flag(df, direction):
         return False, f"flag error: {str(e)[:50]}"
 
 
+def detect_fvg(df, direction: str, lookback: int = 20) -> tuple[bool, float, float, str]:
+    """
+    זיהוי Fair Value Gap (FVG) — ICT Concept.
+
+    הגדרה:
+      Bullish FVG: low[i] > high[i-2]  → גאפ בין high של נר i-2 ל-low של נר i
+      Bearish FVG: high[i] < low[i-2]  → גאפ בין low של נר i-2 ל-high של נר i
+
+    לוגיקת ציון:
+      LONG  — מחפש Bullish FVG; מחיר בתוך הגאפ או עד 1% מעליו = תמיכה חזקה
+      SHORT — מחפש Bearish FVG; מחיר בתוך הגאפ או עד 1% מתחתיו = התנגדות חזקה
+
+    מחזיר: (found: bool, fvg_top: float, fvg_bot: float, description: str)
+    """
+    try:
+        if len(df) < lookback + 3:
+            return False, 0.0, 0.0, "not enough data"
+
+        recent = df.iloc[-(lookback + 3):].reset_index(drop=True)
+        highs  = recent['high'].values
+        lows   = recent['low'].values
+        closes = recent['close'].values
+        price  = closes[-1]     # מחיר נוכחי (נר אחרון)
+
+        best_fvg_top = 0.0
+        best_fvg_bot = 0.0
+        best_dist    = float('inf')
+        found        = False
+
+        # סרוק מהנר הכי חדש אחורה (מדלג על הנר הפתוח האחרון [-1])
+        for i in range(len(recent) - 2, 2, -1):
+            if direction == 'LONG':
+                # Bullish FVG: low[i] > high[i-2]
+                fvg_bot = highs[i - 2]
+                fvg_top = lows[i]
+                if fvg_top > fvg_bot:
+                    dist = abs(price - (fvg_bot + fvg_top) / 2) / price
+                    if dist < best_dist:
+                        best_dist    = dist
+                        best_fvg_top = fvg_top
+                        best_fvg_bot = fvg_bot
+                        found        = True
+            else:
+                # Bearish FVG: high[i] < low[i-2]
+                fvg_top = lows[i - 2]
+                fvg_bot = highs[i]
+                if fvg_top > fvg_bot:
+                    dist = abs(price - (fvg_bot + fvg_top) / 2) / price
+                    if dist < best_dist:
+                        best_dist    = dist
+                        best_fvg_top = fvg_top
+                        best_fvg_bot = fvg_bot
+                        found        = True
+
+        if not found:
+            return False, 0.0, 0.0, "no FVG found"
+
+        gap_pct  = round((best_fvg_top - best_fvg_bot) / best_fvg_bot * 100, 2)
+        zone_mid = round((best_fvg_top + best_fvg_bot) / 2, 8)
+
+        # מחיר בתוך הגאפ עצמו (in-zone) — הכי חזק
+        in_zone = best_fvg_bot <= price <= best_fvg_top
+        # מחיר עד 1.5% מחוץ לגאפ לכיוון הנכון (near-zone)
+        if direction == 'LONG':
+            near_zone = not in_zone and price <= best_fvg_top * 1.015
+        else:
+            near_zone = not in_zone and price >= best_fvg_bot * 0.985
+
+        if in_zone:
+            status = "IN_ZONE"
+        elif near_zone:
+            status = "NEAR"
+        else:
+            status = f"AWAY({best_dist*100:.1f}%)"
+
+        desc = (f"FVG({direction}) gap={gap_pct}% "
+                f"[{best_fvg_bot:.4g}–{best_fvg_top:.4g}] mid={zone_mid:.4g} {status}")
+        return found and (in_zone or near_zone), best_fvg_top, best_fvg_bot, desc
+
+    except Exception as e:
+        return False, 0.0, 0.0, f"FVG error: {e}"
+
+
 def score_symbol(df_3h, df_1h, symbol, direction='LONG'):
     """
     מערכת ניקוד מקצועית 0–100 נקודות.
@@ -1882,8 +1965,10 @@ def score_symbol(df_3h, df_1h, symbol, direction='LONG'):
       MACD      (15): Signal Cross (+10) + Histogram (+5)
       RSI       (10): Sweet-spot (+10), Acceptable (+5)
       BB        (20): מחיר מעל MidBB (+12) + נגיעה בBand הנכון (+8)
-      Volume    (30): ×1.2 (+10) | ×1.5 (+20) | ×2.0 (+30) | <×1.2 → VETO!
-      Candles    (0): לא נלקחים בחשבון (רעש)
+      Volume    (30): ×1.5 (+20) | ×2.0 (+30) | <×1.5 → VETO!
+      Flag      (15): Bull/Bear Flag Pattern על 1H
+      FVG       (10): Fair Value Gap (ICT) — מחיר בתוך/ליד הגאפ על 1H
+      FNG       (±5): Fear & Greed Index adjustment
 
     מחזיר: (score: int, breakdown: str, atr: float)
     """
@@ -2115,6 +2200,21 @@ def score_symbol(df_3h, df_1h, symbol, direction='LONG'):
             parts.append(f"Flag=0(no:{flag_desc[:30]})")
             if VERBOSE_LOG:
                 print(f"  [{symbol}] {direction} | no flag: {flag_desc}")
+
+        # ════════════════════════════════════════
+        # 7b. FVG — Fair Value Gap — +10 נקודות (ICT)
+        # ════════════════════════════════════════
+        # בדיקה על 1H DataFrame — גאפ מחיר שהשוק נוטה לחזור למלא
+        fvg_hit, _fvg_top, _fvg_bot, fvg_desc = detect_fvg(df_1h, direction, lookback=20)
+        if fvg_hit:
+            score += 10
+            parts.append(f"FVG=+10({fvg_desc})")
+            if VERBOSE_LOG:
+                print(f"  [{symbol}] {direction} | FVG HIT: {fvg_desc}")
+        else:
+            parts.append(f"FVG=0({fvg_desc[:35]})")
+            if VERBOSE_LOG:
+                print(f"  [{symbol}] {direction} | no FVG: {fvg_desc}")
 
         # ════════════════════════════════════
         # 8. FEAR & GREED INDEX — ±5 נקודות
