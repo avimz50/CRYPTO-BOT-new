@@ -556,6 +556,32 @@ interface ScanData {
   min_score?: number;
 }
 
+interface AuditTrade {
+  symbol: string;
+  direction: string;
+  track: string;
+  entry_price: number;
+  close_price: number;
+  pnl_usd: number;
+  close_reason: string;
+  score: number;
+  fng_at_entry: number | null;
+  rr_ratio: number | null;
+  rr_achieved: number | null;
+  duration_min: number;
+  opened_at: string;
+  closed_at: string;
+  lesson: string;
+  sniper: boolean;
+  scalp: boolean;
+  hunter_mode: boolean;
+}
+interface AuditData {
+  updated: string | null;
+  count: number;
+  trades: AuditTrade[];
+}
+
 function LastScanStatus({ scan }: { scan: ScanData | null }) {
   if (!scan) return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center text-gray-600 text-xs">
@@ -852,6 +878,7 @@ export default function App() {
   const { data: walletData, refetch: refetchWallet } = useJson<WalletData>(`${BOT_API}/api/wallet`, "/wallet.json",              30_000);
   const { data: fngData,   refetch: refetchFng   } = useJson<FngData>(`${BOT_API}/api/fng`,       "/fng.json",                120_000);
   const { data: scanData,  refetch: refetchScan  } = useJson<ScanData>(`${BOT_API}/api/last_scan`, "/last_scan_results.json",  120_000);
+  const { data: auditData } = useJson<AuditData>(`${BOT_API}/api/trade_audit`, "/trade_audit.json", 60_000);
 
   const [refreshing, setRefreshing] = useState(false);
   const refreshAll = useCallback(() => {
@@ -1130,6 +1157,90 @@ export default function App() {
                   <span className="text-gray-600">{formatVolume(c.volume_usd)}</span>
                 </span>
               ))}
+            </div>
+          )}
+        </div>
+
+        {/* Post-Trade Audit Log */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          <div className="px-5 py-3 border-b border-gray-800 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span>🧠</span>
+              <h2 className="font-semibold text-gray-300 text-sm">Post-Trade Audit Log</h2>
+              {auditData && auditData.count > 0 && (
+                <span className="text-xs text-gray-600 bg-gray-800 px-2 py-0.5 rounded-full">
+                  {auditData.count} עסקאות
+                </span>
+              )}
+            </div>
+            {auditData?.updated && (
+              <span className="text-xs text-gray-600">
+                {new Date(auditData.updated).toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" })}
+              </span>
+            )}
+          </div>
+          {(!auditData || auditData.trades.length === 0) ? (
+            <div className="px-5 py-6 text-center text-gray-600 text-xs">
+              אין עסקאות סגורות עדיין — הלוג יתמלא בכל סגירת עסקה
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-800/60">
+              {[...auditData.trades].reverse().map((t, i) => {
+                const win    = t.pnl_usd > 0;
+                const even   = t.pnl_usd === 0;
+                const pclr   = win ? "text-green-400" : even ? "text-gray-400" : "text-red-400";
+                const dclr   = t.direction === "LONG" ? "text-green-400" : "text-red-400";
+                const closedTime = t.closed_at
+                  ? new Date(t.closed_at).toLocaleString("he-IL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
+                  : "—";
+                const reasonColors: Record<string, string> = {
+                  TP: "bg-green-500/20 text-green-300 border-green-500/30",
+                  SL: "bg-red-500/20 text-red-300 border-red-500/30",
+                  BE: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30",
+                  Trailing: "bg-blue-500/20 text-blue-300 border-blue-500/30",
+                };
+                const rcls = reasonColors[t.close_reason] ?? "bg-gray-700/40 text-gray-400 border-gray-600/40";
+                const badge = t.sniper ? "🎯" : t.scalp ? "⚡" : t.hunter_mode ? "🎯H" : "🌊";
+                return (
+                  <div key={i} className="px-5 py-3 hover:bg-gray-800/30 transition-colors">
+                    {/* Row 1: symbol + direction + badges + P&L + reason + time */}
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-semibold text-gray-200 text-sm">
+                          {t.symbol.replace("/USDT", "")}
+                        </span>
+                        <span className={`text-xs font-semibold ${dclr}`}>{t.direction}</span>
+                        <span className="text-xs">{badge}</span>
+                        <span className={`text-xs border rounded px-1.5 py-0.5 ${rcls}`}>{t.close_reason}</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className={`font-mono font-bold text-sm ${pclr}`}>
+                          {t.pnl_usd >= 0 ? "+" : ""}{t.pnl_usd.toFixed(2)}$
+                        </span>
+                        <span className="text-xs text-gray-600">{closedTime}</span>
+                      </div>
+                    </div>
+                    {/* Row 2: entry context metrics */}
+                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-500 mb-1.5">
+                      <span>Score: <span className="text-gray-400">{t.score}</span></span>
+                      {t.fng_at_entry !== null && (
+                        <span>FNG: <span className="text-gray-400">{t.fng_at_entry}</span></span>
+                      )}
+                      {t.rr_ratio !== null && (
+                        <span>RR מתוכנן: <span className="text-gray-400">1:{t.rr_ratio}</span></span>
+                      )}
+                      {t.rr_achieved !== null && (
+                        <span>RR בפועל: <span className={t.rr_achieved >= (t.rr_ratio ?? 1) ? "text-green-400" : "text-red-400"}>1:{t.rr_achieved}</span></span>
+                      )}
+                      <span>⏱ {t.duration_min.toFixed(0)} דקות</span>
+                    </div>
+                    {/* Row 3: lesson */}
+                    <p className="text-xs text-gray-500 italic leading-relaxed">
+                      {t.lesson}
+                    </p>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

@@ -60,6 +60,7 @@ ENERGY_GEO = ['POWR/USDT', 'HNT/USDT', 'WLD/USDT']  # הוסר PAXG (זהב — 
 HOT_CANDIDATES_FILE   = 'artifacts/bot-dashboard/public/hot_candidates.json'
 ACTIVE_TRADES_FILE    = 'artifacts/bot-dashboard/public/active_trades.json'
 WALLET_FILE           = 'artifacts/bot-dashboard/public/wallet.json'
+AUDIT_LOG_FILE        = 'artifacts/bot-dashboard/public/trade_audit.json'
 
 # --- ארנק וירטואלי ---
 STARTING_BALANCE = 200.0   # יתרת פתיחה $200
@@ -474,6 +475,9 @@ trades_lock        = threading.RLock()   # מגן מ-race conditions בין Thre
 # לוג עסקאות סגורות (48 שעות אחרונות) לדוח ה-Drive
 closed_trades_log  = []
 
+# Audit Log — מתמיד ל-trade_audit.json (100 עסקאות אחרונות)
+trade_audit_log: list[dict] = []
+
 # ─── Watch List — מעקב מטבעות ספציפיים כל 15 דקות ───────────────────────────
 # מבנה: { 'SOL/USDT': {'direction':'LONG','added_at':..., 'last_score':0, 'expires_at':...} }
 watch_list: dict = {}
@@ -877,6 +881,14 @@ def api_hot():
     except Exception:
         return flask_jsonify({'updated': '—', 'count': 0, 'candidates': []})
 
+@flask_app.route('/api/trade_audit')
+def api_trade_audit():
+    try:
+        with open(AUDIT_LOG_FILE, 'r', encoding='utf-8') as f:
+            return flask_jsonify(json.load(f))
+    except Exception:
+        return flask_jsonify({'updated': None, 'count': 0, 'trades': []})
+
 @flask_app.route('/api/fng_settings', methods=['GET'])
 def api_fng_settings_get():
     return flask_jsonify({
@@ -1109,20 +1121,112 @@ def _wallet_opened_summary() -> str:
         f"{upnl_icon} Unrealized: `${unrealized:+.2f}`"
     )
 
+def _generate_lesson(close_reason: str, pnl_usd: float, duration_min: float,
+                     direction: str, score: int) -> str:
+    """
+    מייצר לקח אוטומטי לכל עסקה סגורה בהתבסס על סיבת היציאה ותוצאה.
+    משמש ל-Post-Trade Audit Log.
+    """
+    win = pnl_usd > 0
+    fast = duration_min < 60
+
+    if close_reason == 'TP':
+        if fast:
+            return (f"⚡ High-Velocity Win — TP הושג תוך {duration_min:.0f} דקות. "
+                    f"איתות מומנטום מהיר אומת. שקול entry מוקדם יותר בסטאפים דומים.")
+        return (f"✅ Setup Confirmed — תזה טכנית הצליחה לאחר {duration_min:.0f} דקות. "
+                f"סבלנות הוכיחה את עצמה. Score={score} היה נכון.")
+    if close_reason == 'Trailing':
+        if win:
+            return (f"📍 Momentum Captured — Trailing Stop נעל רווח של ${pnl_usd:+.2f}. "
+                    f"יציאה דינמית עבדה היטב. בדוק אם ATR Trail היה מהודק מדי.")
+        return (f"⚠️ Early Reversal — Trailing נגע בהפסד (${pnl_usd:.2f}). "
+                f"כניסה הייתה מוקדמת מדי או המומנטום התהפך חדות. "
+                f"בדוק Volume Ratio בכניסה.")
+    if close_reason == 'SL':
+        return (f"❌ SL Hit — תזת ה-{direction} התבטלה. הפסד ${pnl_usd:.2f} לאחר {duration_min:.0f} דקות. "
+                f"Score={score}. בדוק: האם ה-BTC Compass הצביע לאותו כיוון? "
+                f"האם הייתה התנגדות שקרובה לכניסה?")
+    if close_reason == 'BE':
+        return (f"🔒 Capital Preserved — עסקה יצאה ב-Break Even. "
+                f"תזה לא המשיכה אך הון לא אבד. "
+                f"{'מהלך מהיר ללא המשך — חסר נפח.' if fast else 'עסקה הבשילה לאט — שוק לא שיתף פעולה.'}")
+    if close_reason in ('Scalp-TP', 'Scalp-SL', 'Scalp-Time'):
+        if win:
+            return (f"⚡ Scalp Win — {close_reason} | ${pnl_usd:+.2f} תוך {duration_min:.0f} דקות. "
+                    f"Mean-Reversion עבד. Score={score}.")
+        return (f"⚡ Scalp Loss — {close_reason} | ${pnl_usd:.2f} לאחר {duration_min:.0f} דקות. "
+                f"בדוק: האם ה-RSI היה בקיצוניות מספקת? Volume Spike אמיתי?")
+    if close_reason == 'Partial25':
+        return (f"💰 Partial Take — 25% נסגרו בשיא עם drop חזרה. "
+                f"טריגר P&L: ${pnl_usd:+.2f}. Trailing מופעל על השאר.")
+    # Generic
+    if win:
+        return f"✅ {close_reason} — עסקה רווחית ${pnl_usd:+.2f} · {duration_min:.0f} דקות · Score={score}."
+    return f"📉 {close_reason} — עסקה הפסידה ${pnl_usd:.2f} · {duration_min:.0f} דקות · Score={score}. חזור על ניתוח הכניסה."
+
+
+def _save_audit_log():
+    """שומר את trade_audit_log ל-AUDIT_LOG_FILE (100 עסקאות אחרונות)."""
+    global trade_audit_log
+    trade_audit_log = trade_audit_log[-100:]
+    try:
+        with open(AUDIT_LOG_FILE, 'w', encoding='utf-8') as f:
+            json.dump({
+                'updated': now_il().isoformat(timespec='seconds'),
+                'count':   len(trade_audit_log),
+                'trades':  trade_audit_log,
+            }, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[AuditLog] שגיאה בשמירה: {e}")
+
+
+def _load_audit_log():
+    """טוען audit log קיים מהדיסק אם קיים."""
+    global trade_audit_log
+    try:
+        with open(AUDIT_LOG_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            trade_audit_log = data.get('trades', [])
+            print(f"[AuditLog] נטען: {len(trade_audit_log)} עסקאות")
+    except FileNotFoundError:
+        trade_audit_log = []
+    except Exception as e:
+        print(f"[AuditLog] שגיאה בטעינה: {e}")
+        trade_audit_log = []
+
+
 def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_price: float = None):
-    """מוסיף עסקה סגורה ל-closed_trades_log לשימוש בדוח Drive."""
-    global closed_trades_log
-    entry_p = trade['entry']
-    close_p = close_price or trade.get('current_price', entry_p)
+    """מוסיף עסקה סגורה ל-closed_trades_log + Audit Log מתמיד."""
+    global closed_trades_log, trade_audit_log
+    entry_p    = trade['entry']
+    close_p    = close_price or trade.get('current_price', entry_p)
     sl_at_open = trade.get('sl')
     tp_at_open = trade.get('tp')
-    # יחס R:R על בסיס SL/TP בפתיחה
+    closed_at  = now_il().isoformat(timespec='seconds')
+
+    # ── R:R מחושב מ-SL/TP בפתיחה ────────────────────────────────────────
     try:
-        dist_tp = abs(tp_at_open - entry_p) / entry_p * 100 if tp_at_open else None
-        dist_sl = abs(sl_at_open - entry_p) / entry_p * 100 if sl_at_open else None
+        dist_tp  = abs(tp_at_open - entry_p) / entry_p * 100 if tp_at_open else None
+        dist_sl  = abs(sl_at_open - entry_p) / entry_p * 100 if sl_at_open else None
         rr_ratio = round(dist_tp / dist_sl, 2) if (dist_tp and dist_sl and dist_sl > 0) else None
     except Exception:
         dist_tp = dist_sl = rr_ratio = None
+
+    # ── duration בדקות ───────────────────────────────────────────────────
+    try:
+        opened_dt  = datetime.fromisoformat(trade.get('opened_at', closed_at))
+        closed_dt  = datetime.fromisoformat(closed_at)
+        duration_m = round((closed_dt - opened_dt).total_seconds() / 60, 1)
+    except Exception:
+        duration_m = 0.0
+
+    # ── R:R שהושג בפועל ──────────────────────────────────────────────────
+    try:
+        actual_move_pct = abs(close_p - entry_p) / entry_p * 100
+        rr_achieved = round(actual_move_pct / dist_sl, 2) if dist_sl else None
+    except Exception:
+        rr_achieved = None
 
     record = {
         'symbol':          trade['symbol'],
@@ -1135,25 +1239,43 @@ def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_pric
         'dist_sl_pct':     round(dist_sl, 2) if dist_sl is not None else None,
         'dist_tp_pct':     round(dist_tp, 2) if dist_tp is not None else None,
         'rr_ratio':        rr_ratio,
+        'rr_achieved':     rr_achieved,
         'score':           trade.get('score', 0),
         'rsi':             trade.get('rsi'),
         'ema200':          trade.get('ema200'),
         'score_breakdown': trade.get('score_breakdown', ''),
         'strategy':        trade.get('strategy', ''),
-        'track':           trade.get('track', 'Swing'),   # ⚡ Scalp / 🌊 Swing
+        'track':           trade.get('track', 'Swing'),
         'slippage_pct':    trade.get('slippage_pct', 0.0),
         'close_reason':    close_reason,
         'pnl_usd':         round(pnl_usd, 2),
         'opened_at':       trade.get('opened_at', ''),
-        'closed_at':       now_il().isoformat(timespec='seconds'),
+        'closed_at':       closed_at,
+        # ── Entry Context (Audit) ────────────────────────────────────────
+        'fng_at_entry':    trade.get('fng_at_entry'),
+        'atr':             trade.get('atr', 0.0),
+        'duration_min':    duration_m,
+        'sniper':          trade.get('sniper', False),
+        'scalp':           trade.get('scalp', False),
+        'hunter_mode':     trade.get('hunter_mode', False),
+        # ── Auto-generated lesson ────────────────────────────────────────
+        'lesson': _generate_lesson(
+            close_reason, pnl_usd, duration_m,
+            trade['direction'], trade.get('score', 0)
+        ),
     }
+
+    # ── closed_trades_log (in-memory, 48h) ───────────────────────────────
     closed_trades_log.append(record)
-    # שמור רק 48 שעות אחרונות
     cutoff = now_il().timestamp() - 48 * 3600
     closed_trades_log = [
         t for t in closed_trades_log
         if datetime.fromisoformat(t['closed_at']).timestamp() >= cutoff
     ]
+
+    # ── Audit Log (persistent, 100 עסקאות) ───────────────────────────────
+    trade_audit_log.append(record)
+    _save_audit_log()
 
 def wallet_status_text() -> str:
     """מחזיר מחרוזת סטטוס ארנק לטלגרם — Available Balance ראשי."""
@@ -6435,6 +6557,7 @@ def main():
     keep_alive()
     load_wallet()          # ← טעינת ארנק וירטואלי
     load_active_trades()   # ← שחזור עסקאות פעילות לאחר restart
+    _load_audit_log()      # ← שחזור Audit Log מהדיסק
 
     # Thread 1 — Telegram polling
     polling_thread = threading.Thread(target=start_telegram_polling, daemon=True)

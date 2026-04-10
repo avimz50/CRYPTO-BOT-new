@@ -62,6 +62,11 @@ router.get("/hot", async (_req, res) => {
   res.json(data);
 });
 
+router.get("/trade_audit", async (_req, res) => {
+  const data = await fetchFromFlask("/api/trade_audit", path.join(PUBLIC, "trade_audit.json"), { updated: null, count: 0, trades: [] });
+  res.json(data);
+});
+
 router.get("/debug", async (_req, res) => {
   const data = await fetchFromFlask("/api/debug", "", null);
   res.json({
