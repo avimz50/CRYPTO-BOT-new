@@ -1593,6 +1593,11 @@ SCALP_TP_PCT            = 3.0    # 3% profit target
 SCALP_SL_PCT            = 1.5    # 1.5% stop loss
 SCALP_MAX_DURATION_MIN  = 60     # force-close after 60 minutes
 MAX_SCALP_TRADES        = 2      # max concurrent scalp trades
+
+# ── Stagnation Exit — Sniper/Breakout/SOL בלבד ────────────────────────────────
+STAGNATION_MIN_HOURS   = 4.0    # שעות מינימום לפני בדיקת דישדוש
+STAGNATION_RANGE_PCT   = 1.5    # % מהכניסה — אם המחיר לא זז → יציאה
+# (Phase=initial בלבד; אם TP1 נגע ועברנו ל-trailing — לא רלוונטי)
 SCALP_BUBBLE_MIN_PCT    = 30.0   # scalp-short: coin up > 30% in 24h
 SCALP_CRASH_MIN_PCT     = 20.0   # quick-long: coin down > 20% in 2h
 SCALP_SHORT_RSI_THRESH  = 82.0   # RSI 15m must be > 82 for scalp-short
@@ -2784,7 +2789,54 @@ def track_trades():
             # ════════════════════════════════════════════
             if trade['phase'] == 'initial':
 
-                # 0. Trailing SL — ATR-based (1.5× ATR מהשיא) + fallback TRAIL_PCT%
+                # ── 0a. STAGNATION EXIT — אם תזת המומנטום לא התממשה ב-4 שעות ──────
+                # רלוונטי רק ל-Sniper/Breakout/SOL (לא Scalp/Cliff שיש להם timeout משלהם)
+                if not trade.get('scalp') and not trade.get('cliff'):
+                    try:
+                        opened_dt   = datetime.fromisoformat(trade.get('opened_at', now_il().isoformat()))
+                        elapsed_h   = (now_il() - opened_dt).total_seconds() / 3600
+                        price_drift = abs(current_price - entry) / entry * 100  # % תנועה מהכניסה
+                        is_stagnant = (
+                            elapsed_h  >= STAGNATION_MIN_HOURS and
+                            price_drift <= STAGNATION_RANGE_PCT
+                        )
+                        if is_stagnant:
+                            # חישוב P&L אמיתי
+                            sign       = 1 if profit_dir(current_price) else -1
+                            stag_pnl   = round(sign * pos_size * price_drift / 100, 2)
+                            stag_pnl_r = round(sign * price_drift * t_leverage, 1)
+                            pnl_icon   = "📈" if stag_pnl >= 0 else "📉"
+                            daily_stats['total_pnl'] += stag_pnl
+                            if stag_pnl >= 0:
+                                daily_stats['wins'] += 1
+                            else:
+                                daily_stats['losses'] += 1
+                            daily_stats['close_reasons']['Stagnation'] = \
+                                daily_stats['close_reasons'].get('Stagnation', 0) + 1
+                            wallet_credit(stag_pnl, trade.get('margin', MARGIN))
+                            _log_closed_trade(trade, 'Stagnation', stag_pnl, current_price)
+                            eq   = _get_equity()
+                            slip = trade.get('slippage_pct', 0.0)
+                            send_msg(
+                                f"⏳ *Stagnation Exit — {sym}* {('🟢' if direction=='LONG' else '🔴')}\n"
+                                f"_תזת המומנטום לא התממשה — יוצאים אוטומטית_\n\n"
+                                f"כניסה: `{entry:.6g}` → יציאה: `{current_price:.6g}`\n"
+                                f"⏱ פתוח: *{elapsed_h:.1f} שעות* | תנועה: *{price_drift:.2f}%* (< {STAGNATION_RANGE_PCT}%)\n"
+                                f"{pnl_icon} *P&L: ${stag_pnl:+.2f}* ({stag_pnl_r:+.1f}% על מרג'ין)\n"
+                                f"💼 {t_leverage}x · ${trade.get('margin', MARGIN):.0f} מרג'ין | {tbadge}\n"
+                                f"📊 Slippage: {slip:.2f}% (Demo)\n"
+                                f"💼 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance', 0):.2f}`\n"
+                                f"📉 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
+                            )
+                            print(f"[Stagnation] ⏳ {sym} {direction} — {elapsed_h:.1f}h, drift {price_drift:.2f}% → exit P&L=${stag_pnl:+.2f}")
+                            with trades_lock:
+                                active_trades.remove(trade)
+                            save_active_trades()
+                            continue
+                    except Exception as _e:
+                        print(f"[Stagnation] error {sym}: {_e}")
+
+                # 0b. Trailing SL — ATR-based (1.5× ATR מהשיא) + fallback TRAIL_PCT%
                 raw_profit_pct = (current_price - entry) / entry * 100 \
                                  if direction == 'LONG' \
                                  else (entry - current_price) / entry * 100
