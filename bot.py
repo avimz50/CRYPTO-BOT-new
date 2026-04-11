@@ -1434,6 +1434,13 @@ def generate_chart(df, symbol, entry, sl, tp, direction='LONG',
         # ── אזורי רווח / הפסד לפי כיוון ──
         ax = axes[0]
 
+        # הרחבת ציר Y כך ש-SL ו-TP תמיד גלויים (עם מרווח 2%)
+        y_min, y_max = ax.get_ylim()
+        pad = (y_max - y_min) * 0.02
+        new_ymin = min(y_min, sl - pad, tp - pad)
+        new_ymax = max(y_max, sl + pad, tp + pad)
+        ax.set_ylim(new_ymin, new_ymax)
+
         if direction == 'SHORT':
             # SHORT: רווח (ירוק) מתחת לכניסה → TP | הפסד (אדום) מעל כניסה → SL
             ax.axhspan(tp,    entry, alpha=0.10, color='forestgreen', zorder=0)
