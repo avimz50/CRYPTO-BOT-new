@@ -1354,8 +1354,11 @@ def generate_chart(df, symbol, entry, sl, tp, direction='LONG',
         )
 
         # ── אינדיקטורים ──
-        ema200_vals = ta.ema(df['close'], length=200).tail(72).values
-        rsi_vals    = ta.rsi(df['close'], length=14).tail(72).values
+        _ema200 = ta.ema(df['close'], length=200)
+        ema200_vals = _ema200.tail(72).values if _ema200 is not None else [None] * 72
+
+        _rsi = ta.rsi(df['close'], length=14)
+        rsi_vals = _rsi.tail(72).values if _rsi is not None else [50.0] * 72
 
         # ── Bollinger Bands (20, 2σ) ──
         try:
@@ -2898,9 +2901,10 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     msg += tip
 
     # אם df_3h לא סופק — שולפים 1H בעצמנו (למשל Major Watch מעביר None)
+    # limit=250 כדי ש-EMA200 יהיה מחושב נכון (צריך לפחות 200 נרות)
     if df_3h is None:
         try:
-            df_3h = get_data(symbol, timeframe='1h', limit=80)
+            df_3h = get_data(symbol, timeframe='1h', limit=250)
         except Exception as _fe:
             print(f"[SWING] chart fetch fallback failed: {_fe}")
             df_3h = None
