@@ -1598,6 +1598,11 @@ MAX_SCALP_TRADES        = 2      # max concurrent scalp trades
 STAGNATION_MIN_HOURS   = 4.0    # שעות מינימום לפני בדיקת דישדוש
 STAGNATION_RANGE_PCT   = 1.5    # % מהכניסה — אם המחיר לא זז → יציאה
 # (Phase=initial בלבד; אם TP1 נגע ועברנו ל-trailing — לא רלוונטי)
+
+# ── Bollinger Band Squeeze — כניסה לפני הפריצה ────────────────────────────────
+BB_SQUEEZE_RATIO       = 0.50   # BB width < 50% מהממוצע ההיסטורי = Squeeze פעיל
+BB_SQUEEZE_LOOKBACK    = 20     # נרות לחישוב ממוצע BB width
+BB_SQUEEZE_BREAKOUT    = 0.005  # 0.5% — מחיר קרוב לBand הנכון = פריצה מתחילה
 SCALP_BUBBLE_MIN_PCT    = 30.0   # scalp-short: coin up > 30% in 24h
 SCALP_CRASH_MIN_PCT     = 20.0   # quick-long: coin down > 20% in 2h
 SCALP_SHORT_RSI_THRESH  = 82.0   # RSI 15m must be > 82 for scalp-short
@@ -1958,6 +1963,94 @@ def detect_fvg(df, direction: str, lookback: int = 20) -> tuple[bool, float, flo
         return False, 0.0, 0.0, f"FVG error: {e}"
 
 
+def detect_bb_squeeze(df, direction: str) -> tuple[bool, int, str]:
+    """
+    זיהוי Bollinger Band Squeeze — אות לפני הפריצה.
+
+    לוגיקה:
+      1. מחשב BB Width = (BBU - BBL) / BBM לכל נר ב-lookback נרות
+      2. אם width נוכחי < ממוצע_width × BB_SQUEEZE_RATIO → Squeeze פעיל
+      3. Breakout מתחיל: מחיר קרוב ל-Band הנכון (Upper ל-LONG, Lower ל-SHORT)
+
+    ניקוד:
+      +12: Squeeze פעיל + מחיר מתחיל לפרוץ לכיוון הנכון  (Pre-Breakout)
+      +6:  Squeeze פעיל בלבד (הצטמצמות — פריצה עדיין לא החלה)
+       0:  אין Squeeze
+
+    מחזיר: (score_pts: int, is_squeeze: bool, description: str)
+    """
+    try:
+        if len(df) < BB_SQUEEZE_LOOKBACK + 5:
+            return False, 0, "not enough data"
+
+        close = df['close']
+        bb    = ta.bbands(close, length=20, std=2)
+        if bb is None or bb.isna().all().all():
+            return False, 0, "BB calc failed"
+
+        bbu_col = next((c for c in bb.columns if 'BBU_' in c), None)
+        bbl_col = next((c for c in bb.columns if 'BBL_' in c), None)
+        bbm_col = next((c for c in bb.columns if 'BBM_' in c), None)
+        if not all([bbu_col, bbl_col, bbm_col]):
+            return False, 0, "BB columns missing"
+
+        bbu = bb[bbu_col]
+        bbl = bb[bbl_col]
+        bbm = bb[bbm_col]
+
+        # BB Width יחסי = (Upper - Lower) / Middle
+        width_series = (bbu - bbl) / bbm
+
+        # רק נרות שיש להם ערכים תקינים
+        valid_w = width_series.dropna()
+        if len(valid_w) < BB_SQUEEZE_LOOKBACK:
+            return False, 0, "not enough BB data"
+
+        curr_width = float(valid_w.iloc[-1])
+        hist_avg   = float(valid_w.iloc[-(BB_SQUEEZE_LOOKBACK + 1):-1].mean())
+
+        if hist_avg <= 0 or curr_width <= 0:
+            return False, 0, "BB width invalid"
+
+        squeeze_ratio = curr_width / hist_avg
+        is_squeeze    = squeeze_ratio < BB_SQUEEZE_RATIO
+
+        if not is_squeeze:
+            return False, 0, f"no squeeze (width={squeeze_ratio:.2f}× avg)"
+
+        # בדיקת כיוון פריצה: האם המחיר מתחיל לפרוץ לכיוון הנכון?
+        price     = float(close.iloc[-1])
+        curr_bbu  = float(bbu.iloc[-1])
+        curr_bbl  = float(bbl.iloc[-1])
+        curr_bbm  = float(bbm.iloc[-1])
+
+        if direction == 'LONG':
+            # מחיר מעל Middle + קרוב ל-Upper Band
+            above_mid = price > curr_bbm
+            near_band = price >= curr_bbu * (1 - BB_SQUEEZE_BREAKOUT)
+            breakout_starting = above_mid and near_band
+        else:
+            # מחיר מתחת ל-Middle + קרוב ל-Lower Band
+            below_mid = price < curr_bbm
+            near_band = price <= curr_bbl * (1 + BB_SQUEEZE_BREAKOUT)
+            breakout_starting = below_mid and near_band
+
+        squeeze_pct = round((1 - squeeze_ratio) * 100, 1)
+        width_pct   = round(curr_width * 100, 2)
+
+        if breakout_starting:
+            desc = (f"BB_SQUEEZE ✅ width={width_pct}% ({squeeze_pct}% צר מהממוצע) "
+                    f"→ פריצה {'עולה' if direction=='LONG' else 'יורדת'} מתחילה")
+            return True, 12, desc
+        else:
+            desc = (f"BB_SQUEEZE 🔄 width={width_pct}% ({squeeze_pct}% צר) "
+                    f"— מתכווץ, פריצה טרם החלה")
+            return True, 6, desc
+
+    except Exception as e:
+        return False, 0, f"BB squeeze error: {e}"
+
+
 def score_symbol(df_3h, df_1h, symbol, direction='LONG'):
     """
     מערכת ניקוד מקצועית 0–100 נקודות.
@@ -2220,6 +2313,21 @@ def score_symbol(df_3h, df_1h, symbol, direction='LONG'):
             parts.append(f"FVG=0({fvg_desc[:35]})")
             if VERBOSE_LOG:
                 print(f"  [{symbol}] {direction} | no FVG: {fvg_desc}")
+
+        # ════════════════════════════════════════
+        # 7c. BB SQUEEZE — +12/+6 נקודות (Pre-Breakout)
+        # ════════════════════════════════════════
+        # בדיקה על 1H — האם השוק מתכווץ לפני פריצה?
+        sq_hit, sq_pts, sq_desc = detect_bb_squeeze(df_1h, direction)
+        if sq_pts > 0:
+            score += sq_pts
+            parts.append(f"Squeeze=+{sq_pts}({sq_desc[:40]})")
+            if VERBOSE_LOG:
+                print(f"  [{symbol}] {direction} | SQUEEZE: {sq_desc}")
+        else:
+            parts.append(f"Squeeze=0({sq_desc[:30]})")
+            if VERBOSE_LOG:
+                print(f"  [{symbol}] {direction} | no squeeze: {sq_desc}")
 
         # ════════════════════════════════════
         # 8. FEAR & GREED INDEX — ±5 נקודות
