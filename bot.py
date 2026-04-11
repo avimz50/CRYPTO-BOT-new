@@ -2051,6 +2051,110 @@ def detect_bb_squeeze(df, direction: str) -> tuple[bool, int, str]:
         return False, 0, f"BB squeeze error: {e}"
 
 
+def detect_volume_buildup(df, candles: int = 5) -> tuple[int, str]:
+    """
+    זיהוי צבירת נפח הדרגתית — Smart Money נכנס לפני הפריצה.
+
+    לוגיקה:
+      בודק את N הנרות האחרונים: כל נר צריך נפח >= קודמו × 1.05.
+      4+ נרות עולים בהדרגה = כסף חכם מצטבר.
+
+    ניקוד:
+      +8: 4-5 נרות עם נפח עולה בהדרגה (×1.05 כל נר)
+      +4: 3 נרות עולים
+       0: אין צבירה
+    """
+    try:
+        if len(df) < candles + 2:
+            return 0, "not enough data"
+
+        vols   = df['volume'].iloc[-(candles + 1):].values
+        streak = 0
+        for i in range(1, len(vols)):
+            if vols[i] >= vols[i - 1] * 1.05:
+                streak += 1
+            else:
+                streak = 0  # reset — צריך רצף רציף
+
+        if streak >= 4:
+            avg_growth = round(((vols[-1] / vols[-streak - 1]) ** (1 / streak) - 1) * 100, 1)
+            return 8, f"Vol buildup ✅ {streak} נרות עולים (~{avg_growth}% לנר)"
+        elif streak == 3:
+            return 4, f"Vol buildup 🔄 3 נרות עולים"
+        else:
+            return 0, f"no buildup (streak={streak})"
+
+    except Exception as e:
+        return 0, f"vol buildup error: {e}"
+
+
+def detect_rsi_divergence(df, direction: str, lookback: int = 30) -> tuple[int, str]:
+    """
+    זיהוי RSI Divergence — אות מוקדם לפני היפוך/פריצה.
+
+    Bullish (LONG): מחיר עושה Low נמוך יותר, RSI עושה Low גבוה יותר.
+    Bearish (SHORT): מחיר עושה High גבוה יותר, RSI עושה High נמוך יותר.
+
+    ניקוד:
+      +10: דיברג'נס ברור (פער מחיר ≥ 1.5% בין שני הנקודות)
+      +5:  דיברג'נס חלש (פער מחיר < 1.5%)
+       0:  אין דיברג'נס
+    """
+    try:
+        if len(df) < lookback + 5:
+            return 0, "not enough data"
+
+        df_s  = df.iloc[-lookback:].copy().reset_index(drop=True)
+        close = df_s['close'].values
+        rsi_s = ta.rsi(df_s['close'], length=14)
+        if rsi_s is None or rsi_s.isna().all():
+            return 0, "RSI calc failed"
+
+        rsi   = rsi_s.values
+        n     = len(close)
+
+        if direction == 'LONG':
+            # חפש שני Lows: נקודה A (ישנה) ונקודה B (חדשה, Lower Low)
+            # נסרוק ב-2 חלקים: A בחציה הראשונה, B בחציה השנייה
+            half  = n // 2
+            a_idx = int(df_s['low'].iloc[:half].idxmin())
+            b_idx = half + int(df_s['low'].iloc[half:].idxmin())
+
+            price_a, price_b = close[a_idx], close[b_idx]
+            rsi_a,   rsi_b   = rsi[a_idx],   rsi[b_idx]
+
+            # Bullish divergence: price_b < price_a AND rsi_b > rsi_a
+            if price_b < price_a and rsi_b > rsi_a and not (pd.isna(rsi_a) or pd.isna(rsi_b)):
+                price_diff = round((price_a - price_b) / price_a * 100, 2)
+                rsi_diff   = round(rsi_b - rsi_a, 1)
+                pts        = 10 if price_diff >= 1.5 else 5
+                return pts, (f"RSI Div ✅ Bullish: Low מחיר -{price_diff}% "
+                             f"אבל RSI +{rsi_diff}pts")
+            else:
+                return 0, "no bullish divergence"
+
+        else:  # SHORT
+            half  = n // 2
+            a_idx = int(df_s['high'].iloc[:half].idxmax())
+            b_idx = half + int(df_s['high'].iloc[half:].idxmax())
+
+            price_a, price_b = close[a_idx], close[b_idx]
+            rsi_a,   rsi_b   = rsi[a_idx],   rsi[b_idx]
+
+            # Bearish divergence: price_b > price_a AND rsi_b < rsi_a
+            if price_b > price_a and rsi_b < rsi_a and not (pd.isna(rsi_a) or pd.isna(rsi_b)):
+                price_diff = round((price_b - price_a) / price_a * 100, 2)
+                rsi_diff   = round(rsi_a - rsi_b, 1)
+                pts        = 10 if price_diff >= 1.5 else 5
+                return pts, (f"RSI Div ✅ Bearish: High מחיר +{price_diff}% "
+                             f"אבל RSI -{rsi_diff}pts")
+            else:
+                return 0, "no bearish divergence"
+
+    except Exception as e:
+        return 0, f"RSI div error: {e}"
+
+
 def score_symbol(df_3h, df_1h, symbol, direction='LONG'):
     """
     מערכת ניקוד מקצועית 0–100 נקודות.
@@ -2328,6 +2432,36 @@ def score_symbol(df_3h, df_1h, symbol, direction='LONG'):
             parts.append(f"Squeeze=0({sq_desc[:30]})")
             if VERBOSE_LOG:
                 print(f"  [{symbol}] {direction} | no squeeze: {sq_desc}")
+
+        # ════════════════════════════════════════
+        # 7d. VOLUME BUILDUP — +8/+4 נקודות (Smart Money)
+        # ════════════════════════════════════════
+        # נפח עולה בהדרגה ב-3-5 נרות = כסף חכם נכנס לפני הכולם
+        vb_pts, vb_desc = detect_volume_buildup(df_1h, candles=5)
+        if vb_pts > 0:
+            score += vb_pts
+            parts.append(f"VolBuild=+{vb_pts}({vb_desc[:40]})")
+            if VERBOSE_LOG:
+                print(f"  [{symbol}] {direction} | VOL BUILDUP: {vb_desc}")
+        else:
+            parts.append(f"VolBuild=0({vb_desc[:25]})")
+            if VERBOSE_LOG:
+                print(f"  [{symbol}] {direction} | no vol buildup: {vb_desc}")
+
+        # ════════════════════════════════════════
+        # 7e. RSI DIVERGENCE — +10/+5 נקודות (Early Reversal)
+        # ════════════════════════════════════════
+        # מחיר עושה Low חדש אבל RSI עולה = כוח נסתר לפני פריצה
+        rd_pts, rd_desc = detect_rsi_divergence(df_1h, direction, lookback=30)
+        if rd_pts > 0:
+            score += rd_pts
+            parts.append(f"RSIDiv=+{rd_pts}({rd_desc[:45]})")
+            if VERBOSE_LOG:
+                print(f"  [{symbol}] {direction} | RSI DIV: {rd_desc}")
+        else:
+            parts.append(f"RSIDiv=0({rd_desc[:25]})")
+            if VERBOSE_LOG:
+                print(f"  [{symbol}] {direction} | no RSI div: {rd_desc}")
 
         # ════════════════════════════════════
         # 8. FEAR & GREED INDEX — ±5 נקודות
