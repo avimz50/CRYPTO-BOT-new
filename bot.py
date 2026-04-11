@@ -1196,6 +1196,20 @@ def _load_audit_log():
         trade_audit_log = []
 
 
+def _extract_prebreakout(breakdown: str) -> str:
+    """מחלץ מ-score_breakdown אילו סיגנלים Pre-Breakout זוהו בכניסה."""
+    signals = []
+    if 'Squeeze=+' in breakdown:
+        signals.append('BB Squeeze')
+    if 'VolBuild=+' in breakdown:
+        signals.append('Vol Buildup')
+    if 'RSIDiv=+' in breakdown:
+        signals.append('RSI Divergence')
+    if 'FVG=+' in breakdown:
+        signals.append('FVG (ICT)')
+    return ' + '.join(signals) if signals else 'None'
+
+
 def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_price: float = None):
     """מוסיף עסקה סגורה ל-closed_trades_log + Audit Log מתמיד."""
     global closed_trades_log, trade_audit_log
@@ -1263,6 +1277,8 @@ def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_pric
             close_reason, pnl_usd, duration_m,
             trade['direction'], trade.get('score', 0)
         ),
+        # ── Pre-Breakout Signals שהובילו לכניסה ─────────────────────────
+        'prebreakout_signals': _extract_prebreakout(trade.get('score_breakdown', '')),
     }
 
     # ── closed_trades_log (in-memory, 48h) ───────────────────────────────
@@ -1304,8 +1320,10 @@ def get_data(symbol, timeframe='1h', limit=250):
     df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     return df
 
-def generate_chart(df, symbol, entry, sl, tp, direction='LONG'):
-    """מייצר גרף נרות עם EMA200, RSI, ווליום וקווי SL/Entry/TP.
+def generate_chart(df, symbol, entry, sl, tp, direction='LONG',
+                   fvg_top=None, fvg_bot=None):
+    """מייצר גרף נרות עם EMA200, Bollinger Bands, RSI, ווליום וקווי SL/Entry/TP.
+       fvg_top / fvg_bot — אם מסופקים, מצייר אזור FVG (ICT Fair Value Gap).
        direction='LONG' → ירוק | 'SHORT' → אדום.
        מחזיר BytesIO או None אם נכשל."""
     if not CHARTS_ENABLED:
@@ -1339,6 +1357,19 @@ def generate_chart(df, symbol, entry, sl, tp, direction='LONG'):
         ema200_vals = ta.ema(df['close'], length=200).tail(72).values
         rsi_vals    = ta.rsi(df['close'], length=14).tail(72).values
 
+        # ── Bollinger Bands (20, 2σ) ──
+        try:
+            bb_raw = ta.bbands(df['close'], length=20, std=2)
+            bbu_col = next((c for c in bb_raw.columns if 'BBU_' in c), None)
+            bbl_col = next((c for c in bb_raw.columns if 'BBL_' in c), None)
+            bbm_col = next((c for c in bb_raw.columns if 'BBM_' in c), None)
+            bb_upper = bb_raw[bbu_col].tail(72).values if bbu_col else None
+            bb_lower = bb_raw[bbl_col].tail(72).values if bbl_col else None
+            bb_mid   = bb_raw[bbm_col].tail(72).values if bbm_col else None
+            bb_ok    = bb_upper is not None
+        except Exception:
+            bb_ok = False
+
         rsi_30 = [30] * 72
         rsi_70 = [70] * 72
 
@@ -1352,6 +1383,17 @@ def generate_chart(df, symbol, entry, sl, tp, direction='LONG'):
             mpf.make_addplot(rsi_70, panel=2, color='#e74c3c',
                              linestyle='--', width=0.8),
         ]
+
+        # הוסף BB לגרף
+        if bb_ok:
+            apds += [
+                mpf.make_addplot(bb_upper, color='#546e7a', width=0.8,
+                                 linestyle='--', alpha=0.7),
+                mpf.make_addplot(bb_mid,   color='#546e7a', width=0.6,
+                                 linestyle=':', alpha=0.5),
+                mpf.make_addplot(bb_lower, color='#546e7a', width=0.8,
+                                 linestyle='--', alpha=0.7),
+            ]
 
         # ── עיצוב כהה עם צבע לפי כיוון ──
         BG = '#0d1117'
@@ -1425,6 +1467,25 @@ def generate_chart(df, symbol, entry, sl, tp, direction='LONG'):
                         bbox=dict(facecolor=BG, edgecolor=col,
                                   boxstyle='round,pad=0.2', alpha=0.8))
 
+        # ── FVG Zone (ICT Fair Value Gap) ──
+        if fvg_top is not None and fvg_bot is not None:
+            try:
+                y_min, y_max = ax.get_ylim()
+                clamp_top = min(fvg_top, y_max)
+                clamp_bot = max(fvg_bot, y_min)
+                if clamp_top > clamp_bot:
+                    ax.axhspan(clamp_bot, clamp_top,
+                               alpha=0.18, color='#ff9800', zorder=1,
+                               label=f'FVG {fvg_bot:.4f}–{fvg_top:.4f}')
+                    ax.axhline(clamp_top, color='#ff9800', linewidth=0.6, linestyle=':')
+                    ax.axhline(clamp_bot, color='#ff9800', linewidth=0.6, linestyle=':')
+                    mid_fvg = (clamp_top + clamp_bot) / 2
+                    ax.text(ax.get_xlim()[0] * 1.01, mid_fvg, ' FVG',
+                            color='#ff9800', fontsize=7, va='center',
+                            fontweight='bold')
+            except Exception:
+                pass
+
         ax.legend(loc='upper left', fontsize=8,
                   facecolor='#161b22', labelcolor='#c9d1d9',
                   edgecolor='#30363d')
@@ -1439,17 +1500,33 @@ def generate_chart(df, symbol, entry, sl, tp, direction='LONG'):
         print(f"Chart error: {e}")
         return None
 
+
+def _make_close_markup(symbol: str):
+    """מחזיר InlineKeyboardMarkup עם כפתור 'Close Position' לסימבול נתון."""
+    markup = telebot.types.InlineKeyboardMarkup()
+    markup.add(telebot.types.InlineKeyboardButton(
+        "❌ Close Position",
+        callback_data=f"close_{symbol}"
+    ))
+    return markup
+
+
 def send_chart_alert(chart_buf, symbol, caption):
-    """שולח גרף עם כיתוב קצר, ואז את ההודעה המלאה בנפרד."""
+    """שולח גרף עם כיתוב קצר, ואז את ההודעה המלאה בנפרד + כפתור Close."""
     try:
         if chart_buf:
-            short = f"📊 *{symbol}* — גרף 1H עם SL/Entry/TP"
+            short = f"📊 *{symbol}* — גרף 1H עם BB / SL / Entry / TP"
             bot.send_photo(CHAT_ID, chart_buf, caption=short,
                            parse_mode='Markdown')
-        send_msg(caption)
+        markup = _make_close_markup(symbol)
+        bot.send_message(CHAT_ID, caption, parse_mode='Markdown',
+                         reply_markup=markup)
     except Exception as e:
         print(f"Send chart error: {e}")
-        send_msg(caption)
+        try:
+            send_msg(caption)
+        except Exception:
+            pass
 
 # --- שלב 1+2: משפך — מועמדים חמים ---
 
@@ -1549,6 +1626,42 @@ def get_btc_regime():
         print(f"BTC regime check failed: {e} — defaulting to NEUTRAL")
         return 'NEUTRAL'
 
+
+# Cache ל-BTC Parabolic Bull check (15 דקות TTL)
+_btc_parabolic_cache: dict = {'ts': 0.0, 'result': False, 'rsi': 0.0, 'ema': 0.0}
+
+def is_btc_parabolic_bull() -> tuple[bool, float, float]:
+    """
+    האם BTC נמצא בעלייה פרבולית?
+    תנאי: BTC 4H מעל EMA200 AND BTC RSI(1H) > 60
+    אם כן — חוסם את כל האיתותים SHORT על אלטקוין.
+
+    מחזיר: (is_parabolic: bool, rsi_1h: float, ema200_4h: float)
+    Cache: 15 דקות — לא מבצע API call בכל סריקה.
+    """
+    global _btc_parabolic_cache
+    now_ts = time.time()
+    if now_ts - _btc_parabolic_cache['ts'] < 900:   # 15 min cache
+        return (_btc_parabolic_cache['result'],
+                _btc_parabolic_cache['rsi'],
+                _btc_parabolic_cache['ema'])
+    try:
+        df_4h    = get_data('BTC/USDT', timeframe='4h', limit=210)
+        df_1h    = get_data('BTC/USDT', timeframe='1h', limit=30)
+        ema200   = float(ta.ema(df_4h['close'], length=200).iloc[-1])
+        rsi_1h   = float(ta.rsi(df_1h['close'], length=14).iloc[-1])
+        price_4h = float(df_4h['close'].iloc[-1])
+        result   = (price_4h > ema200) and (rsi_1h > 60)
+        _btc_parabolic_cache = {'ts': now_ts, 'result': result, 'rsi': rsi_1h, 'ema': ema200}
+        if result:
+            print(f"[BTC Compass] 🐂 PARABOLIC BULL — {price_4h:.0f} > EMA200={ema200:.0f} + RSI1H={rsi_1h:.1f}>60 → SHORTs חסומים")
+        else:
+            print(f"[BTC Compass] no parabolic — RSI1H={rsi_1h:.1f} | price vs EMA200: {price_4h:.0f}/{ema200:.0f}")
+        return result, rsi_1h, ema200
+    except Exception as e:
+        print(f"[BTC Compass] check failed: {e}")
+        return False, 0.0, 0.0
+
 # ═══════════════════════════════════════════════════════════════
 # מנוע ניקוד מקצועי — Professional Scoring System
 # ═══════════════════════════════════════════════════════════════
@@ -1596,7 +1709,7 @@ MAX_SCALP_TRADES        = 2      # max concurrent scalp trades
 
 # ── Stagnation Exit — Sniper/Breakout/SOL בלבד ────────────────────────────────
 STAGNATION_MIN_HOURS   = 4.0    # שעות מינימום לפני בדיקת דישדוש
-STAGNATION_RANGE_PCT   = 1.5    # % מהכניסה — אם המחיר לא זז → יציאה
+STAGNATION_RANGE_PCT   = 0.5    # % מהכניסה — אם המחיר לא זז → יציאה
 # (Phase=initial בלבד; אם TP1 נגע ועברנו ל-trailing — לא רלוונטי)
 
 # ── Bollinger Band Squeeze — כניסה לפני הפריצה ────────────────────────────────
@@ -3523,6 +3636,18 @@ def send_heartbeat():
             print(f"Heartbeat fetch error {sym}: {e}")
             continue
 
+        # ── זמן פתיחה + Duration ──
+        try:
+            opened_dt  = datetime.fromisoformat(t.get('opened_at', now_il().isoformat()))
+            elapsed_s  = (now_il() - opened_dt).total_seconds()
+            elapsed_h  = int(elapsed_s // 3600)
+            elapsed_m  = int((elapsed_s % 3600) // 60)
+            open_time  = opened_dt.strftime('%H:%M')
+            duration_str = f"{elapsed_h}h {elapsed_m:02d}m" if elapsed_h > 0 else f"{elapsed_m}m"
+        except Exception:
+            open_time    = "?"
+            duration_str = "?"
+
         # ── P&L ──
         _ps     = t.get('pos_size', POSITION_SIZE)   # per-trade position size
         raw_pct = (price - entry) / entry * 100
@@ -3559,6 +3684,7 @@ def send_heartbeat():
         run_label = "💰 Running Profit" if pnl_usd >= 0 else "🔻 Running Loss"
         msg += (
             f"\n{dir_emoji} *{sym}*  {phase_label}{be_label}\n"
+            f"   ⏰ נפתח: `{open_time}` · ⏱ פעיל: *{duration_str}*\n"
             f"   כניסה: `{entry:.6g}` → עכשיו: `{price:.6g}`\n"
             f"   {run_label}: *${pnl_usd:+.2f}*  ({pnl_pct:+.1f}%)\n"
             f"   {sl_lbl}\n"
@@ -3583,14 +3709,46 @@ def send_heartbeat():
     realized   = round(wallet.get('total_pnl', 0.0), 2)
     total_bal  = round(wallet.get('starting', STARTING_BALANCE) + realized + total_floating, 2)
 
-    msg += (
+    footer = (
         f"\n{'─' * 24}\n"
         f"{pnl_icon} Realized P&L: *${realized:+.2f}*\n"
         f"{float_icon} Floating P&L: *${total_floating:+.2f}*\n"
         f"💼 Total Balance: *${total_bal:.2f}*\n"
         f"📊 P&L היום: *${pnl_today:+}* · {len(trades_snapshot)} עסקה פעילה"
     )
-    send_msg(msg)
+
+    # שלח כל עסקה עם כפתור Close משלה
+    per_trade_blocks = msg.split('\n\n')
+    # השורה הראשונה היא ה-header
+    header_block = per_trade_blocks[0] if per_trade_blocks else msg
+
+    try:
+        send_msg(header_block)   # header ללא כפתור
+    except Exception:
+        pass
+
+    for t_s in trades_snapshot:
+        sym_s = t_s['symbol']
+        # מצא את הבלוק הרלוונטי לעסקה זו ב-msg
+        trade_block = None
+        for block in per_trade_blocks[1:]:
+            if sym_s.replace('/USDT', '') in block or sym_s in block:
+                trade_block = block.strip()
+                break
+        if not trade_block:
+            continue
+        try:
+            markup_s = _make_close_markup(sym_s)
+            bot.send_message(CHAT_ID, trade_block, parse_mode='Markdown',
+                             reply_markup=markup_s)
+        except Exception as _e:
+            print(f"[Heartbeat] button send error {sym_s}: {_e}")
+
+    try:
+        send_msg(footer)
+    except Exception:
+        pass
+
     if VERBOSE_LOG:
         print(f"[Heartbeat] sent — {len(trades_snapshot)} trade(s) @ {now_str}")
 
@@ -3857,6 +4015,77 @@ def handle_close(message):
 
     except Exception as e:
         send_msg(f"❌ שגיאה בסגירה: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('close_'))
+def handle_close_button(call):
+    """מטפל בלחיצה על כפתור '❌ Close Position' — סוגר את העסקה מיד."""
+    try:
+        symbol = call.data[len('close_'):]  # e.g. 'BTC/USDT'
+        bot.answer_callback_query(call.id, f"🔄 סוגר {symbol}...")
+
+        trade = next((t for t in active_trades if t['symbol'] == symbol), None)
+        if not trade:
+            bot.answer_callback_query(call.id, f"⚠️ {symbol} כבר נסגר", show_alert=True)
+            try:
+                bot.edit_message_reply_markup(call.message.chat.id,
+                                              call.message.message_id,
+                                              reply_markup=None)
+            except Exception:
+                pass
+            return
+
+        ticker        = exchange.fetch_ticker(symbol)
+        current_price = ticker['last']
+        entry         = trade['entry']
+        direction_cb  = trade.get('direction', 'LONG')
+        _ps_cb        = trade.get('pos_size', POSITION_SIZE)
+
+        # P&L נטו
+        if trade.get('tp1_triggered'):
+            raw_pct_cb = (current_price - entry) / entry * 100
+            half_pnl_cb = round(_ps_cb / 2 * (raw_pct_cb if direction_cb == 'LONG' else -raw_pct_cb) / 100, 2)
+            net_pnl_cb  = round(trade.get('tp1_pnl', 0) + half_pnl_cb, 2)
+        else:
+            raw_pct_cb = (current_price - entry) / entry * 100
+            pnl_pct_cb = raw_pct_cb if direction_cb == 'LONG' else -raw_pct_cb
+            net_pnl_cb = round(_ps_cb * pnl_pct_cb / 100, 2)
+
+        with trades_lock:
+            active_trades.remove(trade)
+        wallet_credit(net_pnl_cb, trade.get('margin', MARGIN))
+        _log_closed_trade(trade, 'Manual', net_pnl_cb, current_price)
+        daily_stats['close_reasons']['Manual'] += 1
+        if net_pnl_cb >= 0:
+            daily_stats['wins'] += 1
+        else:
+            daily_stats['losses'] += 1
+        daily_stats['total_pnl'] = round(daily_stats.get('total_pnl', 0) + net_pnl_cb, 2)
+        save_active_trades()
+        eq = _get_equity()
+
+        pnl_icon = "📈" if net_pnl_cb >= 0 else "📉"
+        send_msg(
+            f"🚪 *Button Close — {symbol}*\n"
+            f"כניסה: `{entry:.6g}` → יציאה: `{current_price:.6g}`\n"
+            f"{pnl_icon} P&L: *${net_pnl_cb:+.2f}*\n"
+            f"💼 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance',0):.2f}`"
+        )
+        # מחק את הכפתור מההודעה המקורית
+        try:
+            bot.edit_message_reply_markup(call.message.chat.id,
+                                          call.message.message_id,
+                                          reply_markup=None)
+        except Exception:
+            pass
+        print(f"[ButtonClose] {symbol} closed via button at {current_price}, P&L={net_pnl_cb:+.2f}")
+
+    except Exception as e:
+        print(f"[ButtonClose] Error: {e}")
+        try:
+            bot.answer_callback_query(call.id, f"❌ שגיאה: {e}"[:200], show_alert=True)
+        except Exception:
+            pass
+
 
 @bot.message_handler(commands=['addtrade'])
 def handle_addtrade(message):
@@ -5116,6 +5345,19 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                 'scores': {},
             })
         return 0
+
+    # ── BTC Compass Parabolic Bull Filter — EMA200(4H) + RSI(1H)>60 ────────────
+    if direction == 'SHORT':
+        _parabolic, _rsi_1h, _ema200 = is_btc_parabolic_bull()
+        if _parabolic:
+            print(f"BTC COMPASS VETO: PARABOLIC BULL — RSI1H={_rsi_1h:.1f}>60 above EMA200 → skipping {len(candidates)} SHORT candidates")
+            for c in candidates:
+                rejected_out.append({
+                    'symbol': c['symbol'], 'direction': direction, 'best_score': 0,
+                    'reason': f'BTC Parabolic Bull (EMA200 4H above + RSI1H={_rsi_1h:.1f}>60) — SHORTs חסומים',
+                    'scores': {},
+                })
+            return 0
 
     found = 0
     for candidate in candidates:
