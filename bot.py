@@ -2897,6 +2897,14 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     msg += _wallet_opened_summary() + "\n\n"
     msg += tip
 
+    # אם df_3h לא סופק — שולפים 1H בעצמנו (למשל Major Watch מעביר None)
+    if df_3h is None:
+        try:
+            df_3h = get_data(symbol, timeframe='1h', limit=80)
+        except Exception as _fe:
+            print(f"[SWING] chart fetch fallback failed: {_fe}")
+            df_3h = None
+
     chart_buf = generate_chart(df_3h, symbol, price, sl_price, tp_price, direction) \
                 if df_3h is not None else None
     send_chart_alert(chart_buf, symbol, msg)
