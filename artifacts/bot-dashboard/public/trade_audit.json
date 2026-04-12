@@ -1,6 +1,6 @@
 {
-  "updated": "2026-04-11T13:41:53+03:00",
-  "count": 3,
+  "updated": "2026-04-12T07:46:38+03:00",
+  "count": 4,
   "trades": [
     {
       "symbol": "TRX/USDT",
@@ -94,6 +94,38 @@
       "scalp": false,
       "hunter_mode": false,
       "lesson": "✅ Stagnation — עסקה רווחית $+0.02 · 2495 דקות · Score=88."
+    },
+    {
+      "symbol": "ETH/USDT",
+      "direction": "LONG",
+      "timeframe": "1H",
+      "entry_price": 2258.39,
+      "close_price": 2213.41,
+      "sl_at_open": 2122.8866,
+      "tp_at_open": 2529.3968,
+      "dist_sl_pct": 6.0,
+      "dist_tp_pct": 12.0,
+      "rr_ratio": 2.0,
+      "rr_achieved": 0.33,
+      "score": 88,
+      "rsi": null,
+      "ema200": null,
+      "score_breakdown": "Major Watch Breakout — 1H > 4H High ($2257.4)",
+      "strategy": "",
+      "track": "Swing",
+      "slippage_pct": 0.0,
+      "close_reason": "Trailing",
+      "pnl_usd": -0.9,
+      "opened_at": "2026-04-11T20:14:18+03:00",
+      "closed_at": "2026-04-12T07:46:38+03:00",
+      "fng_at_entry": 15,
+      "atr": 27.10068,
+      "duration_min": 692.3,
+      "sniper": false,
+      "scalp": false,
+      "hunter_mode": false,
+      "lesson": "⚠️ Early Reversal — Trailing נגע בהפסד ($-0.90). כניסה הייתה מוקדמת מדי או המומנטום התהפך חדות. בדוק Volume Ratio בכניסה.",
+      "prebreakout_signals": "None"
     }
   ]
 }

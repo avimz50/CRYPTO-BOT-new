@@ -1760,11 +1760,43 @@ SCALP_TRACK_BE_TRIGGER = 0.50         # BE at 50% of way to TP1
 
 # 🌊 Track B: Swing — סבלני, SL רחב, מינוף נמוך
 SWING_TRACK_VOL_MIN    = 10_000_000   # מינימום $10M נפח 24h
-SWING_TRACK_SL_PCT     = 6.0          # SL 6% — נשימה לתנודתיות (טווח 5-8%)
-SWING_TRACK_TP1_PCT    = 6.0          # TP1 6%
-SWING_TRACK_TP_PCT     = 12.0         # TP 12% — RR 1:2
+SWING_TRACK_SL_PCT     = 6.0          # SL 6% — ברירת מחדל (מוחלף ע"י FNG Mode)
+SWING_TRACK_TP1_PCT    = 6.0          # TP1 6% — ברירת מחדל
+SWING_TRACK_TP_PCT     = 12.0         # TP 12% — ברירת מחדל
 SWING_TRACK_LEVERAGE   = 3            # מינוף 3x מקסימום
-SWING_TRACK_BE_PCT     = 4.0          # BE after +4% (מבנה שוק ברור)
+SWING_TRACK_BE_PCT     = 4.0          # BE — ברירת מחדל (מוחלף ע"י FNG Mode)
+
+
+def get_fng_mode(fng_v: int) -> dict:
+    """מחזיר פרמטרי SL/TP/BE עבור מסלול Swing לפי Fear & Greed Index.
+
+    Stages:
+      0-25  → Conservative  | SL 3%  TP1 2%  TP 4%   BE 1.0%  RR-min 1.3
+      26-45 → Careful       | SL 4%  TP1 3.5% TP 7%  BE 1.5%  RR-min 1.5
+      46-55 → Standard      | SL 5%  TP1 5%  TP 10%  BE 2.5%  RR-min 2.0
+      56-75 → Aggressive    | SL 6%  TP1 7%  TP 15%  BE 3.5%  RR-min 2.0
+      76+   → Moon          | SL 8%  TP1 10% TP 25%  BE 5.0%  RR-min 2.5 + Trailing 2%
+    """
+    if fng_v <= 25:
+        return {'name': 'Conservative', 'emoji': '🛡️',
+                'sl': 3.0, 'tp1': 2.0, 'tp': 4.0, 'be': 1.0,
+                'min_rr': 1.3, 'trailing': None}
+    elif fng_v <= 45:
+        return {'name': 'Careful', 'emoji': '⚠️',
+                'sl': 4.0, 'tp1': 3.5, 'tp': 7.0, 'be': 1.5,
+                'min_rr': 1.5, 'trailing': None}
+    elif fng_v <= 55:
+        return {'name': 'Standard', 'emoji': '⚖️',
+                'sl': 5.0, 'tp1': 5.0, 'tp': 10.0, 'be': 2.5,
+                'min_rr': 2.0, 'trailing': None}
+    elif fng_v <= 75:
+        return {'name': 'Aggressive', 'emoji': '🚀',
+                'sl': 6.0, 'tp1': 7.0, 'tp': 15.0, 'be': 3.5,
+                'min_rr': 2.0, 'trailing': None}
+    else:
+        return {'name': 'Moon', 'emoji': '🌕',
+                'sl': 8.0, 'tp1': 10.0, 'tp': 25.0, 'be': 5.0,
+                'min_rr': 2.5, 'trailing': 2.0}
 
 # 🛡️ חוקי-על גלובליים
 MAX_EQUITY_RISK_PCT    = 1.5          # סיכון מקסימלי 1.5% מהון לעסקה
@@ -2677,12 +2709,13 @@ def is_hunter_mode(fng_v: int, change_24h: float = 0.0) -> tuple:
     return False, ""
 
 
-def calc_risk_position(track: str, equity: float) -> tuple:
+def calc_risk_position(track: str, equity: float, fng_v: int = None) -> tuple:
     """
     מחשב גודל פוזיציה לפי חוק הסיכון 1.5% מהון.
       max_risk_usd = equity × 1.5%
       pos_size     = max_risk_usd / sl_pct          (כך ש-pos_size × sl_pct = max_risk)
       margin       = pos_size / leverage             (מוגבל $5–$50)
+    עבור Swing — ה-SL/TP/TP1 נקבעים דינמית לפי FNG Mode (get_fng_mode).
     מחזיר: (margin, pos_size, leverage, sl_pct, tp1_pct, tp_pct)
     """
     if track == 'Scalp':
@@ -2691,9 +2724,15 @@ def calc_risk_position(track: str, equity: float) -> tuple:
         tp_pct   = SCALP_TRACK_TP_PCT
         leverage = SCALP_TRACK_LEVERAGE
     else:
-        sl_pct   = SWING_TRACK_SL_PCT
-        tp1_pct  = SWING_TRACK_TP1_PCT
-        tp_pct   = SWING_TRACK_TP_PCT
+        if fng_v is not None:
+            _mode  = get_fng_mode(fng_v)
+            sl_pct  = _mode['sl']
+            tp1_pct = _mode['tp1']
+            tp_pct  = _mode['tp']
+        else:
+            sl_pct   = SWING_TRACK_SL_PCT
+            tp1_pct  = SWING_TRACK_TP1_PCT
+            tp_pct   = SWING_TRACK_TP_PCT
         leverage = SWING_TRACK_LEVERAGE
 
     max_risk = equity * (MAX_EQUITY_RISK_PCT / 100)   # e.g. $200 × 1.5% = $3
@@ -2748,7 +2787,13 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         print(f"  [HUNTER MODE] {symbol}: {hunter_reason} → RR min={HUNTER_MIN_RR}")
 
     equity = _get_equity()
-    effective_margin, pos_size, leverage, sl_pct, tp1_pct, tp_pct = calc_risk_position('Swing', equity)
+    # calc_risk_position מקבל fng_v — קובע SL/TP1/TP לפי FNG Mode
+    effective_margin, pos_size, leverage, sl_pct, tp1_pct, tp_pct = calc_risk_position('Swing', equity, fng_v=fng_v)
+
+    # FNG Mode — BE ו-min_rr דינמיים
+    fng_mode = get_fng_mode(fng_v)
+    print(f"  [FNG MODE] {fng_mode['emoji']} {fng_mode['name']} (FNG={fng_v}) "
+          f"| SL={sl_pct}% TP1={tp1_pct}% TP={tp_pct}% BE={fng_mode['be']}%")
 
     # Sniper Mode: חצי גודל
     if sniper_mode:
@@ -2760,10 +2805,8 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         pos_size         = round(pos_size * 0.60)
         effective_margin = round(pos_size / leverage, 2)
         print(f"  [SENTIMENT] GREED ({fng_v}) → Swing פוזיציה צומצמה ל-${pos_size}")
-    # Fear SL extension: REMOVED — Hunter Mode uses fixed SL_PCT_FIXED (3.5%) regardless of FNG
-    # if fng_v <= FEAR_THRESHOLD: sl_pct extended — disabled to allow entries in fear markets
 
-    # Hunter Mode: TP1 = 1:1 RR, TP = 1:3 RR
+    # Hunter Mode: TP1 = 1:1 RR, TP = 1:3 RR (מבטל FNG Mode)
     if hunter:
         tp1_pct = round(sl_pct * HUNTER_TP1_RR, 2)         # TP1 = SL distance (1:1)
         tp_pct  = round(sl_pct * HUNTER_MIN_RR, 2)          # TP  = 3 × SL distance (1:3)
@@ -2775,8 +2818,8 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         send_msg(f"⚠️ *יתרה נמוכה* — אין מספיק להפקדת מרג'ין\nנדרש: ${effective_margin:.0f} | יש: ${wallet.get('balance', 0):.2f}")
         return
 
-    # ── SL / TP / BE — Swing Track ─────────────────────────────────────────
-    be_pct = SWING_TRACK_BE_PCT   # 4% — אחרי מבנה שוק ברור
+    # ── SL / TP / BE — Swing Track (FNG Mode) ──────────────────────────────
+    be_pct = fng_mode['be']   # דינמי לפי FNG: Conservative=1% … Moon=5%
 
     sl_dist  = price * sl_pct  / 100
     tp_dist  = price * tp_pct  / 100
@@ -2799,10 +2842,12 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     est_loss_sl   = round(abs(sl_price  - price) / price * pos_size, 2)
     rr_ratio      = round(est_profit_tp / est_loss_sl, 2) if est_loss_sl > 0 else 0
 
-    required_rr = HUNTER_MIN_RR if hunter else MIN_RR_RATIO
+    # Hunter מחמיר תמיד 1:3 | אחרת — RR-min דינמי לפי FNG Mode
+    required_rr = HUNTER_MIN_RR if hunter else fng_mode['min_rr']
 
     if rr_ratio < required_rr:
-        print(f"[SWING] RR={rr_ratio:.2f} < {required_rr} {'(Hunter)' if hunter else ''} — {symbol} נדחה")
+        _rr_mode_label = '(Hunter)' if hunter else f'({fng_mode["name"]})'
+        print(f"[SWING] RR={rr_ratio:.2f} < {required_rr} {_rr_mode_label} — {symbol} נדחה")
         if hunter:
             send_msg(
                 f"❌ *Trade Rejected: {symbol.replace('/USDT','')}*\n"
@@ -2871,12 +2916,13 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     tf_icon = "📊" if timeframe == '4H' else ("⏱️" if timeframe == '1H' else "⚡")
 
     hunter_tag = "🎯 *PRECISION HUNTER MODE* | " if hunter else ""
-    rr_label   = f"RR 1:{int(HUNTER_MIN_RR)}" if hunter else "RR 1:2"
+    rr_label   = f"RR 1:{int(HUNTER_MIN_RR)}" if hunter else f"RR 1:{rr_ratio}"
     be_note    = " ← TP1 מפעיל BE אוטומטי!" if hunter else " ← אחרי מבנה ברור"
+    mode_tag   = f"{fng_mode['emoji']} *Mode: {fng_mode['name']}* (FNG={fng_v})"
 
     msg  = f"{dir_header}\n\n"
     msg += f"{'─' * 26}\n"
-    msg += f"{hunter_tag}🌊 *מסלול Swing*\n"
+    msg += f"{hunter_tag}🌊 *מסלול Swing* | {mode_tag}\n"
     if hunter:
         msg += f"⚠️ _שוק במתח: {hunter_reason}_\n"
     msg += f"{emoji} מטבע: `{symbol}` | נפח: ${vol_usd/1e6:.0f}M | 24h: {change_24h:+.1f}%\n"
@@ -3728,8 +3774,22 @@ def send_heartbeat():
     realized   = round(wallet.get('total_pnl', 0.0), 2)
     total_bal  = round(wallet.get('starting', STARTING_BALANCE) + realized + total_floating, 2)
 
+    # ── FNG Mode summary ──
+    try:
+        _fng_hb, _lbl_hb = get_fear_greed()
+        _mode_hb = get_fng_mode(_fng_hb)
+        mode_line = (
+            f"🧭 Sentiment: *{_lbl_hb}* ({_fng_hb}) — "
+            f"{_mode_hb['emoji']} Mode: *{_mode_hb['name']}*\n"
+            f"   SL {_mode_hb['sl']}% · TP1 {_mode_hb['tp1']}% · TP {_mode_hb['tp']}% · BE {_mode_hb['be']}%"
+        )
+    except Exception:
+        mode_line = ""
+
     footer = (
         f"\n{'─' * 24}\n"
+        f"{mode_line}\n"
+        f"{'─' * 24}\n"
         f"{pnl_icon} Realized P&L: *${realized:+.2f}*\n"
         f"{float_icon} Floating P&L: *${total_floating:+.2f}*\n"
         f"💼 Total Balance: *${total_bal:.2f}*\n"
