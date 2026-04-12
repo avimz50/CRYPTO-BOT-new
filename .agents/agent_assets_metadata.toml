@@ -12,3 +12,9 @@ id = "eoRwqZJMm0-9iXdbzf5qY"
 uri = "file://exports/bot_export.txt"
 type = "text"
 title = "bot.py — Trading Bot Source Code"
+
+[[outputs]]
+id = "oUqJbOMarw6KyWPDZJvJm"
+uri = "file://BOT_PARAMETERS.md"
+type = "text"
+title = "Adaptive Sniper — פרמטרים מלאים"
