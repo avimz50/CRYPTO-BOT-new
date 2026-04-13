@@ -1069,7 +1069,7 @@ def wallet_credit(pnl_usd: float, amount: float = MARGIN):
 # ─────────────────────────────────────────────────────────────────
 #  Make.com Webhook — שליחת עדכון לכל פתיחת עסקה
 # ─────────────────────────────────────────────────────────────────
-MAKE_WEBHOOK_URL = "https://hook.eu1.make.com/qwkyks25mnlcjy2m5iobzjgp575h0voa"
+MAKE_WEBHOOK_URL = "https://hook.eu1.make.com/14l99wxa67quwoh9q9n042238mjsuars"
 
 def _fire_make_webhook(trade: dict):
     """שולח POST ל-Make webhook בthread נפרד (fire-and-forget)."""
