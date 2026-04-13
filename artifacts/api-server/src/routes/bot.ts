@@ -87,6 +87,34 @@ router.get("/last_scan", async (_req, res) => {
   res.json(data);
 });
 
+/** Proxy POST to Flask bot — used by Make.com incoming webhook */
+router.post("/make", (req, res) => {
+  const body = JSON.stringify(req.body ?? {});
+  const options = {
+    hostname: "localhost",
+    port: BOT_FLASK_PORT,
+    path: "/api/make",
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(body),
+    },
+    timeout: 8000,
+  };
+  const flaskReq = http.request(options, (flaskRes) => {
+    let data = "";
+    flaskRes.on("data", (chunk) => (data += chunk));
+    flaskRes.on("end", () => {
+      res.status(flaskRes.statusCode ?? 200);
+      try { res.json(JSON.parse(data)); } catch { res.send(data); }
+    });
+  });
+  flaskReq.on("error", (err) => res.status(502).json({ ok: false, error: String(err) }));
+  flaskReq.on("timeout", () => { flaskReq.destroy(); res.status(504).json({ ok: false, error: "timeout" }); });
+  flaskReq.write(body);
+  flaskReq.end();
+});
+
 router.get("/bot_log", (_req, res) => {
   try {
     const stdout = fs.existsSync("/tmp/bot_stdout.log")
