@@ -4278,6 +4278,20 @@ def handle_addtrade(message):
 def handle_report(message):
     send_daily_report()
 
+
+@bot.message_handler(commands=['audit'])
+def handle_audit(message):
+    """שולח דוח ניתוח AI מלא (Gemini) — פירוט עסקאות + המלצות."""
+    send_msg("🤖 _מריץ ניתוח Gemini... עד 30 שניות_")
+    try:
+        from gdrive_reporter import run_audit_upload
+        run_audit_upload(
+            active_trades, wallet, closed_trades_log,
+            send_telegram=send_msg
+        )
+    except Exception as e:
+        send_msg(f"⚠️ שגיאה בדוח AI: `{str(e)[:100]}`")
+
 @bot.message_handler(commands=['dashboard'])
 def handle_dashboard(message):
     send_msg(
@@ -4908,7 +4922,8 @@ def handle_home(message):
         f"{'─' * 30}\n"
         f"📋 *פקודות מידע*\n"
         f"  /status     — עסקאות פעילות + SL/TP\n"
-        f"  /report     — דוח יומי מלא\n"
+        f"  /report     — דוח יומי מלא (סטטיסטיקות)\n"
+        f"  /audit      — דוח ניתוח AI מלא (Gemini)\n"
         f"  /scanreport — דוח סריקה אחרון\n"
         f"  /ping       — בדיקת חיות הבוט\n\n"
         f"📊 *הגדרות מדד הפחד (FNG)*\n"
