@@ -1,6 +1,6 @@
 {
-  "updated": "2026-04-12T07:46:38+03:00",
-  "count": 4,
+  "updated": "2026-04-13T22:52:18+03:00",
+  "count": 5,
   "trades": [
     {
       "symbol": "TRX/USDT",
@@ -125,6 +125,38 @@
       "scalp": false,
       "hunter_mode": false,
       "lesson": "⚠️ Early Reversal — Trailing נגע בהפסד ($-0.90). כניסה הייתה מוקדמת מדי או המומנטום התהפך חדות. בדוק Volume Ratio בכניסה.",
+      "prebreakout_signals": "None"
+    },
+    {
+      "symbol": "BTC/USDT",
+      "direction": "LONG",
+      "timeframe": "1H",
+      "entry_price": 73681.86,
+      "close_price": 73419.35,
+      "sl_at_open": 69260.9484,
+      "tp_at_open": 82523.6832,
+      "dist_sl_pct": 6.0,
+      "dist_tp_pct": 12.0,
+      "rr_ratio": 2.0,
+      "rr_achieved": 0.06,
+      "score": 88,
+      "rsi": null,
+      "ema200": null,
+      "score_breakdown": "Major Watch Breakout — 1H > 4H High ($73450)",
+      "strategy": "",
+      "track": "Swing",
+      "slippage_pct": 0.0,
+      "close_reason": "Stagnation",
+      "pnl_usd": -0.16,
+      "opened_at": "2026-04-11T22:08:29+03:00",
+      "closed_at": "2026-04-13T22:52:18+03:00",
+      "fng_at_entry": 15,
+      "atr": 884.18232,
+      "duration_min": 2923.8,
+      "sniper": false,
+      "scalp": false,
+      "hunter_mode": false,
+      "lesson": "📉 Stagnation — עסקה הפסידה $-0.16 · 2924 דקות · Score=88. חזור על ניתוח הכניסה.",
       "prebreakout_signals": "None"
     }
   ]
