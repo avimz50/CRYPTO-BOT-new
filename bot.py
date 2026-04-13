@@ -902,6 +902,118 @@ def api_fng_settings_get():
         }
     })
 
+# ─── Make.com Incoming Webhook ────────────────────────────────────────────────
+MAKE_INCOMING_SECRET = "sniper2026"   # טוקן אימות — Make צריך לשלוח בJSON
+
+@flask_app.route('/api/make', methods=['POST'])
+def api_make_command():
+    """
+    מקבל פקודות / ניתוח מ-Make.com Agent.
+
+    גוף JSON נדרש:
+      { "secret": "sniper2026", "command": "<cmd>", ... }
+
+    פקודות נתמכות:
+      news_alert   — { symbol, headline, sentiment }
+                     שולח התראה לטלגרם + מהדק SL ב-1% לאותו מטבע
+      whale_alert  — { symbol, direction, amount_usd }
+                     שולח התראה לטלגרם בלבד
+      analysis     — { text }
+                     שולח הודעה חופשית לטלגרם
+      close_trade  — { symbol }
+                     סוגר עסקה פעילה ידנית
+      tighten_sl   — { symbol, new_sl_pct }
+                     מהדק SL לאחוז מהכניסה שנשלח
+    """
+    data = flask_request.get_json(force=True, silent=True) or {}
+
+    # ── אימות ──
+    if data.get('secret') != MAKE_INCOMING_SECRET:
+        return flask_jsonify({'ok': False, 'error': 'unauthorized'}), 401
+
+    command = data.get('command', '').lower().strip()
+    symbol_raw = data.get('symbol', '').upper().replace('USDT', '').strip()
+    symbol = f"{symbol_raw}/USDT" if symbol_raw and '/USDT' not in symbol_raw else symbol_raw
+
+    # ── news_alert ──
+    if command == 'news_alert':
+        headline  = data.get('headline', 'חדשות חדשות')
+        sentiment = data.get('sentiment', 'neutral').lower()
+        sent_icon = '🔴' if 'neg' in sentiment else ('🟢' if 'pos' in sentiment else '⚪')
+        msg = (
+            f"📰 *חדשות מ-Make | {symbol_raw or 'שוק'}*\n"
+            f"{sent_icon} סנטימנט: *{sentiment}*\n"
+            f"_{headline}_"
+        )
+        send_msg(msg)
+        print(f"[Make→Bot] news_alert: {symbol_raw} | {sentiment} | {headline[:60]}")
+        return flask_jsonify({'ok': True, 'action': 'alert_sent'})
+
+    # ── whale_alert ──
+    elif command == 'whale_alert':
+        direction  = data.get('direction', '').upper()
+        amount_usd = data.get('amount_usd', 0)
+        dir_icon   = '🐳🟢' if direction == 'BUY' else ('🐳🔴' if direction == 'SELL' else '🐳')
+        msg = (
+            f"{dir_icon} *ווייתן זוהה — {symbol_raw}*\n"
+            f"כיוון: *{direction}* | סכום: `${amount_usd:,.0f}`\n"
+            f"_עדכון מ-Make Whale Tracker_"
+        )
+        send_msg(msg)
+        print(f"[Make→Bot] whale_alert: {symbol_raw} {direction} ${amount_usd:,.0f}")
+        return flask_jsonify({'ok': True, 'action': 'alert_sent'})
+
+    # ── analysis (הודעה חופשית) ──
+    elif command == 'analysis':
+        text = data.get('text', '')
+        if text:
+            send_msg(f"🤖 *Make AI Analysis*\n\n{text}")
+        print(f"[Make→Bot] analysis: {text[:80]}")
+        return flask_jsonify({'ok': True, 'action': 'message_sent'})
+
+    # ── close_trade ──
+    elif command == 'close_trade':
+        with trades_lock:
+            trade = next((t for t in active_trades if t['symbol'] == symbol), None)
+        if not trade:
+            return flask_jsonify({'ok': False, 'error': f'{symbol} לא נמצא בעסקאות פעילות'})
+        try:
+            price = exchange.fetch_ticker(symbol)['last']
+            close_trade(trade, reason='Manual', close_price=price)
+            send_msg(f"✋ *Make סגר עסקה* — `{symbol}` @ `{price:.6g}`")
+            print(f"[Make→Bot] close_trade: {symbol} @ {price}")
+            return flask_jsonify({'ok': True, 'action': 'trade_closed', 'price': price})
+        except Exception as e:
+            return flask_jsonify({'ok': False, 'error': str(e)}), 500
+
+    # ── tighten_sl ──
+    elif command == 'tighten_sl':
+        new_sl_pct = float(data.get('new_sl_pct', 0))
+        if new_sl_pct <= 0:
+            return flask_jsonify({'ok': False, 'error': 'new_sl_pct חייב להיות > 0'})
+        with trades_lock:
+            trade = next((t for t in active_trades if t['symbol'] == symbol), None)
+        if not trade:
+            return flask_jsonify({'ok': False, 'error': f'{symbol} לא נמצא'})
+        entry     = trade['entry']
+        direction = trade.get('direction', 'LONG')
+        new_sl    = round(entry * (1 - new_sl_pct / 100) if direction == 'LONG'
+                          else entry * (1 + new_sl_pct / 100), 8)
+        old_sl    = trade.get('sl', 0)
+        trade['sl'] = new_sl
+        save_active_trades()
+        send_msg(
+            f"🔧 *Make הידק SL — {symbol}*\n"
+            f"SL ישן: `{old_sl:.6g}` → SL חדש: `{new_sl:.6g}` (-{new_sl_pct}%)"
+        )
+        print(f"[Make→Bot] tighten_sl: {symbol} {old_sl:.6g} → {new_sl:.6g}")
+        return flask_jsonify({'ok': True, 'action': 'sl_updated',
+                              'old_sl': old_sl, 'new_sl': new_sl})
+
+    else:
+        return flask_jsonify({'ok': False, 'error': f'פקודה לא מוכרת: {command}'}), 400
+
+
 @flask_app.route('/api/fng_settings', methods=['POST'])
 def api_fng_settings_post():
     global EXTREME_FEAR_THRESHOLD, FEAR_THRESHOLD, GREED_THRESHOLD
