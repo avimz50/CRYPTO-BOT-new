@@ -1067,6 +1067,36 @@ def wallet_credit(pnl_usd: float, amount: float = MARGIN):
 
 
 # ─────────────────────────────────────────────────────────────────
+#  Make.com Webhook — שליחת עדכון לכל פתיחת עסקה
+# ─────────────────────────────────────────────────────────────────
+MAKE_WEBHOOK_URL = "https://hook.eu1.make.com/qwkyks25mnlcjy2m5iobzjgp575h0voa"
+
+def _fire_make_webhook(trade: dict):
+    """שולח POST ל-Make webhook בthread נפרד (fire-and-forget)."""
+    import threading as _threading
+    import requests as _req
+
+    def _send():
+        try:
+            payload = {
+                "symbol":      trade.get('symbol', '').replace('/USDT', ''),
+                "direction":   trade.get('direction', 'LONG'),
+                "entry_price": trade.get('entry', 0),
+                "timestamp":   now_il().isoformat(timespec='seconds'),
+                "strategy":    trade.get('strategy', 'Swing'),
+                "score":       trade.get('score', 0),
+                "sl":          trade.get('sl'),
+                "tp":          trade.get('tp'),
+            }
+            resp = _req.post(MAKE_WEBHOOK_URL, json=payload, timeout=8)
+            print(f"[Make] Webhook ✅ {payload['symbol']} {payload['direction']} → {resp.status_code}")
+        except Exception as _e:
+            print(f"[Make] Webhook ❌ {_e}")
+
+    _threading.Thread(target=_send, daemon=True).start()
+
+
+# ─────────────────────────────────────────────────────────────────
 #  place_order() — פונקציה מאוחדת לרישום עסקה
 #  כל נתיבי הפתיחה (Auto / Manual / Scalp / SOL) מדווחים דרכה.
 # ─────────────────────────────────────────────────────────────────
@@ -1097,6 +1127,7 @@ def place_order(trade: dict, margin: float = MARGIN) -> bool:
     # ═══════════════════════════════════════════════════════════════════
     wallet_deduct(margin)
     save_active_trades()
+    _fire_make_webhook(trade)   # Make.com webhook — fire-and-forget
     available = wallet.get('balance', STARTING_BALANCE)
     locked    = sum(t.get('margin', MARGIN) for t in active_trades)
     equity    = _get_equity()
