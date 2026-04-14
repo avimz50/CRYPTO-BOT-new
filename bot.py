@@ -3063,38 +3063,23 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     be_note    = " ← TP1 מפעיל BE אוטומטי!" if hunter else " ← אחרי מבנה ברור"
     mode_tag   = f"{fng_mode['emoji']} *Mode: {fng_mode['name']}* (FNG={fng_v})"
 
-    msg  = f"{dir_header}\n\n"
-    msg += f"{'─' * 26}\n"
-    msg += f"{hunter_tag}🌊 *מסלול Swing* | {mode_tag}\n"
-    if hunter:
-        msg += f"⚠️ _שוק במתח: {hunter_reason}_\n"
-    msg += f"{emoji} מטבע: `{symbol}` | נפח: ${vol_usd/1e6:.0f}M | 24h: {change_24h:+.1f}%\n"
-    msg += f"{tf_icon} גרף: *{timeframe}* — _{tf_reason}_\n"
-    msg += f"פירוט: _{reason}_\n\n"
-    msg += f"*ניקוד איתות: {score}/100*\n"
-    msg += f"`{score_bar}` {'🟢 STRONG' if score >= 95 else '🟡 GOOD'}\n\n"
-    msg += f"מחיר כניסה: `{price:.6g}`\n"
-    msg += f"🛑 SL  ({'-' if direction=='LONG' else '+'}{sl_pct}%): `{sl_price:.6g}`\n"
-    msg += f"🔒 BE  ({'+' if direction=='LONG' else '-'}{be_pct}%): `{be_price:.6g}`{be_note}\n"
-    msg += f"🎯 TP1 ({'+' if direction=='LONG' else '-'}{tp1_pct}%): `{tp1_price:.6g}` ← 1:1 RR\n" if hunter else \
-           f"🎯 TP1 ({'+' if direction=='LONG' else '-'}{tp1_pct}%): `{tp1_price:.6g}` ← סגירת 50%\n"
-    msg += f"🎯 TP  ({'+' if direction=='LONG' else '-'}{tp_pct}%): `{tp_price:.6g}` ← {rr_label}\n"
-    msg += f"📍 Trailing: {TRAIL_PCT}% מהשיא (אחרי TP1)\n\n"
-    msg += f"{'─' * 26}\n"
-    msg += f"💼 *Leverage: {leverage}x (Isolated) | מסלול Swing*\n"
-    if sniper_mode:
-        msg += f"🎯 *Sniper Entry* — מרג'ין: ${effective_margin:.0f} (Half-Size) · נשלט: ${pos_size:.0f}\n"
-    else:
-        msg += f"💰 בטחון: ${effective_margin:.0f} · נשלט: ${pos_size:.0f}\n"
-    msg += f"🛡️ סיכון: ${max_risk_usd} ({risk_pct_eq:.2f}% מהון ${equity:.0f})\n"
-    msg += f"{'─' * 26}\n"
-    msg += f"📊 *Expected P&L*\n"
-    msg += f"✅ Est. Profit at TP: *+${est_profit_tp}*\n"
-    msg += f"❌ Est. Loss at SL:   *-${est_loss_sl}*\n"
-    msg += f"⚖️ Risk / Reward: *1 : {rr_ratio}*\n"
-    msg += f"{'─' * 26}\n"
-    msg += _wallet_opened_summary() + "\n\n"
-    msg += tip
+    sniper_tag = "🎯 Sniper · " if sniper_mode else ""
+    hunter_line = f"⚠️ _{hunter_reason}_\n" if hunter else ""
+    msg = (
+        f"{dir_header}\n"
+        f"{hunter_line}"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"📊 Score: `{score}/100` | {sniper_tag}{fng_mode['emoji']} {fng_mode['name']}\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"💵 כניסה:  `{price:.6g}`\n"
+        f"🛑 SL:     `{sl_price:.6g}` ({'-' if direction=='LONG' else '+'}{sl_pct}%)\n"
+        f"🔒 BE:     `{be_price:.6g}` ({'+' if direction=='LONG' else '-'}{be_pct}%)\n"
+        f"🎯 TP1:    `{tp1_price:.6g}` ({'+' if direction=='LONG' else '-'}{tp1_pct}%)\n"
+        f"🎯 TP:     `{tp_price:.6g}` ({'+' if direction=='LONG' else '-'}{tp_pct}%)\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"💼 {leverage}x · ${effective_margin:.0f} · ⚖️ RR 1:{rr_ratio} | "
+        f"✅ +${est_profit_tp} / ❌ -${est_loss_sl}"
+    )
 
     # אם df_3h לא סופק — שולפים 1H בעצמנו (למשל Major Watch מעביר None)
     # limit=250 כדי ש-EMA200 יהיה מחושב נכון (צריך לפחות 200 נרות)
@@ -6138,18 +6123,14 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
     dir_label = "Quick-Long (Dip Buy)" if direction == 'LONG' else "Scalp-Short (Bubble)"
     scalp_msg = (
         f"⚡ *{dir_label}: {symbol.replace('/USDT', '')} {emoji}*\n"
-        f"_מסלול Scalp — Market Order — Mean Reversion_\n\n"
-        f"💵 כניסה: `{price:.6g}` | נפח: ${vol_usd/1e6:.0f}M\n"
-        f"🛑 SL:  `{sl_price:.6g}` (-{sl_pct}%)\n"
-        f"🔒 BE:  `{be_price:.6g}` (+{be_trigger_pct}% ← 50% to TP1)\n"
-        f"🎯 TP1: `{tp1_price:.6g}` (+{tp1_pct}%)\n"
-        f"🎯 TP:  `{tp_price:.6g}` (+{tp_pct}%) ← RR 1:4\n"
-        f"⏱ תוקף: {SCALP_MAX_DURATION_MIN} דקות\n"
-        f"💼 {leverage}x · ${eff_margin:.0f} מרג'ין · ${pos_size:.0f} נשלט\n"
-        f"🛡️ סיכון: ${max_risk_usd} ({risk_pct_eq:.2f}% מהון)\n"
-        f"⚖️ RR: 1:{rr_ratio}\n\n"
-        + _wallet_opened_summary() + "\n\n"
-        + f"📋 _{reason}_"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"💵 כניסה: `{price:.6g}`\n"
+        f"🛑 SL:    `{sl_price:.6g}` (-{sl_pct}%)\n"
+        f"🔒 BE:    `{be_price:.6g}` (+{be_trigger_pct}%)\n"
+        f"🎯 TP1:   `{tp1_price:.6g}` (+{tp1_pct}%)\n"
+        f"🎯 TP:    `{tp_price:.6g}` (+{tp_pct}%)\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"💼 {leverage}x · ${eff_margin:.0f} · ⚖️ RR 1:{rr_ratio} · ⏱ {SCALP_MAX_DURATION_MIN}m"
     )
     try:
         df_scalp = get_data(symbol, timeframe='1h', limit=80)
@@ -6625,18 +6606,13 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
     short_name = symbol.replace('/USDT', '')
     msg = (
         f"{dir_emoji} *Breakout {dir_label} — {short_name}*\n"
-        f"{'─' * 26}\n"
-        f"📍 כניסה: `${price:.6g}`\n"
-        f"🔴 SL ({sl_sign}{sl_pct}%): `${sl_price:.6g}`\n"
-        f"🎯 TP1 ({tp_sign}{tp1_pct}%): `${tp1_price:.6g}` ← 50%\n"
-        f"🎯 TP  ({tp_sign}{tp_pct}%): `${tp_price:.6g}` ← RR 1:3\n"
-        f"📍 Trailing: {TRAIL_PCT}% מהשיא\n"
-        f"{'─' * 26}\n"
-        f"📊 RSI 4H: *{rsi_str}* | Vol ×{vol_ratio:.1f}\n"
-        f"{'🔺' if direction=='LONG' else '🔻'} {level_lbl} ✅\n"
-        f"😨 FNG: *{fng_v}*\n"
-        f"💼 {LEVERAGE}x · ${margin:.0f} מרג'ין · ${pos_size:.0f} נשלט\n\n"
-        + _wallet_opened_summary()
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"💵 כניסה: `{price:.6g}`\n"
+        f"🛑 SL:    `{sl_price:.6g}` ({sl_sign}{sl_pct}%)\n"
+        f"🎯 TP1:   `{tp1_price:.6g}` ({tp_sign}{tp1_pct}%)\n"
+        f"🎯 TP:    `{tp_price:.6g}` ({tp_sign}{tp_pct}%)\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"📊 RSI: {rsi_str} | Vol ×{vol_ratio:.1f} | FNG {fng_v} | 💼 {LEVERAGE}x · ${margin:.0f}"
     )
     chart_buf = generate_chart(df_1h, symbol, price, sl_price, tp1_price, direction) \
                 if df_1h is not None else None
