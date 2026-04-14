@@ -3,6 +3,7 @@ import io
 import json
 import signal
 import sys
+import requests
 import ccxt
 import telebot
 import time
