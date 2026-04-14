@@ -18,3 +18,9 @@ id = "oUqJbOMarw6KyWPDZJvJm"
 uri = "file://BOT_PARAMETERS.md"
 type = "text"
 title = "Adaptive Sniper — פרמטרים מלאים"
+
+[[outputs]]
+id = "bSngI43lMKK7WVnuNaMnM"
+uri = "file://bot_architecture_summary.md"
+type = "text"
+title = "Adaptive Sniper Bot — Technical Architecture Summary"
