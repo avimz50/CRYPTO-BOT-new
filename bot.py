@@ -1825,7 +1825,7 @@ def is_btc_parabolic_bull() -> tuple[bool, float, float]:
 # ════════════════════════════════════════════════════════════════
 #  Adaptive Sniper 2026 — Strategy Parameters
 # ════════════════════════════════════════════════════════════════
-MIN_SCORE  = 88   # סף כניסה — March Logic + 88-Score Optimization
+MIN_SCORE  = 78   # סף כניסה — הורד מ-88 ל-78 לתפוס טרנד מוקדם יותר
 MAX_TRADES = 3    # מקסימום 3 עסקאות — Focus on quality (חזרה למרץ 26-27)
 RSI_VETO_LONG  = 65   # RSI וטו LONG — 65 כמו מרץ 26-27 (לא לרדוף פאמפים)
 RSI_VETO_SHORT = 28   # RSI וטו SHORT — 28 כמו מרץ 26-27 (לא לשרטט oversold)
@@ -1871,8 +1871,9 @@ SCALP_MAX_DURATION_MIN  = 60     # force-close after 60 minutes
 MAX_SCALP_TRADES        = 2      # max concurrent scalp trades
 
 # ── Stagnation Exit — Sniper/Breakout/SOL בלבד ────────────────────────────────
-STAGNATION_MIN_HOURS   = 4.0    # שעות מינימום לפני בדיקת דישדוש
-STAGNATION_RANGE_PCT   = 0.5    # % מהכניסה — אם המחיר לא זז → יציאה
+STAGNATION_MIN_HOURS        = 4.0    # שעות מינימום (הפסד/ניטרלי) לפני יציאת דישדוש
+STAGNATION_PROFIT_MIN_HOURS = 24.0   # עסקה ברווח — לא סוגרים לפני 24 שעות
+STAGNATION_RANGE_PCT        = 0.5    # % מהכניסה — אם המחיר לא זז → יציאה
 # (Phase=initial בלבד; אם TP1 נגע ועברנו ל-trailing — לא רלוונטי)
 
 # ── Bollinger Band Squeeze — כניסה לפני הפריצה ────────────────────────────────
@@ -1964,8 +1965,10 @@ WEEKLY_PROFIT_TARGET   = 50.0         # יעד רווח שבועי ($)
 
 # ── Top 10 Breakout Scan — /top10 command ─────────────────────────────────────
 TOP10_SYMBOLS = [
+    # Leaders — BTC + ETH תמיד ראשונים (Priority בסורטינג)
+    'BTC/USDT', 'ETH/USDT',
     # Top-10 Market Cap
-    'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT', 'ADA/USDT',
+    'BNB/USDT', 'SOL/USDT', 'XRP/USDT', 'ADA/USDT',
     'DOGE/USDT', 'AVAX/USDT', 'DOT/USDT', 'LINK/USDT', 'TRX/USDT',
     # Top 11-20 Expansion
     'ATOM/USDT', 'NEAR/USDT', 'APT/USDT', 'SUI/USDT', 'ARB/USDT',
@@ -3393,8 +3396,11 @@ def track_trades():
                         opened_dt   = datetime.fromisoformat(trade.get('opened_at', now_il().isoformat()))
                         elapsed_h   = (now_il() - opened_dt).total_seconds() / 3600
                         price_drift = abs(current_price - entry) / entry * 100  # % תנועה מהכניסה
+                        # עסקה ברווח — סף זמן גבוה יותר (24h) כדי לא לחתוך זוכים מוקדם
+                        _raw_pnl_sign = (current_price > entry) if direction == 'LONG' else (current_price < entry)
+                        stag_min_h = STAGNATION_PROFIT_MIN_HOURS if _raw_pnl_sign else STAGNATION_MIN_HOURS
                         is_stagnant = (
-                            elapsed_h  >= STAGNATION_MIN_HOURS and
+                            elapsed_h  >= stag_min_h and
                             price_drift <= STAGNATION_RANGE_PCT
                         )
                         if is_stagnant:
@@ -6672,10 +6678,14 @@ def _coin_1h_breakout_above_4h_high(symbol: str) -> tuple[bool, float, float, fl
 
 
 # ── Breakout Strategy Constants ───────────────────────────────────────────────
-BREAKOUT_FNG_LONG_MIN  = 0    # FNG מינימום ל-LONG — Hunter Mode: BTC BULL + כל FNG → קונים! (היה 20)
-BREAKOUT_FNG_SHORT_MAX = 65   # FNG מקסימום ל-SHORT (מעל = חמדנות, לא שורטים)
-RSI_VETO_SHORT         = 35   # RSI מינימום ל-SHORT (מתחת = oversold, לא שורטים)
-BREAKOUT_MIN_VOL       = 1.5  # volume ratio מינימלי (150% מהממוצע = 50% מעל)
+BREAKOUT_FNG_LONG_MIN         = 0    # FNG מינימום ל-LONG — BTC BULL + כל FNG → קונים!
+BREAKOUT_FNG_SHORT_MAX        = 65   # FNG מקסימום ל-SHORT (מעל = חמדנות, לא שורטים)
+RSI_VETO_SHORT                = 35   # RSI מינימום ל-SHORT (מתחת = oversold, לא שורטים)
+BREAKOUT_MIN_VOL              = 1.5  # volume ratio מינימלי (150% מהממוצע = 50% מעל)
+RSI_VETO_BREAKOUT_LONG        = 78   # RSI מקסימום ל-LONG בפריצה עם נפח גבוה (≥1.5x)
+BREAKOUT_FNG_REDUCED_MARGIN_MAX  = 20    # FNG ≤ 20 → מרג'ין מוקטן ב-20%
+BREAKOUT_FNG_REDUCED_MARGIN_MULT = 0.80  # מכפיל מרג'ין בפחד קיצוני (FNG 10-20)
+MAJOR_PRIORITY_SYMBOLS        = {'BTC/USDT', 'ETH/USDT'}  # תמיד ראשונים בתור המועמדים
 
 
 def _coin_breakout_full(symbol: str, direction: str = 'LONG') -> tuple[bool, float, float, float | None, float]:
@@ -6905,10 +6915,11 @@ def top10_breakout_loop():
                 if not signal:
                     continue
 
-                # RSI Filter
+                # RSI Filter — Breakout with high volume allows RSI up to 78
                 if direction == 'LONG':
-                    if rsi is not None and rsi > RSI_VETO_LONG:
-                        print(f"[Top10 Breakout] {sym} LONG RSI veto ({rsi:.0f} > {RSI_VETO_LONG})")
+                    _rsi_limit = RSI_VETO_BREAKOUT_LONG if vol_ratio >= VOL_EMA_BYPASS_MULT else RSI_VETO_LONG
+                    if rsi is not None and rsi > _rsi_limit:
+                        print(f"[Top10 Breakout] {sym} LONG RSI veto ({rsi:.0f} > {_rsi_limit})")
                         continue
                 else:  # SHORT
                     if rsi is not None and rsi < RSI_VETO_SHORT:
@@ -6932,20 +6943,20 @@ def top10_breakout_loop():
 
             # ── 5. מיון ───────────────────────────────────────────────────
             # Priority:
-            #   1. Sector coins (AI/RWA) first — sector_bonus=0 sorts before 1
+            #   0. BTC/ETH — Leaders תמיד ראשונים (major_bonus=0)
+            #   1. Sector coins (AI/RWA) — sector_bonus=0 sorts before 1
             #   2. Volume high (>1.5x average) → הוכח עניין אמיתי
-            #   3. LONG: RSI as low as possible (not overbought)
-            #      SHORT: RSI as high as possible (room to drop)
+            #   3. LONG: RSI in sweet-spot / SHORT: highest RSI first
             def _sort_key(c):
+                major_bonus  = 0 if c['symbol'] in MAJOR_PRIORITY_SYMBOLS else 1
                 sector_bonus = 0 if c['symbol'] in SECTOR_PRIORITY_SYMBOLS else 1
                 rsi_v        = c['rsi'] if c['rsi'] is not None else (999 if direction == 'LONG' else 0)
                 vol_key      = -c['vol_ratio']  # higher vol = lower key = earlier
                 if direction == 'LONG':
-                    # prefer RSI in sweet-spot 55-70 (momentum without overbought)
                     rsi_key = abs(rsi_v - 62.5)   # closest to midpoint 62.5 = best
                 else:
                     rsi_key = -rsi_v              # highest RSI first for SHORT
-                return (sector_bonus, rsi_key, vol_key)
+                return (major_bonus, sector_bonus, rsi_key, vol_key)
 
             candidates.sort(key=_sort_key)
 
@@ -6958,6 +6969,10 @@ def top10_breakout_loop():
                     print("[Top10 Breakout] Balance too low — stop")
                     break
                 margin = max(round(avail * 0.10, 2), 5.0)
+                # FNG Awareness: FNG 10-20 + LONG → מרג'ין מוקטן ב-20% (Extreme Fear caution)
+                if direction == 'LONG' and fng_v is not None and fng_v <= BREAKOUT_FNG_REDUCED_MARGIN_MAX:
+                    margin = max(round(margin * BREAKOUT_FNG_REDUCED_MARGIN_MULT, 2), 5.0)
+                    print(f"[Top10 Breakout] FNG={fng_v} ≤ {BREAKOUT_FNG_REDUCED_MARGIN_MAX} → margin reduced to ${margin:.2f}")
                 open_breakout_trade(
                     symbol    = c['symbol'],
                     price     = c['price'],
