@@ -1836,6 +1836,13 @@ ATR_TRAIL_MULT       = 1.5   # מכפיל ATR ל-Trailing Stop (1.5× ATR מהש
 PARTIAL_25_TRIGGER   = 5.0   # % רווח לסגירת 25% — מיושר עם TP1=5%
 PARTIAL_25_DROP      = 1.0   # % ירידה מהשיא שמפעילה סגירת 25%
 SL_PCT_FIXED         = 3.5   # % SL קבוע מהכניסה — 3.5% כמו מרץ 26-27 (buffer מ-EMA whipsaw)
+
+# ── Dynamic SL — לפי סוג נכס ─────────────────────────────────────────────────
+MAJOR_COINS      = {'BTC', 'ETH', 'SOL'}   # Major → SL בסיסי נמוך יותר
+SL_BASE_MAJOR    = 3.0   # % SL בסיסי למטבעות Major
+SL_BASE_ALTCOIN  = 5.0   # % SL בסיסי לאלטקוינים
+SL_FEAR_BUFFER   = 1.0   # % נוסף כאשר FNG < 25 (volatility גבוה)
+SL_ATR_MULT      = 1.5   # מכפיל ATR — SL לא יהיה קטן מ-1.5 × ATR%
 TP1_PCT_FIXED        = 5.0   # % TP1 — סגירת 50% ומעבר ל-BE (היה 3.0)
 TP_PCT_FIXED         = 15.0  # % TP מלא — 50% הנותרים רצים ל-15% (היה 10.0)
 
@@ -2886,6 +2893,31 @@ def calc_risk_position(track: str, equity: float, fng_v: int = None) -> tuple:
     return margin, pos_size, leverage, sl_pct, tp1_pct, tp_pct
 
 
+def get_dynamic_sl(symbol: str, price: float, atr: float, fng_v: int) -> float:
+    """
+    מחשב SL דינמי לפי שלוש שכבות:
+      1. Base SL לפי סוג נכס: Major (BTC/ETH/SOL) = 3%, Altcoin = 5%
+      2. Fear Buffer: אם FNG < 25 → +1% (שוק תנודתי מאוד)
+      3. ATR Floor: SL ≥ 1.5 × ATR%  (מספיק מקום לנשום)
+    מחזיר: sl_pct (float, %)
+    """
+    ticker_base = symbol.split('/')[0].upper()
+    base_sl = SL_BASE_MAJOR if ticker_base in MAJOR_COINS else SL_BASE_ALTCOIN
+
+    fear_buffer = SL_FEAR_BUFFER if (fng_v is not None and fng_v < 25) else 0.0
+
+    sl_candidate = base_sl + fear_buffer
+
+    # ATR% ביחס למחיר
+    atr_pct = (atr / price * 100) if (price > 0 and atr > 0) else 0.0
+    atr_floor = round(SL_ATR_MULT * atr_pct, 2)
+
+    final_sl = round(max(sl_candidate, atr_floor), 2)
+    print(f"  [DynSL] {ticker_base}: base={base_sl}% + fear={fear_buffer}% | "
+          f"ATR={atr_pct:.2f}% × {SL_ATR_MULT} = {atr_floor}% → SL={final_sl}%")
+    return final_sl
+
+
 def track_badge(track: str) -> str:
     """אמוג'י + תווית מסלול לטלגרם."""
     return "⚡ Scalp" if track == 'Scalp' else "🌊 Swing"
@@ -2932,6 +2964,15 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     equity = _get_equity()
     # calc_risk_position מקבל fng_v — קובע SL/TP1/TP לפי FNG Mode
     effective_margin, pos_size, leverage, sl_pct, tp1_pct, tp_pct = calc_risk_position('Swing', equity, fng_v=fng_v)
+
+    # ── SL דינמי — לפי סוג נכס / FNG / ATR ──────────────────────────────────
+    dyn_sl = get_dynamic_sl(symbol, price, atr, fng_v)
+    if dyn_sl != sl_pct:
+        # TP ו-TP1 מתכוונן יחסית לשינוי ב-SL כדי לשמור RR
+        ratio = dyn_sl / sl_pct if sl_pct > 0 else 1.0
+        tp1_pct = round(tp1_pct * ratio, 2)
+        tp_pct  = round(tp_pct  * ratio, 2)
+        sl_pct  = dyn_sl
 
     # FNG Mode — BE ו-min_rr דינמיים
     fng_mode = get_fng_mode(fng_v)
@@ -3063,22 +3104,27 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     be_note    = " ← TP1 מפעיל BE אוטומטי!" if hunter else " ← אחרי מבנה ברור"
     mode_tag   = f"{fng_mode['emoji']} *Mode: {fng_mode['name']}* (FNG={fng_v})"
 
-    sniper_tag = "🎯 Sniper · " if sniper_mode else ""
-    hunter_line = f"⚠️ _{hunter_reason}_\n" if hunter else ""
+    ticker_base  = symbol.split('/')[0].upper()
+    symbol_spaced = " ".join(list(ticker_base))
+    dir_icon     = "🟢 L O N G" if direction == 'LONG' else "🔴 S H O R T"
+    sniper_tag   = "🎯 Sniper · " if sniper_mode else ""
+    hunter_line  = f"⚠️ _{hunter_reason}_\n" if hunter else ""
+    free_cash    = round(wallet.get('balance', 0) - effective_margin, 2)
+    asset_class  = "Major" if ticker_base in MAJOR_COINS else "Altcoin"
+
     msg = (
-        f"{dir_header}\n"
+        f"*{dir_icon}  |  {symbol_spaced}*\n"
         f"{hunter_line}"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"📊 Score: `{score}/100` | {sniper_tag}{fng_mode['emoji']} {fng_mode['name']}\n"
+        f"📊 *ניקוד:* `{score}/100` | {sniper_tag}{fng_mode['emoji']} {fng_mode['name']} | {asset_class}\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"💵 כניסה:  `{price:.6g}`\n"
-        f"🛑 SL:     `{sl_price:.6g}` ({'-' if direction=='LONG' else '+'}{sl_pct}%)\n"
-        f"🔒 BE:     `{be_price:.6g}` ({'+' if direction=='LONG' else '-'}{be_pct}%)\n"
-        f"🎯 TP1:    `{tp1_price:.6g}` ({'+' if direction=='LONG' else '-'}{tp1_pct}%)\n"
-        f"🎯 TP:     `{tp_price:.6g}` ({'+' if direction=='LONG' else '-'}{tp_pct}%)\n"
+        f"💵 כניסה: `{price:.6g}`\n"
+        f"🛑 SL:    `{sl_price:.6g}` (-{sl_pct}%)\n"
+        f"🎯 TP:    `{tp_price:.6g}` (+{tp_pct}%)\n"
+        f"🔒 BE:    `{be_price:.6g}` (+{be_pct}%)\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"💼 {leverage}x · ${effective_margin:.0f} · ⚖️ RR 1:{rr_ratio} | "
-        f"✅ +${est_profit_tp} / ❌ -${est_loss_sl}"
+        f"🛡️ סיכון: `${est_loss_sl}` | 💰 רווח צפוי: `${est_profit_tp}`\n"
+        f"💵 פנוי בארנק: `${free_cash:.2f}`"
     )
 
     # אם df_3h לא סופק — שולפים 1H בעצמנו (למשל Major Watch מעביר None)
