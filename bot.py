@@ -461,7 +461,9 @@ def sniper_claude_check(symbol: str, score: int, direction: str,
 # ב-Replit Deployments מוגדר REPLIT_DEPLOYMENT=1 אוטומטית.
 # בסביבת הפיתוח (workspace) הוא לא מוגדר → IS_DEPLOYED=False.
 # כך הסריקה האוטומטית רצה רק ב-prod, ואין הודעות כפולות בטלגרם.
-IS_DEPLOYED = bool(os.environ.get('REPLIT_DEPLOYMENT', ''))
+IS_DEPLOYED   = bool(os.environ.get('REPLIT_DEPLOYMENT', ''))
+GEMINI_URL    = os.environ.get('AI_INTEGRATIONS_GEMINI_BASE_URL', '')
+GEMINI_KEY    = os.environ.get('AI_INTEGRATIONS_GEMINI_API_KEY', '')
 
 # --- פרמטרי מינוף (דמו) ---
 LEVERAGE       = 10          # מינוף 10x
@@ -4466,6 +4468,154 @@ def handle_audit(message):
     except Exception as e:
         send_msg(f"⚠️ שגיאה בדוח AI: `{str(e)[:100]}`")
 
+def _gemini_news_analysis(news_text: str, active_symbols: list) -> str | None:
+    """
+    שולח את טקסט החדשות ל-Gemini ומבקש ניתוח מסחרי מובנה.
+    מחזיר JSON string עם: coins, sentiment, action, summary.
+    """
+    if not GEMINI_URL or not GEMINI_KEY:
+        return None
+
+    active_str = ', '.join(active_symbols) if active_symbols else 'אין עסקאות פעילות'
+    prompt = f"""אתה אנליסט מסחר קריפטו מומחה. קיבלת עדכון חדשות מערוץ טלגרם.
+
+חדשות/עדכון:
+\"\"\"
+{news_text[:2000]}
+\"\"\"
+
+עסקאות פעילות כרגע בבוט: {active_str}
+
+נתח את החדשות ותחזיר JSON בלבד (ללא ```json, ללא טקסט חיצוני) עם המבנה הבא:
+{{
+  "coins": ["BTC", "ETH"],         // מטבעות מושפעים מהחדשות (רק ticker, ללא USDT)
+  "sentiment": "bullish",          // bullish / bearish / neutral
+  "confidence": 70,                // 0-100, כמה ברור הסיגנל
+  "affected_trades": ["BTC/USDT"], // מהעסקאות הפעילות — אילו מושפעות
+  "action": "hold",                // hold / tighten_sl / consider_exit / consider_entry
+  "summary": "סיכום קצר בעברית — מה המשמעות המסחרית של החדשות (2-3 משפטים)"
+}}"""
+
+    try:
+        url  = f'{GEMINI_URL}/models/gemini-2.5-flash:generateContent'
+        hdrs = {'x-goog-api-key': GEMINI_KEY, 'Content-Type': 'application/json'}
+        body = {
+            'contents': [{'role': 'user', 'parts': [{'text': prompt}]}],
+            'generationConfig': {'maxOutputTokens': 1024, 'temperature': 0.3}
+        }
+        resp = requests.post(url, headers=hdrs, json=body, timeout=20)
+        if not resp.ok:
+            print(f"[News/Gemini] Error: {resp.status_code}")
+            return None
+        parts = resp.json().get('candidates', [{}])[0].get('content', {}).get('parts', [])
+        raw   = ''.join(p.get('text', '') for p in parts).strip()
+        # נקה מארקדאון אם קיים
+        raw   = raw.removeprefix('```json').removeprefix('```').removesuffix('```').strip()
+        return raw
+    except Exception as e:
+        print(f"[News/Gemini] Exception: {e}")
+        return None
+
+
+@bot.message_handler(commands=['news'])
+def handle_news(message):
+    """
+    /news <טקסט מהערוץ שלך>
+    הבוט מנתח את החדשות עם Gemini ומחזיר:
+      - אילו מטבעות מושפעים + סנטימנט
+      - האם יש השפעה על עסקאות פעילות
+      - המלצת פעולה (hold / הידק SL / שקול יציאה)
+    """
+    text = message.text.partition('/news')[2].strip()
+    if not text:
+        send_msg(
+            "📰 *שימוש:*\n"
+            "`/news <הדבק כאן את הפוסט מהערוץ>`\n\n"
+            "_דוגמה:_\n"
+            "`/news BlackRock files for Ethereum ETF, market expects approval within weeks`"
+        )
+        return
+
+    send_msg("🤖 _מנתח חדשות עם Gemini AI... שנייה_")
+
+    with trades_lock:
+        active_syms = [t['symbol'] for t in active_trades]
+
+    raw = _gemini_news_analysis(text, active_syms)
+
+    if not raw:
+        # Fallback — ללא AI
+        send_msg(
+            f"📰 *עדכון חדשות נרשם*\n"
+            f"_{text[:300]}_\n\n"
+            f"⚠️ ניתוח AI לא זמין כרגע (בדוק Gemini key)"
+        )
+        return
+
+    try:
+        data          = json.loads(raw)
+        coins         = data.get('coins', [])
+        sentiment     = data.get('sentiment', 'neutral').lower()
+        confidence    = data.get('confidence', 50)
+        affected      = data.get('affected_trades', [])
+        action        = data.get('action', 'hold').lower()
+        summary       = data.get('summary', '')
+
+        sent_icon  = '🟢' if sentiment == 'bullish' else ('🔴' if sentiment == 'bearish' else '⚪')
+        conf_bar   = '█' * (confidence // 10) + '░' * (10 - confidence // 10)
+        coins_str  = ', '.join(f'`{c}`' for c in coins) if coins else 'לא זוהו'
+
+        action_map = {
+            'hold':             '🔒 המשך להחזיק — החדשות לא משנות את התמונה',
+            'tighten_sl':       '⚠️ שקול להדק SL בעסקאות המושפעות',
+            'consider_exit':    '🚨 *שקול יציאה מוקדמת* — חדשות שליליות לעסקה פעילה!',
+            'consider_entry':   '👀 *הזדמנות כניסה פוטנציאלית* — חכה לאישור טכני',
+        }
+        action_text = action_map.get(action, f'`{action}`')
+
+        msg = (
+            f"📰 *ניתוח חדשות — Gemini AI*\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"{sent_icon} סנטימנט: *{sentiment.upper()}* | ביטחון: `{confidence}%`\n"
+            f"`{conf_bar}`\n"
+            f"🪙 מטבעות מושפעים: {coins_str}\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"📝 {summary}\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+        )
+
+        if affected:
+            msg += f"🎯 *השפעה על עסקאות פעילות:* {', '.join(f'`{s}`' for s in affected)}\n"
+            msg += f"➡️ {action_text}\n"
+
+            # אם הפעולה היא הידוק SL — הצע כפתורי Close לכל עסקה מושפעת
+            if action in ('tighten_sl', 'consider_exit'):
+                for sym in affected:
+                    with trades_lock:
+                        trade = next((t for t in active_trades if t['symbol'] == sym), None)
+                    if trade:
+                        sl_cur = trade.get('sl', 0)
+                        entry  = trade.get('entry', 0)
+                        bot.send_message(
+                            CHAT_ID,
+                            f"⚠️ *{sym}* — SL נוכחי: `{sl_cur:.6g}` | כניסה: `{entry:.6g}`\n"
+                            f"_השתמש ב-Close אם רוצה לצאת עכשיו:_",
+                            parse_mode='Markdown',
+                            reply_markup=_make_close_markup(sym)
+                        )
+        else:
+            msg += f"✅ אין עסקאות פעילות מושפעות\n➡️ {action_text}\n"
+
+        send_msg(msg)
+        print(f"[News] Analyzed: coins={coins} sentiment={sentiment} action={action}")
+
+    except (json.JSONDecodeError, Exception) as e:
+        # Gemini החזיר טקסט חופשי במקום JSON — שלח אותו ישירות
+        print(f"[News] JSON parse failed: {e} | raw={raw[:100]}")
+        clean = raw.replace('**', '').replace('__', '')
+        send_msg(f"📰 *ניתוח חדשות*\n\n{clean[:1500]}")
+
+
 @bot.message_handler(commands=['dashboard'])
 def handle_dashboard(message):
     send_msg(
@@ -5105,6 +5255,8 @@ def handle_home(message):
         f"  /setfng extreme 15    — שנה Kill-Switch (5–25)\n"
         f"  /setfng fear 25       — שנה Fear (15–45)\n"
         f"  /setfng greed 75      — שנה Greed (55–85)\n\n"
+        f"📰 *חדשות וניתוח*\n"
+        f"  /news <טקסט>      — הדבק פוסט מערוץ → Gemini מנתח + השפעה על עסקאות\n\n"
         f"🔍 *פקודות פעולה*\n"
         f"  /scan              — סריקה ידנית עכשיו\n"
         f"  /close BTC         — סגירת עסקה ידנית\n"
