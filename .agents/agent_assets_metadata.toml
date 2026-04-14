@@ -24,3 +24,9 @@ id = "bSngI43lMKK7WVnuNaMnM"
 uri = "file://bot_architecture_summary.md"
 type = "text"
 title = "Adaptive Sniper Bot — Technical Architecture Summary"
+
+[[outputs]]
+id = "7cZibxQjHJ2SWrI89I25J"
+uri = "file://trade_report_today.csv"
+type = "table"
+title = "דוח עסקאות — 14 אפריל 2026"
