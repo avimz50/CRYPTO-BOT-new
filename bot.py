@@ -23,16 +23,12 @@ def now_il() -> datetime:
     """מחזיר datetime נוכחי בשעון ישראל — עובד ב-dev וב-production."""
     return datetime.now(_IL_TZ)
 
-# ספריות גרף — fallback אם לא קיימות
-try:
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-    import mplfinance as mpf
-    CHARTS_ENABLED = True
-except ImportError:
-    CHARTS_ENABLED = False
-    print("mplfinance not available — charts disabled")
+# ספריות גרף — נטענות lazy בתוך generate_chart (לא בטעינת module)
+# כך Flask מתחיל מיד ולא מחכה לבניית font cache של matplotlib
+CHARTS_ENABLED = True  # ניסיון ייבוא יתבצע בפונקציה
+_mpl_imported = False  # דגל lazy-import
+plt = None  # יאותחל ב-generate_chart בפעם הראשונה
+mpf = None  # יאותחל ב-generate_chart בפעם הראשונה
 
 # --- הגדרות וחיבורים ---
 print("[BOOT] bot.py loading — env check...", flush=True)
@@ -1534,8 +1530,24 @@ def generate_chart(df, symbol, entry, sl, tp, direction='LONG',
        fvg_top / fvg_bot — אם מסופקים, מצייר אזור FVG (ICT Fair Value Gap).
        direction='LONG' → ירוק | 'SHORT' → אדום.
        מחזיר BytesIO או None אם נכשל."""
+    global CHARTS_ENABLED, _mpl_imported, plt, mpf
     if not CHARTS_ENABLED:
         return None
+    # Lazy import — מייבא matplotlib רק בפעם הראשונה שנדרש גרף
+    if not _mpl_imported:
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as _plt
+            import mplfinance as _mpf
+            plt = _plt
+            mpf = _mpf
+            _mpl_imported = True
+            print("[Chart] matplotlib + mplfinance imported successfully (lazy)", flush=True)
+        except ImportError as _ie:
+            CHARTS_ENABLED = False
+            print(f"[Chart] mplfinance not available — charts disabled: {_ie}", flush=True)
+            return None
     try:
         # ── צבעי נרות לפי כיוון ──
         if direction == 'SHORT':
