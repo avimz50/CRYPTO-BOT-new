@@ -1818,6 +1818,49 @@ def is_btc_parabolic_bull() -> tuple[bool, float, float]:
         print(f"[BTC Compass] check failed: {e}")
         return False, 0.0, 0.0
 
+
+# Cache ל-BTC Strong Uptrend check (10 דקות TTL)
+_btc_strong_uptrend_cache: dict = {'ts': 0.0, 'result': False, 'ema200_1h': 0.0, 'ema200_4h': 0.0, 'price': 0.0}
+
+def is_btc_strong_uptrend() -> tuple[bool, float, float]:
+    """
+    Strong Uptrend: מחיר BTC מעל EMA200 בשני גרפים — 1H וגם 4H.
+
+    כש-True → SHORTs על אלטקוינים מסוכנים ביותר (מנוגדים לטרנד המאקרו).
+    הבוט ידרוש ציון > STRONG_UPTREND_SHORT_MIN_SCORE לכל SHORT.
+
+    Cache: 10 דקות — לא מבצע API calls מיותרים.
+    מחזיר: (is_strong_uptrend: bool, ema200_1h: float, ema200_4h: float)
+    """
+    global _btc_strong_uptrend_cache
+    now_ts = time.time()
+    if now_ts - _btc_strong_uptrend_cache['ts'] < 600:   # 10 min cache
+        return (_btc_strong_uptrend_cache['result'],
+                _btc_strong_uptrend_cache['ema200_1h'],
+                _btc_strong_uptrend_cache['ema200_4h'])
+    try:
+        df_1h    = get_data('BTC/USDT', timeframe='1h', limit=210)
+        df_4h    = get_data('BTC/USDT', timeframe='4h', limit=210)
+        ema200_1h = float(ta.ema(df_1h['close'], length=200).iloc[-1])
+        ema200_4h = float(ta.ema(df_4h['close'], length=200).iloc[-1])
+        price     = float(df_1h['close'].iloc[-1])
+        result    = (price > ema200_1h) and (price > ema200_4h)
+        _btc_strong_uptrend_cache = {
+            'ts': now_ts, 'result': result,
+            'ema200_1h': ema200_1h, 'ema200_4h': ema200_4h, 'price': price
+        }
+        if result:
+            print(f"[BTC Trend] 🟢 STRONG UPTREND — ${price:,.0f} > EMA200_1H={ema200_1h:,.0f} & EMA200_4H={ema200_4h:,.0f} → SHORTs מוגבלים (Score>{STRONG_UPTREND_SHORT_MIN_SCORE})")
+        else:
+            above_1h = price > ema200_1h
+            above_4h = price > ema200_4h
+            print(f"[BTC Trend] ⚪ No strong uptrend — 1H={'✓' if above_1h else '✗'} 4H={'✓' if above_4h else '✗'}")
+        return result, ema200_1h, ema200_4h
+    except Exception as e:
+        print(f"[BTC Trend] check failed: {e}")
+        return False, 0.0, 0.0
+
+
 # ═══════════════════════════════════════════════════════════════
 # מנוע ניקוד מקצועי — Professional Scoring System
 # ═══════════════════════════════════════════════════════════════
@@ -1853,7 +1896,8 @@ TP_PCT_FIXED         = 15.0  # % TP מלא — 50% הנותרים רצים ל-15
 SLOW_MOVERS = {'TRX/USDT', 'ADA/USDT'}   # Adaptive Sniper: ignore low-momentum coins
 
 # ── Extreme Fear Adaptive Logic ────────────────────────────────────────────────
-EXTREME_FEAR_LONG_MIN_SCORE = 95   # בפחד קיצוני: LONG רק עם ציון >95 (מאוד סלקטיבי)
+EXTREME_FEAR_LONG_MIN_SCORE     = 95   # בפחד קיצוני: LONG רק עם ציון >95 (מאוד סלקטיבי)
+STRONG_UPTREND_SHORT_MIN_SCORE  = 90   # BTC > EMA200 על 1H+4H: SHORT רק עם ציון >90 (לא נלחמים בטרנד)
 
 # ─── Sniper Exception — Override Kill-Switch under STRICT conditions ───────────
 SNIPER_MIN_SCORE   = 92    # ציון מינימום Sniper — Adaptive Sniper (היה 60)
@@ -4951,6 +4995,17 @@ def handle_fillslots(message):
                 )
                 return
 
+            # ── Trend Bias: BTC > EMA200 על 1H+4H → חסום SHORTs ─────────────
+            if direction == 'SHORT':
+                _sup_fs, _e1h_fs, _e4h_fs = is_btc_strong_uptrend()
+                if _sup_fs:
+                    send_msg(
+                        f"🟢 *Trend Bias — FillSlots חסום*\n"
+                        f"BTC מעל EMA200 על 1H+4H — שוק עולה מאקרו.\n"
+                        f"_לא פותחים SHORTs נגד הטרנד. ממתינים לסיגנל LONG._"
+                    )
+                    return
+
             now_str       = now_il().strftime('%H:%M')
             dir_emoji     = "🚀" if direction == 'LONG' else "🩸"
             existing_syms = {t['symbol'] for t in active_trades}
@@ -5918,6 +5973,18 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                         'scores': {'4H': score_4h, '1H': score_1h, '15m': score_15m},
                     })
                     continue
+
+                # ── Strong Uptrend Bias — BTC > EMA200 על 1H+4H: SHORT דורש ציון גבוה ────
+                if direction == 'SHORT':
+                    _sup, _ema1h, _ema4h = is_btc_strong_uptrend()
+                    if _sup and score < STRONG_UPTREND_SHORT_MIN_SCORE:
+                        print(f"  [TREND BIAS] {symbol} SHORT rejected — BTC Strong Uptrend (1H+4H>EMA200), score={score}<{STRONG_UPTREND_SHORT_MIN_SCORE}")
+                        rejected_out.append({
+                            'symbol': symbol, 'direction': 'SHORT', 'best_score': score,
+                            'reason': f'Trend Bias: BTC Strong Uptrend — SHORT requires score>{STRONG_UPTREND_SHORT_MIN_SCORE} (got {score})',
+                            'scores': {'4H': score_4h, '1H': score_1h, '15m': score_15m},
+                        })
+                        continue
 
                 # חישוב RSI ו-EMA200 רגע לפני פתיחה לשמירה בדוח
                 try:
@@ -6898,6 +6965,14 @@ def top10_breakout_loop():
                 btc_lbl = "↑ BTC > EMA20" if btc_above_ema else "↓ BTC < EMA20"
                 print(f"[Top10 Breakout] Mixed signals — FNG={fng_v} {btc_lbl} → skip")
                 continue
+
+            # ── 2b. Trend Bias: BTC > EMA200 על 1H+4H → חסום SHORTs ──────────
+            # אם BTC מעל EMA200 בשני גרפים → שוק עולה מאקרו, לא נלחמים בטרנד
+            if direction == 'SHORT':
+                _sup_break, _ema1h_b, _ema4h_b = is_btc_strong_uptrend()
+                if _sup_break:
+                    print(f"[Top10 Breakout] 🟢 TREND BIAS: BTC Strong Uptrend (1H+4H>EMA200) — blocking SHORT signals, waiting for LONG setup")
+                    continue
 
             # ── 3. Max Trades ──────────────────────────────────────────────
             if len(active_trades) >= MAX_TRADES:
