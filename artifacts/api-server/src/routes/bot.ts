@@ -167,7 +167,7 @@ router.post("/slots", (req, res) => {
       catch { res.status(500).json({ error: "invalid response from bot" }); }
     });
   });
-  proxyReq.on("error", (e) => res.status(503).json({ ok: false, error: String(e) }));
+  proxyReq.on("error", () => res.status(503).json({ ok: false, error: "הבוט לא מחובר — נסה שוב בעוד רגע" }));
   proxyReq.write(body);
   proxyReq.end();
 });
