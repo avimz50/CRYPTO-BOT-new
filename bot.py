@@ -126,6 +126,31 @@ FEAR_EXTRA_SL_PCT      = 1.0  # % נוסף ל-SL בתנאי פחד
 
 print(f"[FNG Settings] נטענו: extreme={EXTREME_FEAR_THRESHOLD} fear={FEAR_THRESHOLD} greed={GREED_THRESHOLD}", flush=True)
 
+# ─── Bot Config — max_trades ו-הגדרות שנשמרות בין הפעלות ─────────────────────
+_CONFIG_FILE    = os.path.join(os.path.dirname(__file__), 'config.json')
+_CONFIG_DEFAULTS = {'max_trades': 3}
+
+def _load_config() -> dict:
+    try:
+        with open(_CONFIG_FILE, 'r') as f:
+            d = json.load(f)
+        return {
+            'max_trades': max(1, min(5, int(d.get('max_trades', _CONFIG_DEFAULTS['max_trades'])))),
+        }
+    except Exception:
+        return dict(_CONFIG_DEFAULTS)
+
+def _save_config():
+    try:
+        with open(_CONFIG_FILE, 'w') as f:
+            json.dump({'max_trades': MAX_TRADES}, f, indent=2)
+        print(f"[Config] שמור: max_trades={MAX_TRADES}", flush=True)
+    except Exception as e:
+        print(f"[Config] שגיאת שמירה: {e}", flush=True)
+
+_config_loaded = _load_config()
+print(f"[Config] נטען: max_trades={_config_loaded['max_trades']}", flush=True)
+
 # ─── Daily Circuit Breaker ─────────────────────────────────────────────────────
 DAILY_LOSS_LIMIT            = -30.0   # -$30 = 15% מ-$200 יתרת פתיחה
 _daily_circuit_notified: bool = False  # מונע ריבוי הודעות על אותו אירוע
@@ -1056,6 +1081,43 @@ def api_fng_settings_post():
         'greed':        GREED_THRESHOLD,
     })
 
+@flask_app.route('/api/slots', methods=['GET'])
+def api_slots_get():
+    n_open = len(active_trades)
+    return flask_jsonify({
+        'max_trades':   MAX_TRADES,
+        'active_trades': n_open,
+        'open_slots':   max(0, MAX_TRADES - n_open),
+        'min': 1,
+        'max': 5,
+    })
+
+@flask_app.route('/api/slots', methods=['POST'])
+def api_slots_post():
+    global MAX_TRADES
+    data = flask_request.get_json(force=True, silent=True) or {}
+    try:
+        v = int(data.get('max_trades', MAX_TRADES))
+    except (ValueError, TypeError):
+        return flask_jsonify({'ok': False, 'error': 'max_trades חייב להיות מספר שלם 1–5'}), 400
+    if not (1 <= v <= 5):
+        return flask_jsonify({'ok': False, 'error': f'max_trades חייב להיות 1–5 (קיבלתי {v})'}), 400
+    old      = MAX_TRADES
+    MAX_TRADES = v
+    _save_config()
+    n_open   = len(active_trades)
+    if v < n_open:
+        note = f"⚠️ {n_open} עסקאות פתוחות — לא נסגרות. עסקאות חדשות יפתחו רק לאחר ירידה ל-{v}"
+        print(f"[Slots] {note}", flush=True)
+    else:
+        print(f"[Slots] ✅ max_trades שונה: {old}→{v}", flush=True)
+    return flask_jsonify({
+        'ok': True,
+        'max_trades':    MAX_TRADES,
+        'active_trades': n_open,
+        'open_slots':    max(0, MAX_TRADES - n_open),
+    })
+
 def send_msg(text):
     try:
         bot.send_message(CHAT_ID, text, parse_mode='Markdown')
@@ -1869,7 +1931,7 @@ def is_btc_strong_uptrend() -> tuple[bool, float, float]:
 #  Adaptive Sniper 2026 — Strategy Parameters
 # ════════════════════════════════════════════════════════════════
 MIN_SCORE  = 78   # סף כניסה — הורד מ-88 ל-78 לתפוס טרנד מוקדם יותר
-MAX_TRADES = 3    # מקסימום 3 עסקאות — Focus on quality (חזרה למרץ 26-27)
+MAX_TRADES = _config_loaded.get('max_trades', 3)   # נטען מ-config.json · ניתן לשינוי דינמי (/slots)
 RSI_VETO_LONG  = 65   # RSI וטו LONG — 65 כמו מרץ 26-27 (לא לרדוף פאמפים)
 RSI_VETO_SHORT = 28   # RSI וטו SHORT — 28 כמו מרץ 26-27 (לא לשרטט oversold)
 EMA_PROXIMITY_PCT   = 2.5   # Anti-Chase EMA200 — 2.5% בלבד (הדוק, כמו מרץ 26-27)
@@ -5089,6 +5151,59 @@ def handle_fillslots(message):
     threading.Thread(target=_run, daemon=True).start()
 
 
+@bot.message_handler(commands=['slots'])
+def handle_slots(message):
+    """
+    /slots       — מציג מספר slots פעיל
+    /slots 1–5   — מגדיר מקסימום slots (עסקאות פתוחות בו-זמנית)
+    """
+    global MAX_TRADES
+    parts = message.text.strip().split()
+
+    if len(parts) == 1:
+        n_open = len(active_trades)
+        bar    = '🟢' * n_open + '⬜' * max(0, MAX_TRADES - n_open)
+        send_msg(
+            f"💼 *Slot Management*\n\n"
+            f"{bar}  `{n_open}/{MAX_TRADES}`\n\n"
+            f"  מקסימום slots: *{MAX_TRADES}*\n"
+            f"  פתוחות כרגע:  *{n_open}*\n"
+            f"  פנויות:        *{max(0, MAX_TRADES - n_open)}*\n\n"
+            f"_שנה עם /slots 1–5_"
+        )
+        return
+
+    try:
+        v = int(parts[1])
+    except ValueError:
+        send_msg("❌ שימוש: `/slots 1` עד `/slots 5`")
+        return
+
+    if not (1 <= v <= 5):
+        send_msg("❌ הערך חייב להיות בין 1 ל-5.")
+        return
+
+    old        = MAX_TRADES
+    MAX_TRADES = v
+    _save_config()
+    n_open     = len(active_trades)
+    bar        = '🟢' * n_open + '⬜' * max(0, MAX_TRADES - n_open)
+
+    if v < n_open:
+        send_msg(
+            f"💼 *Slots עודכן: {old}→{v}*\n\n"
+            f"{bar}  `{n_open}/{MAX_TRADES}`\n\n"
+            f"⚠️ יש {n_open} עסקאות פתוחות — *אינן נסגרות*.\n"
+            f"עסקאות חדשות יפתחו רק לאחר שהמספר ירד מתחת ל-{v}."
+        )
+    else:
+        send_msg(
+            f"✅ *Slots עודכן: {old}→{v}*\n\n"
+            f"{bar}  `{n_open}/{MAX_TRADES}`\n\n"
+            f"הבוט יפתח עד *{v}* עסקאות בו-זמנית."
+        )
+
+
 @bot.message_handler(commands=['watch'])
 def handle_watch(message):
     """
@@ -5328,6 +5443,7 @@ def handle_home(message):
         f"  /top10     — סריקת Breakout על 20 מטבעות (כולל AI: FET/RENDER, RWA: ONDO)\n"
         f"  /fillslots — מלא slots פנויים מ-20 מטבעות (LONG/SHORT לפי FNG+BTC)\n"
         f"  /fillslots ETH FET RENDER — פתח מטבעות ספציפיים (AI/RWA קודמים)\n"
+        f"  /slots     — הצג/שנה מקסימום עסקאות בו-זמנית (כרגע: *{MAX_TRADES}*)\n"
         f"  /sol       — ניתוח SOL חי: BTC EMA20 + 1H > 4H High\n\n"
         f"🖥 *דאשבורד*\n"
         f"  /dashboard — קבל קישור לדאשבורד\n"

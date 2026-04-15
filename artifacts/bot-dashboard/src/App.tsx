@@ -871,6 +871,121 @@ function FngSettingsPanel({ botApi }: { botApi: string }) {
   );
 }
 
+// ── Slots Panel ────────────────────────────────────────────────
+interface SlotsData {
+  max_trades: number;
+  active_trades: number;
+  open_slots: number;
+  min: number;
+  max: number;
+}
+
+function SlotsPanel({ botApi }: { botApi: string }) {
+  const [data,     setData]     = useState<SlotsData | null>(null);
+  const [pending,  setPending]  = useState<number | null>(null);
+  const [feedback, setFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  const load = useCallback(() => {
+    fetch(`${botApi}/api/slots`)
+      .then(r => r.json())
+      .then((d: SlotsData) => setData(d))
+      .catch(() => {});
+  }, [botApi]);
+
+  useEffect(() => { load(); const id = setInterval(load, 15_000); return () => clearInterval(id); }, [load]);
+
+  const setSlots = async (v: number) => {
+    setPending(v);
+    setFeedback(null);
+    try {
+      const r  = await fetch(`${botApi}/api/slots`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ max_trades: v }),
+      });
+      const d = await r.json();
+      if (r.ok && d.ok) {
+        setData(d as SlotsData);
+        setFeedback({ ok: true, msg: `✓ Slots עודכן ל-${v}` });
+        setTimeout(() => setFeedback(null), 3000);
+      } else {
+        setFeedback({ ok: false, msg: d.error ?? 'שגיאה' });
+      }
+    } catch {
+      setFeedback({ ok: false, msg: 'שגיאת רשת' });
+    }
+    setPending(null);
+  };
+
+  const current = data?.max_trades ?? 3;
+  const nOpen   = data?.active_trades ?? 0;
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden"
+         style={{ background: 'linear-gradient(135deg, #0d1117 0%, #0f1b2d 100%)' }}>
+      <div className="px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-base">💼</span>
+          <span className="font-semibold text-gray-300 text-sm">ניהול Slots</span>
+          <span className="text-xs text-gray-500">
+            {nOpen}/{current} פעילות · {Math.max(0, current - nOpen)} פנויות
+          </span>
+        </div>
+        <div className="flex items-center gap-1" dir="ltr">
+          {[1, 2, 3, 4, 5].map(v => {
+            const isActive  = v === current;
+            const isWarn    = v < nOpen;
+            return (
+              <button
+                key={v}
+                onClick={() => setSlots(v)}
+                disabled={pending !== null || isActive}
+                style={{
+                  width: 36, height: 32,
+                  borderRadius: 8,
+                  border: `1.5px solid ${isActive ? '#22c55e' : isWarn ? '#f97316' : '#374151'}`,
+                  background: isActive ? 'rgba(34,197,94,0.15)' : 'rgba(55,65,81,0.3)',
+                  color: isActive ? '#22c55e' : isWarn ? '#f97316' : '#9ca3af',
+                  fontWeight: isActive ? 700 : 500,
+                  fontSize: 14,
+                  cursor: isActive || pending !== null ? 'not-allowed' : 'pointer',
+                  opacity: pending !== null && pending !== v ? 0.5 : 1,
+                  transition: 'all 0.15s',
+                }}
+              >
+                {pending === v ? '…' : v}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {/* slot bar */}
+      <div className="px-4 pb-3">
+        <div className="flex gap-1.5" dir="ltr">
+          {Array.from({ length: 5 }, (_, i) => (
+            <div key={i} style={{
+              flex: 1, height: 6, borderRadius: 4,
+              background: i < nOpen ? '#22c55e' : i < current ? '#1f2937' : 'transparent',
+              border: i < current ? '1px solid #374151' : '1px solid transparent',
+              transition: 'background 0.3s',
+            }} />
+          ))}
+        </div>
+        {feedback && (
+          <p className={`text-xs mt-2 text-center font-medium ${feedback.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+            {feedback.msg}
+          </p>
+        )}
+        {nOpen > current && (
+          <p className="text-xs mt-2 text-center text-amber-400">
+            ⚠️ {nOpen} עסקאות פתוחות — הבוט לא יפתח חדשות עד שירד מ-{current}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const now        = useClock();
   const { data: hotData,   refetch: refetchHot   } = useJson<HotData>(`${BOT_API}/api/hot`,       "/hot_candidates.json",      60_000);
@@ -1097,6 +1212,9 @@ export default function App() {
 
         {/* FNG Settings Panel */}
         <FngSettingsPanel botApi={BOT_API} />
+
+        {/* Slots Panel */}
+        <SlotsPanel botApi={BOT_API} />
 
         {/* Last Scan Status */}
         <LastScanStatus scan={scanData ?? null} />

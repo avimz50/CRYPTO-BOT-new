@@ -144,6 +144,34 @@ router.get("/audit", (_req, res) => {
   }
 });
 
+// Slots — proxy GET/POST to Flask bot
+router.get("/slots", async (_req, res) => {
+  const data = await fetchFromFlask("/api/slots", "", { max_trades: 3, active_trades: 0, open_slots: 3, min: 1, max: 5 });
+  res.json(data);
+});
+
+router.post("/slots", (req, res) => {
+  const body = JSON.stringify(req.body ?? {});
+  const options = {
+    hostname: "localhost",
+    port: BOT_FLASK_PORT,
+    path: "/api/slots",
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+  };
+  const proxyReq = http.request(options, (r) => {
+    let data = "";
+    r.on("data", (c) => (data += c));
+    r.on("end", () => {
+      try { res.status(r.statusCode ?? 200).json(JSON.parse(data)); }
+      catch { res.status(500).json({ error: "invalid response from bot" }); }
+    });
+  });
+  proxyReq.on("error", (e) => res.status(503).json({ ok: false, error: String(e) }));
+  proxyReq.write(body);
+  proxyReq.end();
+});
+
 // FNG Settings — proxy to Flask bot
 router.get("/fng_settings", async (_req, res) => {
   const data = await fetchFromFlask("/api/fng_settings", "", {
