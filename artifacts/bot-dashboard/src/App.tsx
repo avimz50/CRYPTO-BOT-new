@@ -522,7 +522,7 @@ function TradeCard({ trade }: { trade: Trade }) {
 }
 
 // Deployed bot Flask API — single source of truth for live data
-const BOT_API = "https://python-script-bymzrkhy.replit.app";
+const BOT_API = import.meta.env.DEV ? "" : "https://python-script-bymzrkhy.replit.app";
 
 interface FngData { value: number; label: string; updated_at?: number; time_until_update?: number; }
 
