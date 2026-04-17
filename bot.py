@@ -4623,7 +4623,11 @@ def _gemini_news_analysis(news_text: str, active_symbols: list) -> dict | None:
         hdrs = {'x-goog-api-key': GEMINI_KEY, 'Content-Type': 'application/json'}
         body = {
             'contents': [{'role': 'user', 'parts': [{'text': prompt}]}],
-            'generationConfig': {'maxOutputTokens': 400, 'temperature': 0.2}
+            'generationConfig': {
+                'maxOutputTokens': 2048,
+                'temperature': 0.2,
+                'thinkingConfig': {'thinkingBudget': 0}  # מנטרל thinking — חוסך טוקנים, מהיר יותר
+            }
         }
         resp = requests.post(url, headers=hdrs, json=body, timeout=20)
         if not resp.ok:
