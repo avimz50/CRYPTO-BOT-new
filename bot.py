@@ -4593,9 +4593,71 @@ def handle_audit(message):
     except Exception as e:
         send_msg(f"⚠️ שגיאה בדוח AI: `{str(e)[:100]}`")
 
+def _claude_news_analysis(news_text: str, active_symbols: list) -> dict | None:
+    """
+    Primary news analyzer — Claude Haiku.
+    מחזיר dict בפורמט זהה ל-Gemini: {coins, sentiment, confidence, affected_trades, action, summary}
+    """
+    api_key = os.environ.get('ANTHROPIC_API_KEY', '')
+    if not api_key:
+        return None
+    active_str = ', '.join(active_symbols) if active_symbols else 'none'
+    prompt = (
+        "You are a senior crypto trading analyst with deep geopolitical/macro context. "
+        "Analyze the news and respond with ONLY a single JSON object on ONE line — no markdown, no commentary.\n\n"
+        f"NEWS:\n{news_text[:1800]}\n\n"
+        f"ACTIVE BOT POSITIONS: {active_str}\n\n"
+        "Required JSON format (one line, valid JSON only):\n"
+        '{"coins":["BTC","ETH"],"sentiment":"bullish","confidence":85,'
+        '"affected_trades":["BTC/USDT"],"action":"hold","summary":"<Hebrew summary, 1-2 sentences>"}\n\n'
+        "Rules:\n"
+        "- coins: array of crypto symbols (BTC, ETH, SOL, etc.) directly impacted\n"
+        "- sentiment: bullish | bearish | neutral\n"
+        "- confidence: integer 0-100 — how strongly the news affects crypto markets\n"
+        "- affected_trades: ONLY symbols from ACTIVE BOT POSITIONS list above (or empty array)\n"
+        "- action: hold | tighten_sl | consider_exit | consider_entry\n"
+        "- summary: short Hebrew explanation of trading impact (max 200 chars)\n\n"
+        "Output the JSON object only — nothing else."
+    )
+    try:
+        import anthropic as _anthropic
+        client = _anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model="claude-3-haiku-20240307",
+            max_tokens=600,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = resp.content[0].text.strip()
+        raw = raw.removeprefix('```json').removeprefix('```').removesuffix('```').strip()
+        s, e = raw.find('{'), raw.rfind('}')
+        if s == -1 or e == -1:
+            print(f"[News/Claude] no JSON found: {raw[:120]}")
+            return None
+        data = json.loads(raw[s:e+1])
+        print(f"[News/Claude] OK: coins={data.get('coins')} sentiment={data.get('sentiment')} conf={data.get('confidence')}")
+        return data
+    except Exception as e:
+        print(f"[News/Claude] Exception: {e}")
+        return None
+
+
+def _analyze_news(news_text: str, active_symbols: list) -> tuple[dict | None, str]:
+    """
+    Hybrid news analysis: Claude → Gemini fallback.
+    מחזיר (data_dict, source) — source הוא 'Claude' / 'Gemini' / '' אם נכשל.
+    """
+    data = _claude_news_analysis(news_text, active_symbols)
+    if data:
+        return data, 'Claude'
+    data = _gemini_news_analysis(news_text, active_symbols)
+    if data:
+        return data, 'Gemini'
+    return None, ''
+
+
 def _gemini_news_analysis(news_text: str, active_symbols: list) -> dict | None:
     """
-    שולח את טקסט החדשות ל-Gemini ומבקש ניתוח מסחרי מובנה.
+    Fallback news analyzer — Gemini Flash (חינמי דרך Replit AI Integrations).
     מחזיר dict מפוענח, או None בשגיאה.
     """
     if not GEMINI_URL or not GEMINI_KEY:
@@ -4669,18 +4731,18 @@ def handle_news(message):
         )
         return
 
-    send_msg("🤖 _מנתח חדשות עם Gemini AI... שנייה_")
+    send_msg("🤖 _מנתח חדשות עם Claude AI... שנייה_")
 
     with trades_lock:
         active_syms = [t['symbol'] for t in active_trades]
 
-    data = _gemini_news_analysis(text, active_syms)
+    data, source = _analyze_news(text, active_syms)
 
     if not data:
         send_msg(
             f"📰 עדכון נרשם\n"
             f"{text[:300]}\n\n"
-            f"ניתוח AI לא זמין כרגע"
+            f"ניתוח AI לא זמין כרגע (Claude + Gemini נכשלו)"
         )
         return
 
@@ -4703,7 +4765,7 @@ def handle_news(message):
     }
     action_text = action_map.get(action, action)
 
-    msg  = f"📰 ניתוח חדשות — Gemini AI\n"
+    msg  = f"📰 ניתוח חדשות — {source} AI\n"
     msg += f"{'━' * 18}\n"
     msg += f"{sent_icon} סנטימנט: {sentiment.upper()} | ביטחון: {confidence}%\n"
     msg += f"{conf_bar}\n"
