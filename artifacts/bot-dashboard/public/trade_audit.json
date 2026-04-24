@@ -1,6 +1,6 @@
 {
-  "updated": "2026-04-18T21:23:17+03:00",
-  "count": 14,
+  "updated": "2026-04-24T16:43:49+03:00",
+  "count": 15,
   "trades": [
     {
       "symbol": "TRX/USDT",
@@ -445,6 +445,38 @@
       "scalp": false,
       "hunter_mode": false,
       "lesson": "❌ SL Hit — תזת ה-LONG התבטלה. הפסד $-3.15 לאחר 1720 דקות. Score=95. בדוק: האם ה-BTC Compass הצביע לאותו כיוון? האם הייתה התנגדות שקרובה לכניסה?",
+      "prebreakout_signals": "None"
+    },
+    {
+      "symbol": "SOL/USDT",
+      "direction": "LONG",
+      "timeframe": "1H",
+      "entry_price": 86.13,
+      "close_price": 86.17,
+      "sl_at_open": 83.5461,
+      "tp_at_open": 90.651825,
+      "dist_sl_pct": 3.0,
+      "dist_tp_pct": 5.25,
+      "rr_ratio": 1.75,
+      "rr_achieved": 0.02,
+      "score": 88,
+      "rsi": null,
+      "ema200": null,
+      "score_breakdown": "Major Watch Breakout — 1H > 4H High ($85.88)",
+      "strategy": "",
+      "track": "Swing",
+      "slippage_pct": 0.0,
+      "close_reason": "Stagnation",
+      "pnl_usd": 0.03,
+      "opened_at": "2026-04-20T21:21:41+03:00",
+      "closed_at": "2026-04-24T16:43:49+03:00",
+      "fng_at_entry": 29,
+      "atr": 1.03356,
+      "duration_min": 5482.1,
+      "sniper": false,
+      "scalp": false,
+      "hunter_mode": false,
+      "lesson": "✅ Stagnation — עסקה רווחית $+0.03 · 5482 דקות · Score=88.",
       "prebreakout_signals": "None"
     }
   ]
