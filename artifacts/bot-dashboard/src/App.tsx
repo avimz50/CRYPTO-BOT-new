@@ -93,7 +93,7 @@ function fngLabel(v: number) {
 }
 
 function FearGreedGauge({ value, label }: { value: number | null; label: string | null }) {
-  const cx = 100, cy = 102, R = 78;
+  const cx = 100, cy = 100, R = 78;
   const v = value ?? 50;
 
   const pt = (r: number, val: number) => {
@@ -110,7 +110,7 @@ function FearGreedGauge({ value, label }: { value: number | null; label: string 
   const color  = fngColor(v);
 
   return (
-    <svg viewBox="0 0 200 118" width="100%" style={{ display: 'block', margin: '0 auto', maxWidth: 170 }}>
+    <svg viewBox="0 0 200 126" width="100%" style={{ display: 'block', margin: '0 auto', maxWidth: 240 }}>
       <defs>
         <filter id="fg-glow" x="-40%" y="-40%" width="180%" height="180%">
           <feGaussianBlur stdDeviation="2" result="b"/>

@@ -146,7 +146,7 @@ router.get("/audit", (_req, res) => {
 
 // Slots — proxy GET/POST to Flask bot
 router.get("/slots", async (_req, res) => {
-  const data = await fetchFromFlask("/api/slots", "", { max_trades: 3, active_trades: 0, open_slots: 3, min: 1, max: 5 });
+  const data = await fetchFromFlask("/api/slots", "", { max_trades: 5, active_trades: 0, open_slots: 5, min: 1, max: 5 });
   res.json(data);
 });
 
