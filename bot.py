@@ -20,6 +20,7 @@ import gdrive_reporter
 from config import *
 from market_logic import (
     get_fear_greed, get_fng_mode,
+    sentiment_check, set_sentiment_thresholds,
     score_symbol, detect_fvg, detect_order_blocks,
     detect_flag, detect_bb_squeeze, detect_volume_buildup,
     detect_rsi_divergence, score_candles,
@@ -91,6 +92,7 @@ GREED_EARLY_BE_PCT     = 2.0  # % רווח להפעלת BE מוקדם בחמדנ
 FEAR_EXTRA_SL_PCT      = 1.0  # % נוסף ל-SL בתנאי פחד
 
 print(f"[FNG Settings] נטענו: extreme={EXTREME_FEAR_THRESHOLD} fear={FEAR_THRESHOLD} greed={GREED_THRESHOLD}", flush=True)
+set_sentiment_thresholds(EXTREME_FEAR_THRESHOLD, FEAR_THRESHOLD, GREED_THRESHOLD)
 
 
 def _save_fng_settings():
@@ -124,30 +126,7 @@ def _save_config():
 DAILY_LOSS_LIMIT            = -30.0   # -$30 = 15% מ-$200 יתרת פתיחה
 _daily_circuit_notified: bool = False  # מונע ריבוי הודעות על אותו אירוע
 
-_last_sentiment_action: str = ""
-
-def sentiment_check(context: str = "scan"):
-    """
-    בודק את מצב הסנטימנט.
-    מחזיר (fng_v:int, label:str, action:str).
-    מדפיס רק כשה-regime משתנה (Low-Resource mode).
-    """
-    global _last_sentiment_action
-    fng_v, lbl = get_fear_greed()
-    if fng_v < EXTREME_FEAR_THRESHOLD:
-        # Hunter Mode: BTC BULL overrides Kill-Switch in _scan_batch.
-        # Label as FEAR — informational only, not a blocker when BTC is BULL.
-        action = f"FEAR (FNG={fng_v})"
-    elif fng_v <= FEAR_THRESHOLD:
-        action = f"FEAR (FNG={fng_v})"
-    elif fng_v >= GREED_THRESHOLD:
-        action = f"GREED FILTER (FNG={fng_v})"
-    else:
-        action = f"NEUTRAL (FNG={fng_v})"
-    if action.split('(')[0] != _last_sentiment_action.split('(')[0]:
-        print(f"[Sentiment] {_last_sentiment_action or 'START'} → {action} [{context}]")
-        _last_sentiment_action = action
-    return fng_v, lbl, action
+# sentiment_check / set_sentiment_thresholds → market_logic.py
 
 
 def check_kill_switch_change():
@@ -226,37 +205,8 @@ def check_daily_circuit_breaker() -> bool:
 
 # ═══════════════════════════════════════════════════════════════
 # Sector Concentration Guard
+# SECTOR_MAP → config.py (from config import *)
 # ═══════════════════════════════════════════════════════════════
-
-SECTOR_MAP: dict[str, str] = {
-    # Layer 1
-    'ETH': 'L1', 'SOL': 'L1', 'AVAX': 'L1', 'APT': 'L1', 'NEAR': 'L1',
-    'SUI': 'L1', 'SEI': 'L1', 'ATOM': 'L1', 'DOT': 'L1', 'ADA': 'L1',
-    'TRX': 'L1', 'TON': 'L1', 'FTM': 'L1', 'ONE': 'L1', 'ALGO': 'L1',
-    # Layer 2
-    'MATIC': 'L2', 'ARB': 'L2', 'OP': 'L2', 'IMX': 'L2', 'ZK': 'L2',
-    'STRK': 'L2', 'MANTA': 'L2', 'BLAST': 'L2', 'METIS': 'L2',
-    # DeFi
-    'UNI': 'DeFi', 'AAVE': 'DeFi', 'CRV': 'DeFi', 'MKR': 'DeFi',
-    'COMP': 'DeFi', 'SNX': 'DeFi', 'BAL': 'DeFi', 'SUSHI': 'DeFi',
-    'JUP': 'DeFi', 'DYDX': 'DeFi', 'GMX': 'DeFi', 'ENA': 'DeFi',
-    # AI & Data
-    'FET': 'AI', 'AGIX': 'AI', 'OCEAN': 'AI', 'RENDER': 'AI', 'TAO': 'AI',
-    'WLD': 'AI', 'ALT': 'AI', 'GRT': 'AI',
-    # Gaming & Metaverse
-    'AXS': 'Gaming', 'SAND': 'Gaming', 'MANA': 'Gaming', 'ENJ': 'Gaming',
-    'GALA': 'Gaming', 'ILV': 'Gaming', 'YGG': 'Gaming',
-    # Meme
-    'DOGE': 'Meme', 'SHIB': 'Meme', 'PEPE': 'Meme', 'FLOKI': 'Meme',
-    'BONK': 'Meme', 'WIF': 'Meme', 'BOME': 'Meme',
-    # Exchange Tokens
-    'BNB': 'CEX', 'OKB': 'CEX', 'CRO': 'CEX', 'KCS': 'CEX', 'GT': 'CEX',
-    'HT': 'CEX', 'BGB': 'CEX',
-    # BTC Ecosystem
-    'BTC': 'BTC', 'WBTC': 'BTC', 'STX': 'BTC', 'ORDI': 'BTC',
-    # Oracle / Data
-    'LINK': 'Oracle', 'BAND': 'Oracle', 'TRB': 'Oracle', 'API3': 'Oracle',
-}
 
 
 def get_sector(symbol: str) -> str:
@@ -452,18 +402,9 @@ def sniper_claude_check(symbol: str, score: int, direction: str,
         return False, "ERROR", f"Claude error — conservative REJECT: {str(e)[:50]}"
 
 
-# --- זיהוי סביבה (Dev vs Production) ---
-# ב-Replit Deployments מוגדר REPLIT_DEPLOYMENT=1 אוטומטית.
-# בסביבת הפיתוח (workspace) הוא לא מוגדר → IS_DEPLOYED=False.
-# כך הסריקה האוטומטית רצה רק ב-prod, ואין הודעות כפולות בטלגרם.
-IS_DEPLOYED   = bool(os.environ.get('REPLIT_DEPLOYMENT', ''))
-GEMINI_URL    = os.environ.get('AI_INTEGRATIONS_GEMINI_BASE_URL', '')
-GEMINI_KEY    = os.environ.get('AI_INTEGRATIONS_GEMINI_API_KEY', '')
+# IS_DEPLOYED / GEMINI_URL / GEMINI_KEY → config.py (from config import *)
 
-# --- פרמטרי מינוף (דמו) ---
-LEVERAGE       = 10          # מינוף 10x
-MARGIN         = 50          # בטחון ($) לכל עסקה — חזרה לפרמטרים של מרץ 26-27 ($50)
-POSITION_SIZE  = MARGIN * LEVERAGE   # $500 נשלט
+# LEVERAGE / MARGIN / POSITION_SIZE → config.py (from config import *)
 
 # רשימה למעקב אחרי עסקאות דמו פתוחות
 active_trades      = []
@@ -1042,6 +983,7 @@ def api_fng_settings_post():
         return flask_jsonify({'ok': False, 'errors': errors}), 400
 
     _save_fng_settings()
+    set_sentiment_thresholds(EXTREME_FEAR_THRESHOLD, FEAR_THRESHOLD, GREED_THRESHOLD)
     print(f"[FNG Settings] שמורים: extreme={EXTREME_FEAR_THRESHOLD} fear={FEAR_THRESHOLD} greed={GREED_THRESHOLD}", flush=True)
     return flask_jsonify({
         'ok': True,
@@ -1993,107 +1935,13 @@ def is_btc_strong_uptrend() -> tuple[bool, float, float]:
 
 
 # ═══════════════════════════════════════════════════════════════
-# מנוע ניקוד מקצועי — Professional Scoring System
+# Strategy Parameters — all constants → config.py (from config import *)
+# Only MAX_TRADES is initialised here (dynamic runtime value).
 # ═══════════════════════════════════════════════════════════════
-
-# ════════════════════════════════════════════════════════════════
-#  Adaptive Sniper 2026 — Strategy Parameters
-# ════════════════════════════════════════════════════════════════
-MIN_SCORE  = 78   # סף כניסה — הורד מ-88 ל-78 לתפוס טרנד מוקדם יותר
 MAX_TRADES = _config_loaded.get('max_trades', 3)   # נטען מ-config.json · ניתן לשינוי דינמי (/slots)
-RSI_VETO_LONG  = 65   # RSI וטו LONG — 65 כמו מרץ 26-27 (לא לרדוף פאמפים)
-RSI_VETO_SHORT = 28   # RSI וטו SHORT — 28 כמו מרץ 26-27 (לא לשרטט oversold)
-EMA_PROXIMITY_PCT   = 2.5   # Anti-Chase EMA200 — 2.5% בלבד (הדוק, כמו מרץ 26-27)
-VOL_EMA_BYPASS_MULT = 1.5   # Volume ≥ ×1.5 → מבטל וטו EMA200 (Breakout IS the trend)
-TRAIL_ACTIVATION_PCT = 2.0   # % רווח להפעלת Trailing — מוקדם (מיושר עם BE=2%)
-BE_BUFFER_PCT        = 2.0   # % רווח להפעלת Break-Even — 2% כמו מרץ 26-27 (מוקדם!)
-BE_LOCK_BUFFER_PCT   = 0.1   # % מעל הכניסה שאליו SL עובר ב-Break-Even
-TRAIL_PCT            = 1.5   # % Trailing Stop — 1.5% כמו מרץ 26-27 (לנעול רווח מהר)
-ATR_TRAIL_MULT       = 1.5   # מכפיל ATR ל-Trailing Stop (1.5× ATR מהשיא)
-PARTIAL_25_TRIGGER   = 5.0   # % רווח לסגירת 25% — מיושר עם TP1=5%
-PARTIAL_25_DROP      = 1.0   # % ירידה מהשיא שמפעילה סגירת 25%
-SL_PCT_FIXED         = 3.5   # % SL קבוע מהכניסה — 3.5% כמו מרץ 26-27 (buffer מ-EMA whipsaw)
 
-# ── Dynamic SL — לפי סוג נכס ─────────────────────────────────────────────────
-MAJOR_COINS      = {'BTC', 'ETH', 'SOL'}   # Major → SL בסיסי נמוך יותר
-SL_BASE_MAJOR    = 3.0   # % SL בסיסי למטבעות Major
-SL_BASE_ALTCOIN  = 5.0   # % SL בסיסי לאלטקוינים
-SL_FEAR_BUFFER   = 1.0   # % נוסף כאשר FNG < 25 (volatility גבוה)
-SL_ATR_MULT      = 1.5   # מכפיל ATR — SL לא יהיה קטן מ-1.5 × ATR%
-TP1_PCT_FIXED        = 5.0   # % TP1 — סגירת 50% ומעבר ל-BE (היה 3.0)
-TP_PCT_FIXED         = 15.0  # % TP מלא — 50% הנותרים רצים ל-15% (היה 10.0)
-
-# ── Slow-Movers Blacklist — מטבעות איטיים שלא נסחר בהם ────────────────────────
-SLOW_MOVERS = {'TRX/USDT', 'ADA/USDT'}   # Adaptive Sniper: ignore low-momentum coins
-
-# ── Extreme Fear Adaptive Logic ────────────────────────────────────────────────
-EXTREME_FEAR_LONG_MIN_SCORE     = 95   # בפחד קיצוני: LONG רק עם ציון >95 (מאוד סלקטיבי)
-STRONG_UPTREND_SHORT_MIN_SCORE  = 90   # BTC > EMA200 על 1H+4H: SHORT רק עם ציון >90 (לא נלחמים בטרנד)
-
-# ─── Sniper Exception — Override Kill-Switch under STRICT conditions ───────────
-SNIPER_MIN_SCORE   = 92    # ציון מינימום Sniper — Adaptive Sniper (היה 60)
-SNIPER_EMA_PCT     = 5.0   # מחיר חייב תוך 5% מ-EMA200 (אין רדיפת פאמפים)
-SNIPER_VOL_MIN     = 2.5   # Volume לפחות 2.5× הממוצע — אישור כניסה
-SNIPER_MARGIN_MULT = 0.5   # Half-Size Entry: 50% מגודל הפוזיציה הרגיל
-
-# ── Scalp Mode (High-Volatility Mean Reversion, FNG < EXTREME_FEAR_THRESHOLD) ──
-SCALP_LEVERAGE          = 5
-SCALP_MARGIN            = 15.0
-SCALP_POS_SIZE          = SCALP_MARGIN * SCALP_LEVERAGE   # $75 controlled
-SCALP_TP_PCT            = 3.0    # 3% profit target
-SCALP_SL_PCT            = 1.5    # 1.5% stop loss
-SCALP_MAX_DURATION_MIN  = 60     # force-close after 60 minutes
-MAX_SCALP_TRADES        = 2      # max concurrent scalp trades
-
-# ── Stagnation Exit — Sniper/Breakout/SOL בלבד ────────────────────────────────
-STAGNATION_MIN_HOURS        = 4.0    # שעות מינימום (הפסד/ניטרלי) לפני יציאת דישדוש
-STAGNATION_PROFIT_MIN_HOURS = 24.0   # עסקה ברווח — לא סוגרים לפני 24 שעות
-STAGNATION_RANGE_PCT        = 0.5    # % מהכניסה — אם המחיר לא זז → יציאה
-# (Phase=initial בלבד; אם TP1 נגע ועברנו ל-trailing — לא רלוונטי)
-
-# ── Bollinger Band Squeeze — כניסה לפני הפריצה ────────────────────────────────
-BB_SQUEEZE_RATIO       = 0.50   # BB width < 50% מהממוצע ההיסטורי = Squeeze פעיל
-BB_SQUEEZE_LOOKBACK    = 20     # נרות לחישוב ממוצע BB width
-BB_SQUEEZE_BREAKOUT    = 0.005  # 0.5% — מחיר קרוב לBand הנכון = פריצה מתחילה
-SCALP_BUBBLE_MIN_PCT    = 30.0   # scalp-short: coin up > 30% in 24h
-SCALP_CRASH_MIN_PCT     = 20.0   # quick-long: coin down > 20% in 2h
-SCALP_SHORT_RSI_THRESH  = 82.0   # RSI 15m must be > 82 for scalp-short
-SCALP_LONG_RSI_THRESH   = 18.0   # RSI 15m must be < 18 for quick-long
-SCALP_BOUNCE_PCT        = 1.0    # price must bounce 1% from 2h low
-SCALP_SCAN_INTERVAL     = 300    # 5 min between scalp scans (normal)
-SCALP_SCAN_INTERVAL_WAIT= 600    # 10 min when Kill-Switch active (resource savings)
-
-# ── High-Velocity Strategy (5m Explosive Candle — LONG "Rocket" + SHORT "Cliff") ─
-CLIFF_DROP_PCT          = 2.5    # % תנועה בנר 5m אחד = Velocity Event (עלייה או ירידה)
-CLIFF_VOL_MULT          = 3.0    # Volume חייב להיות 3× ממוצע (300% של הממוצע)
-CLIFF_RSI_OVERBOUGHT    = 70.0   # RSI 15m מעל ערך זה = High-Conviction SHORT divergence
-CLIFF_SL_PCT            = 2.5    # Stop Loss — זהה לאסטרטגיה הרגילה
-CLIFF_TP_PCT            = 3.0    # Take Profit (RR 1:1.2)
-CLIFF_BE_TRIGGER_PCT    = 1.5    # ב-1.5% רווח → Trailing Stop פעיל
-CLIFF_TRAIL_PCT         = 1.5    # Trailing Stop — 1.5% מהשיא/שפל (היה 1.0)
-CLIFF_LEVERAGE          = 10
-CLIFF_MARGIN            = 50.0   # $50 מרג'ין לכל עסקה — אחיד עם האסטרטגיה הרגילה
-CLIFF_POS_SIZE          = CLIFF_MARGIN * CLIFF_LEVERAGE  # $500 controlled
-CLIFF_MAX_DURATION_MIN  = 30     # force-close אחרי 30 דקות
-MAX_CLIFF_TRADES        = 2      # מקסימום עסקאות Velocity מקבילות
-CLIFF_SCAN_INTERVAL     = 120    # סריקה כל 2 דקות
-
-# ─── Two-Track Trading System ──────────────────────────────────────────────────
-# ⚡ Track A: Scalping — מהיר, SL צמוד, נפח גבוה
-SCALP_TRACK_VOL_MIN    = 50_000_000   # מינימום $50M נפח 24h
-SCALP_TRACK_SL_PCT     = 2.0          # SL 2% — מהיר ומדויק
-SCALP_TRACK_TP1_PCT    = 4.0          # TP1 4% — RR 1:2
-SCALP_TRACK_TP_PCT     = 8.0          # TP  8% — RR 1:4
-SCALP_TRACK_LEVERAGE   = 10           # מינוף 10x
-SCALP_TRACK_BE_TRIGGER = 0.50         # BE at 50% of way to TP1
-
-# 🌊 Track B: Swing — סבלני, SL רחב, מינוף נמוך
-SWING_TRACK_VOL_MIN    = 10_000_000   # מינימום $10M נפח 24h
-SWING_TRACK_SL_PCT     = 6.0          # SL 6% — ברירת מחדל (מוחלף ע"י FNG Mode)
-SWING_TRACK_TP1_PCT    = 6.0          # TP1 6% — ברירת מחדל
-SWING_TRACK_TP_PCT     = 12.0         # TP 12% — ברירת מחדל
-SWING_TRACK_LEVERAGE   = 3            # מינוף 3x מקסימום
-SWING_TRACK_BE_PCT     = 4.0          # BE — ברירת מחדל (מוחלף ע"י FNG Mode)
+# All other strategy constants (SL params, scalp, cliff, track, BB squeeze, etc.)
+# → config.py (from config import *)
 
 
 # get_fng_mode, score_candles, detect_*, score_symbol, calc_risk_position,
@@ -4612,6 +4460,7 @@ def handle_setfng(message):
         GREED_THRESHOLD = val
 
     _save_fng_settings()
+    set_sentiment_thresholds(EXTREME_FEAR_THRESHOLD, FEAR_THRESHOLD, GREED_THRESHOLD)
     fng_v, _ = get_fear_greed()
     print(f"[FNG Settings] {param}={old_val}→{val} by Telegram — שמור לקובץ", flush=True)
 

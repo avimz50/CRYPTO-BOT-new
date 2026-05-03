@@ -16,6 +16,7 @@ from config import (
     MAJOR_COINS, SL_BASE_MAJOR, SL_BASE_ALTCOIN, SL_FEAR_BUFFER, SL_ATR_MULT,
     VERBOSE_LOG, MIN_SCORE,
     RSI_VETO_LONG, RSI_VETO_SHORT, EMA_PROXIMITY_PCT, VOL_EMA_BYPASS_MULT,
+    FNG_DEFAULTS,
 )
 
 # ── Fear & Greed Index — module-level cache (1h TTL) ──────────────────────────
@@ -898,3 +899,48 @@ def get_dynamic_sl(symbol: str, price: float, atr: float, fng_v: int) -> float:
     print(f"  [DynSL] {ticker_base}: base={base_sl}% + fear={fear_buffer}% | "
           f"ATR={atr_pct:.2f}% × {SL_ATR_MULT} = {atr_floor}% → SL={final_sl}%")
     return final_sl
+
+
+# ── Sentiment Check ────────────────────────────────────────────────────────────
+# Runtime FNG thresholds are injected by bot.py via set_sentiment_thresholds().
+# Defaults match FNG_DEFAULTS so the module is safe to use before bot.py syncs.
+_sentiment_thresholds: dict = dict(FNG_DEFAULTS)
+_last_sentiment_action: str = ""
+
+
+def set_sentiment_thresholds(extreme_fear: int, fear: int, greed: int) -> None:
+    """
+    Called by bot.py to push the runtime FNG thresholds into this module.
+    Invoke once at startup and after every Telegram /fng or API threshold change.
+    """
+    global _sentiment_thresholds
+    _sentiment_thresholds['extreme_fear'] = extreme_fear
+    _sentiment_thresholds['fear']         = fear
+    _sentiment_thresholds['greed']        = greed
+
+
+def sentiment_check(context: str = "scan") -> tuple:
+    """
+    Returns (fng_v: int, label: str, action: str).
+    Prints only when the regime label changes (Low-Resource mode).
+    Thresholds are kept in sync via set_sentiment_thresholds().
+    """
+    global _last_sentiment_action
+    fng_v, lbl = get_fear_greed()
+    extreme = _sentiment_thresholds['extreme_fear']
+    fear    = _sentiment_thresholds['fear']
+    greed   = _sentiment_thresholds['greed']
+
+    if fng_v < extreme:
+        action = f"FEAR (FNG={fng_v})"
+    elif fng_v <= fear:
+        action = f"FEAR (FNG={fng_v})"
+    elif fng_v >= greed:
+        action = f"GREED FILTER (FNG={fng_v})"
+    else:
+        action = f"NEUTRAL (FNG={fng_v})"
+
+    if action.split('(')[0] != _last_sentiment_action.split('(')[0]:
+        print(f"[Sentiment] {_last_sentiment_action or 'START'} → {action} [{context}]")
+        _last_sentiment_action = action
+    return fng_v, lbl, action
