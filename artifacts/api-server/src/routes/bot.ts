@@ -52,6 +52,39 @@ router.get("/trades", async (_req, res) => {
   res.json(data);
 });
 
+/** Alias: /active_trades → same as /trades (required by dashboard spec) */
+router.get("/active_trades", async (_req, res) => {
+  const data = await fetchFromFlask("/api/trades", path.join(PUBLIC, "active_trades.json"), { updated: null, count: 0, trades: [] });
+  res.json(data);
+});
+
+/** /status — combined connection/equity/FNG snapshot for the top status bar */
+router.get("/status", async (_req, res) => {
+  const [walletRaw, fngRaw, tradesRaw] = await Promise.all([
+    fetchFromFlask("/api/wallet",  path.join(PUBLIC, "wallet.json"),       { balance: 200, starting: 200, total_pnl: 0, equity: 200, available_balance: 200, locked_balance: 0, unrealized_pnl: 0 }),
+    fetchFromFlask("/api/fng",     "",                                      { value: 50, label: "Neutral" }),
+    fetchFromFlask("/api/trades",  path.join(PUBLIC, "active_trades.json"), { count: 0, trades: [] }),
+  ]);
+  const w = walletRaw as Record<string, number>;
+  const f = fngRaw    as Record<string, string | number>;
+  const t = tradesRaw as Record<string, number>;
+  res.json({
+    connected:    true,
+    exchange:     "Bitget",
+    mode:         "VIRTUAL",
+    equity:       w.equity       ?? w.balance ?? 200,
+    available:    w.available_balance ?? w.balance ?? 200,
+    starting:     w.starting     ?? 200,
+    unrealized:   w.unrealized_pnl   ?? 0,
+    realized:     w.total_pnl    ?? 0,
+    locked:       w.locked_balance   ?? 0,
+    fng_value:    Number(f.value ?? 50),
+    fng_label:    String(f.label ?? "Neutral"),
+    active_trades: Number(t.count ?? 0),
+    ts: Date.now(),
+  });
+});
+
 router.get("/wallet", async (_req, res) => {
   const data = await fetchFromFlask("/api/wallet", path.join(PUBLIC, "wallet.json"), { balance: 200, starting: 200, total_pnl: 0, trades_opened: 0, equity_history: [] });
   res.json(data);
@@ -83,7 +116,7 @@ router.get("/debug", async (_req, res) => {
 
 router.get("/last_scan", async (_req, res) => {
   const data = await fetchFromFlask("/api/last_scan", path.join(PUBLIC, "last_scan_results.json"), null);
-  if (!data) return res.status(404).json({ error: "No scan report yet." });
+  if (!data) { res.status(404).json({ error: "No scan report yet." }); return; }
   res.json(data);
 });
 
@@ -215,12 +248,13 @@ let _fngCache: { value: number; label: string; ts: number; updated_at: number; t
 router.get("/fng", (_req, res) => {
   const now = Date.now() / 1000;
   if (now - _fngCache.ts < 900) {
-    return res.json({
+    res.json({
       value: _fngCache.value,
       label: _fngCache.label,
       updated_at: _fngCache.updated_at,
       time_until_update: _fngCache.time_until_update,
     });
+    return;
   }
   const url = "https://api.alternative.me/fng/?limit=1";
   https.get(url, (r) => {

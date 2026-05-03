@@ -128,6 +128,15 @@ interface WalletData {
 
 interface FngData { value: number; label: string; updated_at?: number; time_until_update?: number; }
 
+/** Shape returned by /api/status — combined snapshot for the top status bar */
+interface StatusData {
+  connected: boolean; exchange: string; mode: string;
+  equity: number; available: number; starting: number;
+  unrealized: number; realized: number; locked: number;
+  fng_value: number; fng_label: string;
+  active_trades: number; ts: number;
+}
+
 interface Candidate { symbol: string; change_pct: number; volume_usd: number; price: number; }
 interface HotData { updated: string; count: number; candidates: Candidate[]; }
 
@@ -215,17 +224,18 @@ function fngColor(v: number) {
 const BOT_API = import.meta.env.DEV ? "" : "https://python-script-bymzrkhy.replit.app";
 
 /* ══════════════════════════════════════════════
-   STATUS BAR (fixed top)
+   STATUS BAR (fixed top) — feeds from /api/status
 ══════════════════════════════════════════════ */
 function StatusBar({
-  fng, equity, starting, tradesCount, clock,
+  status, clock,
 }: {
-  fng: FngData | null; equity: number; starting: number;
-  tradesCount: number; clock: Date;
+  status: StatusData | null; clock: Date;
 }) {
-  const fngVal   = fng?.value ?? 50;
-  const fngLbl   = fng?.label ?? 'Neutral';
+  const fngVal   = status?.fng_value ?? 50;
+  const fngLbl   = status?.fng_label ?? 'Neutral';
   const fColor   = fngColor(fngVal);
+  const equity   = status?.equity ?? 200;
+  const starting = status?.starting ?? 200;
   const pnlPct   = starting > 0 ? ((equity - starting) / starting * 100) : 0;
   const eqColor  = equity >= starting ? T.green : T.red;
 
@@ -268,8 +278,8 @@ function StatusBar({
       {/* Active trades */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px' }}>
         <span style={{ color: T.dimmer }}>TRADES</span>
-        <span style={{ color: tradesCount > 0 ? T.amber : T.dimmer, fontWeight: 700 }}>
-          {tradesCount}/3
+        <span style={{ color: (status?.active_trades ?? 0) > 0 ? T.amber : T.dimmer, fontWeight: 700 }}>
+          {status?.active_trades ?? 0}/3
         </span>
       </div>
 
@@ -591,18 +601,11 @@ function MiniPriceChart({ trade }: { trade: Trade }) {
   const pnlPct = isLong ? ((cp - trade.entry) / trade.entry * 100) : ((trade.entry - cp) / trade.entry * 100);
   const color  = pnlPct >= 0 ? T.green : T.red;
 
-  // Generate a simple wavy line from left (entry) to right (current)
-  const points: string[] = [];
-  const steps = 20;
-  for (let i = 0; i <= steps; i++) {
-    const x = (i / steps) * W;
-    const progress = i / steps;
-    const targetY = entryY + (cpY - entryY) * progress;
-    const noise = Math.sin(i * 2.1) * 2 + Math.cos(i * 1.3) * 1.5;
-    points.push(`${x.toFixed(1)},${(targetY + noise * (1 - progress * 0.5)).toFixed(1)}`);
-  }
-  const polyline = points.join(' ');
-  const lastPt   = points[points.length - 1].split(',');
+  // Close-price line: entry (left) → peak_price (mid) → current (right)
+  // All three values are real API data — no synthetic noise
+  const peakY = py(trade.peak_price && trade.peak_price !== trade.entry ? trade.peak_price : Math.max(trade.entry, cp));
+  const polyline = `0,${entryY.toFixed(1)} ${(W/2).toFixed(1)},${peakY.toFixed(1)} ${W},${cpY.toFixed(1)}`;
+  const lastPt   = [String(W), cpY.toFixed(1)];
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H}
@@ -779,61 +782,67 @@ function DataRow({ label, value, color }: { label: string; value: string; color:
 
 /* ══════════════════════════════════════════════
    REASONING LOG (terminal feed)
+   Format: HH:MM:SS | SYMBOL | message (from reasoning/lesson field)
+   Mobile: 8 lines (~144px); Desktop: 15 lines (~270px)
 ══════════════════════════════════════════════ */
-function ReasoningLog({ audit }: { audit: AuditData | null }) {
+function ReasoningLog({ audit, isMobile }: { audit: AuditData | null; isMobile: boolean }) {
   const logRef = useRef<HTMLDivElement>(null);
-  const trades = audit?.trades ?? [];
+  const allTrades = audit?.trades ?? [];
 
   useEffect(() => {
     if (logRef.current) {
       logRef.current.scrollTop = logRef.current.scrollHeight;
     }
-  }, [trades.length]);
+  }, [allTrades.length]);
 
-  const entries = [...trades].reverse().slice(0, 20);
+  // Last 20 entries (newest first), each formatted as a terminal reasoning line
+  const entries = [...allTrades].reverse().slice(0, 20);
+  const LINE_H = 18;
+  const logHeight = isMobile ? LINE_H * 8 : LINE_H * 15;
 
   return (
     <div style={panel}>
       <PanelHeader
         label="BOT REASONING LOG"
-        right={`${trades.length} entries · auto-scroll`}
+        right={`${allTrades.length} entries · auto-scroll`}
       />
       <div
         ref={logRef}
         style={{
-          height: 220, overflowY: 'auto', padding: '8px 12px',
+          height: logHeight, overflowY: 'auto', padding: '6px 12px',
           background: '#0a0e14', fontFamily: T.font, fontSize: 11,
-          display: 'flex', flexDirection: 'column', gap: 3,
+          display: 'flex', flexDirection: 'column', gap: 0,
         }}
       >
         {entries.length === 0 ? (
-          <span style={{ color: T.dimmer }}>{'>'} waiting for closed trades...</span>
+          <span style={{ color: T.green, lineHeight: `${LINE_H}px` }}>
+            {'> '}<span style={{ color: T.dimmer }}>waiting for closed trades...</span>
+          </span>
         ) : (
           entries.map((t, i) => {
             const ts = t.closed_at
-              ? new Date(t.closed_at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+              ? new Date(t.closed_at).toLocaleTimeString('he-IL',
+                  { hour: '2-digit', minute: '2-digit', second: '2-digit' })
               : '--:--:--';
-            const pnlStr = `${t.pnl_usd >= 0 ? '+' : ''}${t.pnl_usd.toFixed(2)}$`;
-            const pnlColor = t.pnl_usd > 0 ? T.green : T.red;
-            const reasonColor =
+            const sym    = t.symbol.replace('/USDT', '');
+            // "reasoning" = track + close_reason + lesson (the bot's decision narrative)
+            const reasoning = [
+              t.track && t.track !== sym ? t.track : null,
+              `${t.close_reason} ${t.pnl_usd >= 0 ? '+' : ''}${t.pnl_usd.toFixed(2)}$`,
+              t.lesson,
+            ].filter(Boolean).join(' · ');
+            const lineColor =
               t.close_reason === 'TP' ? T.green :
               t.close_reason === 'SL' ? T.red :
               t.close_reason === 'BE' ? T.amber : T.blue;
+
             return (
-              <div key={i} style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                <span style={{ color: T.dimmer, flexShrink: 0 }}>{ts}</span>
-                <span style={{ color: T.dimmer }}>|</span>
-                <span style={{ color: T.amber, fontWeight: 600, flexShrink: 0 }}>
-                  {t.symbol.replace('/USDT', '')}
-                </span>
-                <span style={{ color: t.direction === 'LONG' ? T.green : T.red, flexShrink: 0 }}>
-                  {t.direction}
-                </span>
-                <span style={{ color: T.dimmer }}>|</span>
-                <span style={{ color: reasonColor, fontWeight: 600, flexShrink: 0 }}>{t.close_reason}</span>
-                <span style={{ color: pnlColor, fontWeight: 700, flexShrink: 0 }}>{pnlStr}</span>
-                <span style={{ color: T.dimmer }}>|</span>
-                <span style={{ color: `${T.text}99`, fontStyle: 'italic', fontSize: 10 }}>{t.lesson}</span>
+              <div key={i} style={{ lineHeight: `${LINE_H}px`, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <span style={{ color: T.dimmer }}>{ts}</span>
+                <span style={{ color: T.border }}> | </span>
+                <span style={{ color: T.amber, fontWeight: 600 }}>{sym}</span>
+                <span style={{ color: T.border }}> | </span>
+                <span style={{ color: lineColor }}>{reasoning}</span>
               </div>
             );
           })
@@ -1210,19 +1219,20 @@ function EquitySparkline({ history, starting }: { history: EquityPoint[]; starti
 export default function App() {
   const clock = useClock();
 
-  const { data: hotData,    refetch: refetchHot    } = useJson<HotData>(`${BOT_API}/api/hot`,        '/hot_candidates.json',     60_000);
-  const { data: tradesData, refetch: refetchTrades  } = useJson<TradesData>(`${BOT_API}/api/trades`,  '/active_trades.json',      30_000);
-  const { data: walletData, refetch: refetchWallet  } = useJson<WalletData>(`${BOT_API}/api/wallet`,  '/wallet.json',             30_000);
-  const { data: fngData,    refetch: refetchFng     } = useJson<FngData>(`${BOT_API}/api/fng`,        '/fng.json',               120_000);
-  const { data: scanData,   refetch: refetchScan    } = useJson<ScanData>(`${BOT_API}/api/last_scan`, '/last_scan_results.json', 120_000);
-  const { data: auditData }                            = useJson<AuditData>(`${BOT_API}/api/trade_audit`, '/trade_audit.json',    10_000);
+  const { data: hotData,    refetch: refetchHot    } = useJson<HotData>(`${BOT_API}/api/hot`,             '/hot_candidates.json',     60_000);
+  const { data: tradesData, refetch: refetchTrades  } = useJson<TradesData>(`${BOT_API}/api/active_trades`, '/active_trades.json',      30_000);
+  const { data: walletData, refetch: refetchWallet  } = useJson<WalletData>(`${BOT_API}/api/wallet`,        '/wallet.json',             30_000);
+  const { data: fngData,    refetch: refetchFng     } = useJson<FngData>(`${BOT_API}/api/fng`,              '/fng.json',               120_000);
+  const { data: scanData,   refetch: refetchScan    } = useJson<ScanData>(`${BOT_API}/api/last_scan`,       '/last_scan_results.json', 120_000);
+  const { data: auditData }                            = useJson<AuditData>(`${BOT_API}/api/trade_audit`,   '/trade_audit.json',       10_000);
+  const { data: statusData, refetch: refetchStatus  } = useJson<StatusData>(`${BOT_API}/api/status`,        '',                        15_000);
 
   const [refreshing, setRefreshing] = useState(false);
   const refreshAll = useCallback(() => {
     setRefreshing(true);
-    refetchHot(); refetchTrades(); refetchWallet(); refetchFng(); refetchScan();
+    refetchHot(); refetchTrades(); refetchWallet(); refetchFng(); refetchScan(); refetchStatus();
     setTimeout(() => setRefreshing(false), 1200);
-  }, [refetchHot, refetchTrades, refetchWallet, refetchFng, refetchScan]);
+  }, [refetchHot, refetchTrades, refetchWallet, refetchFng, refetchScan, refetchStatus]);
 
   // Scan countdown
   const SCAN_INTERVAL = 3600;
@@ -1272,10 +1282,7 @@ export default function App() {
     <div style={{ background: T.bg, minHeight: '100vh', fontFamily: T.font, color: T.text }}>
       {/* Fixed status bar */}
       <StatusBar
-        fng={fngData ?? null}
-        equity={equity}
-        starting={starting}
-        tradesCount={trades.length}
+        status={statusData ?? null}
         clock={clock}
       />
 
@@ -1317,8 +1324,8 @@ export default function App() {
         {/* ── MAIN CONTENT ── */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
 
-          {/* Stat boxes row */}
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4, 1fr)', gap: 8 }}>
+          {/* Stat boxes row — 3 boxes per spec */}
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(3, 1fr)', gap: 8 }}>
             <StatBox
               label="BALANCE AVAILABLE"
               value={`$${freeCash.toFixed(2)}`}
@@ -1333,15 +1340,9 @@ export default function App() {
               glow={floatPos && floating > 0}
             />
             <StatBox
-              label="REALIZED P&L"
-              value={`${realized >= 0 ? '+' : ''}${realized.toFixed(2)}$`}
-              sub={`${walletData?.trades_opened ?? 0} trades total`}
-              color={realized >= 0 ? T.green : T.red}
-            />
-            <StatBox
-              label="LOCKED MARGIN"
+              label={`ACTIVE TRADES ${trades.length}/3`}
               value={`$${lockedBal.toFixed(2)}`}
-              sub={`${trades.length}/3 slots used`}
+              sub={`Locked · ${lockedBal > 0 ? `$${(freeCash).toFixed(0)} free` : 'no margin used'}`}
               color={T.amber}
             />
           </div>
@@ -1396,7 +1397,7 @@ export default function App() {
           <LastScanPanel scan={scanData ?? null} />
 
           {/* Reasoning log */}
-          <ReasoningLog audit={auditData ?? null} />
+          <ReasoningLog audit={auditData ?? null} isMobile={isMobile} />
 
           {/* Footer + actions */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0' }}>
