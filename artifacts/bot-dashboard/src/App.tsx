@@ -236,6 +236,7 @@ function usePulse(value: number) {
       return () => clearTimeout(t);
     }
     prev.current = value;
+    return undefined;
   }, [value]);
   return pulsing;
 }
@@ -315,30 +316,32 @@ function StatusBar({
       </span>
       <Divider />
 
-      {/* Connection */}
-      <StatusChip color={T.green} label="CONNECTED" sub="Bitget VIRTUAL" />
-      <Divider />
+      {/* Connection — hidden on mobile */}
+      <div className="sb-hide-mobile" style={{ display: 'flex' }}>
+        <StatusChip color={T.green} label="CONNECTED" sub="Bitget VIRTUAL" />
+        <Divider />
+      </div>
 
       {/* FNG */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px' }}>
+      <div className="sb-item" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px' }}>
         <span style={{ color: T.dimmer }}>FNG</span>
         <span style={{ color: fColor, fontWeight: 700 }}>{fngVal}</span>
         <span style={{ color: fColor, fontSize: 11 }}>{fngLbl}</span>
       </div>
       <Divider />
 
-      {/* Portfolio */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px' }}>
+      {/* Portfolio — hidden on mobile */}
+      <div className="sb-hide-mobile" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px' }}>
         <span style={{ color: T.dimmer }}>EQUITY</span>
         <span style={{ color: eqColor, fontWeight: 700 }}>${equity.toFixed(2)}</span>
         <span style={{ color: eqColor, fontSize: 11 }}>
           {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%
         </span>
       </div>
-      <Divider />
+      <div className="sb-hide-mobile" style={{ display: 'flex' }}><Divider /></div>
 
-      {/* Active trades */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px' }}>
+      {/* Active trades — hidden on mobile */}
+      <div className="sb-hide-mobile" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px' }}>
         <span style={{ color: T.dimmer }}>TRADES</span>
         <span style={{ color: (status?.active_trades ?? 0) > 0 ? T.amber : T.dimmer, fontWeight: 700 }}>
           {status?.active_trades ?? 0}/3
@@ -749,7 +752,7 @@ function TerminalTradeCard({ trade }: { trade: Trade }) {
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         background: `${dirColor}08`,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div className="card-badges" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <span style={{ color: dirColor, fontWeight: 700, fontSize: 15 }}>
             {trade.symbol.replace('/USDT', '')}
           </span>
@@ -1405,6 +1408,22 @@ export default function App() {
           100% { box-shadow: 0 0 0px transparent; background: transparent; }
         }
         .pnl-pulse { animation: pnl-pulse 0.7s ease-out forwards; }
+
+        /* ── Mobile overrides ── */
+        @media (max-width: 767px) {
+          /* Status bar: hide equity + trades + connection sub-label on small screens */
+          .sb-hide-mobile { display: none !important; }
+          /* Status bar: tighten padding so items don't wrap */
+          .sb-item { padding: 0 8px !important; }
+          /* Trade card: allow badge row to wrap onto 2 lines */
+          .card-badges { flex-wrap: wrap !important; row-gap: 4px !important; }
+          /* Stat grid: third box spans full width */
+          .stat-third { grid-column: 1 / -1 !important; }
+          /* Footer: wrap buttons when narrow */
+          .footer-actions { flex-wrap: wrap !important; }
+          /* Last-scan near-miss reason: shorter max-width */
+          .near-miss-reason { max-width: 120px !important; }
+        }
       `}</style>
       {/* Fixed status bar */}
       <StatusBar
@@ -1465,12 +1484,14 @@ export default function App() {
               color={floatColor}
               glow={floatPos && floating > 0}
             />
-            <StatBox
-              label={`ACTIVE TRADES ${trades.length}/3`}
-              value={`$${lockedBal.toFixed(2)}`}
-              sub={`Locked · ${lockedBal > 0 ? `$${(freeCash).toFixed(0)} free` : 'no margin used'}`}
-              color={T.amber}
-            />
+            <div className="stat-third">
+              <StatBox
+                label={`ACTIVE TRADES ${trades.length}/3`}
+                value={`$${lockedBal.toFixed(2)}`}
+                sub={`Locked · ${lockedBal > 0 ? `$${(freeCash).toFixed(0)} free` : 'no margin used'}`}
+                color={T.amber}
+              />
+            </div>
           </div>
 
           {/* Equity curve */}
@@ -1527,7 +1548,7 @@ export default function App() {
 
           {/* Footer + actions */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0' }}>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div className="footer-actions" style={{ display: 'flex', gap: 8 }}>
               <button
                 onClick={refreshAll}
                 disabled={refreshing}
