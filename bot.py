@@ -61,18 +61,8 @@ bot = telebot.TeleBot(os.environ['TELEGRAM_TOKEN'])
 CHAT_ID = os.environ['CHAT_ID']
 print("[BOOT] Telegram bot OK.", flush=True)
 
-# רשימה קבועה לאסטרטגיית EMA בלבד
-ENERGY_GEO = ['POWR/USDT', 'HNT/USDT', 'WLD/USDT']  # הוסר PAXG (זהב — לא מומנטום קריפטו)
-
-# נתיב לקובץ המועמדים החמים (לדאשבורד)
-HOT_CANDIDATES_FILE   = 'artifacts/bot-dashboard/public/hot_candidates.json'
-ACTIVE_TRADES_FILE    = 'artifacts/bot-dashboard/public/active_trades.json'
-WALLET_FILE           = 'artifacts/bot-dashboard/public/wallet.json'
-AUDIT_LOG_FILE        = 'artifacts/bot-dashboard/public/trade_audit.json'
-
-# --- ארנק וירטואלי ---
-STARTING_BALANCE = 200.0   # יתרת פתיחה $200
-DASHBOARD_URL       = 'https://python-script-bymzrkhy.replit.app/'
+# ENERGY_GEO, HOT_CANDIDATES_FILE, ACTIVE_TRADES_FILE, WALLET_FILE, AUDIT_LOG_FILE,
+# STARTING_BALANCE, DASHBOARD_URL → config.py (from config import *)
 
 # ─── Fear & Greed Index — cache גלובלי (מתרענן כל שעה) ───────────────────────
 _fng_cache = {'value': 50, 'label': 'Neutral', 'ts': 0}
@@ -122,8 +112,8 @@ def _save_config():
     except Exception as _e:
         print(f"[Config] שגיאת שמירה: {_e}", flush=True)
 
-# ─── Daily Circuit Breaker ─────────────────────────────────────────────────────
-DAILY_LOSS_LIMIT            = -30.0   # -$30 = 15% מ-$200 יתרת פתיחה
+# ─── Daily Circuit Breaker (DAILY_LOSS_LIMIT → config.py) ─────────────────────
+# DAILY_LOSS_LIMIT = -30.0 — in config.py (from config import *)
 _daily_circuit_notified: bool = False  # מונע ריבוי הודעות על אותו אירוע
 
 # sentiment_check / set_sentiment_thresholds → market_logic.py
@@ -421,8 +411,7 @@ trade_audit_log: list[dict] = []
 watch_list: dict = {}
 watch_lock = threading.Lock()
 
-# Audit report — שעות שליחה ומעקב שהוגש
-AUDIT_HOURS        = {12}       # 12:00 בצהריים — דוח יומי
+# AUDIT_HOURS → config.py (from config import *)
 _last_audit_hour   = None       # מונע כפילות באותה שעה
 
 # מעקב אחרי עסקאות שנסגרו היום
@@ -437,8 +426,7 @@ daily_stats = {
 # שמירת תאריך הדוח האחרון שנשלח
 last_daily_report_date = None
 
-# ── Scan Analysis Report ──────────────────────────────────────────────────────
-SCAN_REPORT_FILE = 'artifacts/bot-dashboard/public/last_scan_results.json'
+# SCAN_REPORT_FILE → config.py (from config import *)
 
 def _reject_reason(score: int, breakdown: str) -> str:
     """הופך breakdown גולמי לסיבת דחייה קריאה לאדם."""
@@ -776,9 +764,8 @@ def save_scan_results(
 # מניעת שתי סריקות במקביל
 _scan_running = False
 
-# Heartbeat — זמן הדוח האחרון (timestamp)
+# HEARTBEAT_INTERVAL → config.py (from config import *)
 last_heartbeat_time   = None
-HEARTBEAT_INTERVAL    = 1800   # 30 דקות בשניות
 
 # ═══════════════════════════════════════════════════════════════
 # Flask API — live endpoints (CORS enabled via keep_alive)
