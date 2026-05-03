@@ -1,11 +1,36 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 
 /* ══════════════════════════════════════════════
-   7-SEGMENT DISPLAY
-   W=22 H=38 per digit — classic LED look
+   TERMINAL COLOUR PALETTE
+══════════════════════════════════════════════ */
+const T = {
+  bg:     '#0d1117',
+  panel:  '#161b22',
+  border: '#30363d',
+  green:  '#39ff14',
+  red:    '#ff4444',
+  amber:  '#f5a623',
+  blue:   '#58a6ff',
+  purple: '#bc8cff',
+  cyan:   '#79c0ff',
+  text:   '#c9d1d9',
+  dim:    '#8b949e',
+  dimmer: '#484f58',
+  font:   "'JetBrains Mono', 'Fira Code', monospace",
+} as const;
+
+const panel: React.CSSProperties = {
+  background: T.panel,
+  border: `1px solid ${T.border}`,
+  borderRadius: 6,
+  fontFamily: T.font,
+};
+
+/* ══════════════════════════════════════════════
+   7-SEGMENT DISPLAY (scan countdown)
 ══════════════════════════════════════════════ */
 const SEG_MAP: Record<string, boolean[]> = {
-  //        a      b      c      d      e      f      g
   '0': [true,  true,  true,  true,  true,  true,  false],
   '1': [false, true,  true,  false, false, false, false],
   '2': [true,  true,  false, true,  true,  false, true ],
@@ -17,45 +42,38 @@ const SEG_MAP: Record<string, boolean[]> = {
   '8': [true,  true,  true,  true,  true,  true,  true ],
   '9': [true,  true,  true,  true,  false, true,  true ],
 };
-const ON  = '#facc15';   // yellow-400
-const DIM = '#1c1600';   // barely visible "off" segment
+const ON  = '#facc15';
+const DIM_SEG = '#1c1600';
 const GLW = '0 0 8px #facc15cc';
 
 function SevenSegDigit({ digit }: { digit: string }) {
   const s = SEG_MAP[digit] ?? Array(7).fill(false);
-  const W = 15, H = 26, T = 2, G = 1, R = 1, H2 = H / 2;
+  const W = 13, H = 22, Th = 2, G = 1, R = 1, H2 = H / 2;
   const seg = (on: boolean, x: number, y: number, w: number, h: number) => (
     <rect x={x} y={y} width={w} height={h} rx={R} ry={R}
-      fill={on ? ON : DIM}
+      fill={on ? ON : DIM_SEG}
       style={on ? { filter: `drop-shadow(${GLW})` } : undefined} />
   );
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{ display: 'block' }}>
-      {/* a – top */}       {seg(s[0], T+G,   0,       W-2*T-2*G, T)}
-      {/* b – top-right */} {seg(s[1], W-T,   T+G,     T, H2-T-2*G)}
-      {/* c – bot-right */} {seg(s[2], W-T,   H2+G,    T, H2-T-2*G)}
-      {/* d – bottom */}    {seg(s[3], T+G,   H-T,     W-2*T-2*G, T)}
-      {/* e – bot-left */}  {seg(s[4], 0,     H2+G,    T, H2-T-2*G)}
-      {/* f – top-left */}  {seg(s[5], 0,     T+G,     T, H2-T-2*G)}
-      {/* g – middle */}    {seg(s[6], T+G,   H2-T/2,  W-2*T-2*G, T)}
+      {seg(s[0], Th+G, 0,       W-2*Th-2*G, Th)}
+      {seg(s[1], W-Th, Th+G,    Th, H2-Th-2*G)}
+      {seg(s[2], W-Th, H2+G,    Th, H2-Th-2*G)}
+      {seg(s[3], Th+G, H-Th,    W-2*Th-2*G, Th)}
+      {seg(s[4], 0,    H2+G,    Th, H2-Th-2*G)}
+      {seg(s[5], 0,    Th+G,    Th, H2-Th-2*G)}
+      {seg(s[6], Th+G, H2-Th/2, W-2*Th-2*G, Th)}
     </svg>
   );
 }
-
 function SevenSegColon() {
   return (
-    <div style={{ width: 7, height: 26, display: 'flex', flexDirection: 'column',
-                  alignItems: 'center', justifyContent: 'space-evenly', paddingBottom: 1 }}>
-      {[0, 1].map(i => (
-        <div key={i} style={{
-          width: 4, height: 4, borderRadius: '50%',
-          background: ON, boxShadow: GLW,
-        }} />
-      ))}
+    <div style={{ width: 6, height: 22, display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'space-evenly' }}>
+      {[0,1].map(i => <div key={i} style={{ width:3, height:3, borderRadius:'50%', background: ON, boxShadow: GLW }} />)}
     </div>
   );
 }
-
 function SevenSegDisplay({ value }: { value: string }) {
   return (
     <div dir="ltr" style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -67,163 +85,8 @@ function SevenSegDisplay({ value }: { value: string }) {
 }
 
 /* ══════════════════════════════════════════════
-   FEAR & GREED SPEEDOMETER GAUGE
+   INTERFACES
 ══════════════════════════════════════════════ */
-const FNG_ZONES = [
-  { from: 0,  to: 20,  color: '#ef4444' },
-  { from: 20, to: 40,  color: '#f97316' },
-  { from: 40, to: 60,  color: '#facc15' },
-  { from: 60, to: 80,  color: '#84cc16' },
-  { from: 80, to: 100, color: '#22c55e' },
-];
-
-function fngColor(v: number) {
-  if (v < 20) return '#ef4444';
-  if (v < 40) return '#f97316';
-  if (v < 60) return '#facc15';
-  if (v < 80) return '#84cc16';
-  return '#22c55e';
-}
-function fngLabel(v: number) {
-  if (v < 25) return 'פחד קיצוני';
-  if (v < 45) return 'פחד';
-  if (v < 55) return 'נייטרלי';
-  if (v < 75) return 'חמדנות';
-  return 'חמדנות קיצונית';
-}
-
-function FearGreedGauge({ value, label }: { value: number | null; label: string | null }) {
-  const cx = 100, cy = 100, R = 78;
-  const v = value ?? 50;
-
-  const pt = (r: number, val: number) => {
-    const θ = (180 - (val / 100) * 180) * Math.PI / 180;
-    return { x: cx + r * Math.cos(θ), y: cy - r * Math.sin(θ) };
-  };
-
-  const arc = (from: number, to: number, r: number) => {
-    const p1 = pt(r, from), p2 = pt(r, to);
-    return `M ${p1.x.toFixed(1)} ${p1.y.toFixed(1)} A ${r} ${r} 0 0 1 ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
-  };
-
-  const needle = pt(68, v);
-  const color  = fngColor(v);
-
-  return (
-    <svg viewBox="0 0 200 126" width="100%" style={{ display: 'block', margin: '0 auto', maxWidth: 240 }}>
-      <defs>
-        <filter id="fg-glow" x="-40%" y="-40%" width="180%" height="180%">
-          <feGaussianBlur stdDeviation="2" result="b"/>
-          <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-        </filter>
-        <radialGradient id="hub-grad" cx="40%" cy="35%">
-          <stop offset="0%" stopColor="#4b5563"/>
-          <stop offset="100%" stopColor="#111827"/>
-        </radialGradient>
-      </defs>
-
-      {/* Dim background tracks */}
-      {FNG_ZONES.map((z, i) => (
-        <path key={`bg${i}`} d={arc(z.from, z.to, R)}
-          fill="none" stroke={z.color} strokeWidth={14}
-          strokeLinecap={i === 0 || i === 4 ? 'round' : 'butt'}
-          opacity={0.2} />
-      ))}
-
-      {/* Filled arcs */}
-      {FNG_ZONES.map((z, i) => {
-        const end = Math.min(v, z.to);
-        if (end <= z.from) return null;
-        const isLast = end < z.to;
-        return (
-          <path key={`fill${i}`} d={arc(z.from, end, R)}
-            fill="none" stroke={z.color} strokeWidth={14}
-            strokeLinecap={i === 0 || isLast ? 'round' : 'butt'}
-            filter="url(#fg-glow)" />
-        );
-      })}
-
-      {/* Tick marks */}
-      {[0, 25, 50, 75, 100].map(tv => {
-        const inn = pt(R - 9, tv), out = pt(R + 3, tv);
-        return <line key={tv} x1={inn.x} y1={inn.y} x2={out.x} y2={out.y}
-          stroke="white" strokeWidth={1.2} opacity={0.35} />;
-      })}
-
-      {/* Needle shadow */}
-      <line x1={cx} y1={cy} x2={needle.x} y2={needle.y}
-        stroke="#000" strokeWidth={3.5} strokeLinecap="round" opacity={0.5} />
-
-      {/* Needle */}
-      <line x1={cx} y1={cy} x2={needle.x} y2={needle.y}
-        stroke="white" strokeWidth={2.2} strokeLinecap="round"
-        filter="url(#fg-glow)"
-        style={{ transition: 'all 1.2s cubic-bezier(0.34,1.56,0.64,1)' }} />
-
-      {/* Needle tip dot */}
-      <circle cx={needle.x} cy={needle.y} r={3} fill={color} filter="url(#fg-glow)" />
-
-      {/* Hub */}
-      <circle cx={cx} cy={cy} r={6} fill="url(#hub-grad)" stroke={color} strokeWidth={2} />
-
-      {/* Value */}
-      <text x={cx} y={cy - 20} textAnchor="middle"
-        fill={color} fontSize={22} fontWeight="bold" fontFamily="monospace"
-        filter="url(#fg-glow)">{value ?? '—'}</text>
-
-      {/* Zone label */}
-      <text x={cx} y={cy - 7} textAnchor="middle"
-        fill="#d1d5db" fontSize={7.5} fontFamily="sans-serif">
-        {fngLabel(v)}
-      </text>
-
-      {/* Side labels */}
-      <text x={9}   y={cy + 16} textAnchor="middle" fontSize={12}>😱</text>
-      <text x={191} y={cy + 16} textAnchor="middle" fontSize={12}>🤑</text>
-
-      {/* Numeric scale */}
-      {[0, 50, 100].map(tv => {
-        const p = pt(R + 12, tv);
-        return <text key={tv} x={p.x} y={p.y + 3} textAnchor="middle"
-          fill="#6b7280" fontSize={6.5} fontFamily="monospace">{tv}</text>;
-      })}
-    </svg>
-  );
-}
-
-function FearGreedDigital({ value, label }: { value: number | null; label: string | null }) {
-  const v = value ?? 50;
-  const color = fngColor(v);
-  const strength = v < 25 ? 'קיצוני' : v < 45 ? 'פחד' : v < 55 ? 'נייטרלי' : v < 75 ? 'חמדנות' : 'קיצוני';
-  return (
-    <div className="rounded-2xl border border-gray-800 bg-gray-950/70 px-4 py-4 text-center shadow-lg"
-      style={{ background: 'linear-gradient(135deg, #08111f 0%, #0d1b2f 100%)' }}>
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-xs uppercase tracking-[0.25em] text-gray-500">Fear & Greed</span>
-        <span className="text-xs text-gray-500">Alternative.me · live</span>
-      </div>
-      <div className="font-mono leading-none" style={{ color, textShadow: `0 0 18px ${color}55` }}>
-        <div className="text-7xl md:text-8xl font-black">{v}</div>
-        <div className="mt-2 text-lg font-bold">{label ?? 'Neutral'}</div>
-        <div className="mt-1 text-sm text-gray-400">מצב: {strength}</div>
-      </div>
-    </div>
-  );
-}
-
-interface Candidate {
-  symbol: string;
-  change_pct: number;
-  volume_usd: number;
-  price: number;
-}
-
-interface HotData {
-  updated: string;
-  count: number;
-  candidates: Candidate[];
-}
-
 interface Trade {
   symbol: string;
   entry: number;
@@ -247,12 +110,7 @@ interface Trade {
   trailing_sl: number | null;
   timeframe?: string;
 }
-
-interface TradesData {
-  updated: string;
-  count: number;
-  trades: Trade[];
-}
+interface TradesData { updated: string; count: number; trades: Trade[]; }
 
 interface EquityPoint { t: string; eq: number; }
 interface WalletData {
@@ -261,7 +119,6 @@ interface WalletData {
   total_pnl: number;
   trades_opened: number;
   equity_history: EquityPoint[];
-  // ── new fields from api_wallet() ──
   available_balance?: number;
   locked_balance?: number;
   unrealized_pnl?: number;
@@ -269,6 +126,43 @@ interface WalletData {
   active_count?: number;
 }
 
+interface FngData { value: number; label: string; updated_at?: number; time_until_update?: number; }
+
+interface Candidate { symbol: string; change_pct: number; volume_usd: number; price: number; }
+interface HotData { updated: string; count: number; candidates: Candidate[]; }
+
+interface RejectedCoin {
+  symbol: string; direction: string; best_score: number; reason: string;
+  scores?: { "4H"?: number; "1H"?: number; "15m"?: number };
+}
+interface BubbleCoin { symbol: string; change_pct: number; direction: string; price: number; volume_usd: number; }
+interface ScanData {
+  scan_time: string; total_scanned: number; signals_found: number;
+  active_trades_count: number; btc_regime: string; fng_value: number;
+  fng_label: string; market_sentiment_factor: string; rejected_coins: RejectedCoin[];
+  system_message: string; scan_duration_s: number; bubble_watch?: BubbleCoin[];
+  min_score?: number;
+}
+
+interface AuditTrade {
+  symbol: string; direction: string; track: string; entry_price: number;
+  close_price: number; pnl_usd: number; close_reason: string; score: number;
+  fng_at_entry: number | null; rr_ratio: number | null; rr_achieved: number | null;
+  duration_min: number; opened_at: string; closed_at: string; lesson: string;
+  sniper: boolean; scalp: boolean; hunter_mode: boolean;
+}
+interface AuditData { updated: string | null; count: number; trades: AuditTrade[]; }
+
+interface FngRange { min: number; max: number; desc: string; }
+interface FngSettings {
+  extreme_fear: number; fear: number; greed: number;
+  ranges: { extreme_fear: FngRange; fear: FngRange; greed: FngRange; };
+}
+interface SlotsData { max_trades: number; active_trades: number; open_slots: number; min: number; max: number; }
+
+/* ══════════════════════════════════════════════
+   UTILITY HOOKS & FUNCTIONS
+══════════════════════════════════════════════ */
 function useClock() {
   const [time, setTime] = useState(new Date());
   useEffect(() => {
@@ -279,611 +173,790 @@ function useClock() {
 }
 
 function useJson<T>(primaryUrl: string, fallbackUrl: string, interval = 30_000) {
-  const [data, setData]       = useState<T | null>(null);
+  const [data, setData] = useState<T | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-
   const refetch = useCallback(() => setRefreshKey(k => k + 1), []);
-
   useEffect(() => {
     const fetch_ = () =>
       fetch(primaryUrl + "?t=" + Date.now())
-        .then((r) => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); })
+        .then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); })
         .then(setData)
         .catch(() =>
           fetch(fallbackUrl + "?t=" + Date.now())
-            .then((r) => r.json())
-            .then(setData)
-            .catch(() => {})
+            .then(r => r.json()).then(setData).catch(() => {})
         );
     fetch_();
     const id = setInterval(fetch_, interval);
     return () => clearInterval(id);
   }, [primaryUrl, fallbackUrl, interval, refreshKey]);
-
   return { data, refetch };
 }
 
 function fmt(n: number) {
   if (n === undefined || n === null) return "—";
   if (Math.abs(n) < 0.001) return n.toExponential(3);
-  if (Math.abs(n) < 1) return n.toFixed(4);
+  if (Math.abs(n) < 1)     return n.toFixed(4);
   if (Math.abs(n) < 10000) return n.toFixed(2);
   return n.toLocaleString();
 }
-
 function formatVolume(v: number) {
-  if (v >= 1_000_000_000) return `$${(v / 1_000_000_000).toFixed(1)}B`;
-  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000_000_000) return `$${(v/1_000_000_000).toFixed(1)}B`;
+  if (v >= 1_000_000)     return `$${(v/1_000_000).toFixed(1)}M`;
   return `$${v.toLocaleString()}`;
 }
+function fngColor(v: number) {
+  if (v < 20) return '#ef4444';
+  if (v < 40) return '#f97316';
+  if (v < 60) return '#facc15';
+  if (v < 80) return '#84cc16';
+  return '#22c55e';
+}
 
-function ScoreBar({ score }: { score: number }) {
-  const color =
-    score >= 90 ? "bg-green-400" : score >= 80 ? "bg-yellow-400" : "bg-red-400";
+const BOT_API = import.meta.env.DEV ? "" : "https://python-script-bymzrkhy.replit.app";
+
+/* ══════════════════════════════════════════════
+   STATUS BAR (fixed top)
+══════════════════════════════════════════════ */
+function StatusBar({
+  fng, equity, starting, tradesCount, clock,
+}: {
+  fng: FngData | null; equity: number; starting: number;
+  tradesCount: number; clock: Date;
+}) {
+  const fngVal   = fng?.value ?? 50;
+  const fngLbl   = fng?.label ?? 'Neutral';
+  const fColor   = fngColor(fngVal);
+  const pnlPct   = starting > 0 ? ((equity - starting) / starting * 100) : 0;
+  const eqColor  = equity >= starting ? T.green : T.red;
+
   return (
-    <div className="flex items-center gap-2">
-      <div className="w-20 h-1.5 bg-gray-700 rounded-full overflow-hidden">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${score}%` }} />
+    <div style={{
+      position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100,
+      height: 44, background: T.panel, borderBottom: `1px solid ${T.border}`,
+      display: 'flex', alignItems: 'center',
+      padding: '0 16px', gap: 0,
+      fontFamily: T.font, fontSize: 12, color: T.dim,
+    }}>
+      {/* Logo */}
+      <span style={{ color: T.green, fontWeight: 700, fontSize: 13, letterSpacing: 1, marginRight: 16 }}>
+        BotOS v2
+      </span>
+      <Divider />
+
+      {/* Connection */}
+      <StatusChip color={T.green} label="CONNECTED" sub="Bitget VIRTUAL" />
+      <Divider />
+
+      {/* FNG */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px' }}>
+        <span style={{ color: T.dimmer }}>FNG</span>
+        <span style={{ color: fColor, fontWeight: 700 }}>{fngVal}</span>
+        <span style={{ color: fColor, fontSize: 11 }}>{fngLbl}</span>
       </div>
-      <span className="text-xs font-mono text-gray-300">{score}/100</span>
+      <Divider />
+
+      {/* Portfolio */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px' }}>
+        <span style={{ color: T.dimmer }}>EQUITY</span>
+        <span style={{ color: eqColor, fontWeight: 700 }}>${equity.toFixed(2)}</span>
+        <span style={{ color: eqColor, fontSize: 11 }}>
+          {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%
+        </span>
+      </div>
+      <Divider />
+
+      {/* Active trades */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px' }}>
+        <span style={{ color: T.dimmer }}>TRADES</span>
+        <span style={{ color: tradesCount > 0 ? T.amber : T.dimmer, fontWeight: 700 }}>
+          {tradesCount}/3
+        </span>
+      </div>
+
+      {/* Spacer */}
+      <div style={{ flex: 1 }} />
+
+      {/* Clock */}
+      <span style={{ color: T.dimmer, fontSize: 11 }}>
+        {clock.toLocaleTimeString('he-IL')}
+      </span>
     </div>
   );
 }
 
-/* ── Equity Sparkline SVG ── */
-function EquitySparkline({ history, starting }: { history: EquityPoint[]; starting: number }) {
-  if (!history || history.length < 2) {
-    return <div className="text-xs text-gray-600 text-center py-4">ממתין לנתוני היסטוריה...</div>;
-  }
-  const vals = history.map((p) => p.eq);
-  const min  = Math.min(...vals, starting * 0.95);
-  const max  = Math.max(...vals, starting * 1.05);
-  const W = 400; const H = 80;
-  const pad = 8;
-  const pts = history.map((p, i) => {
-    const x = pad + (i / (history.length - 1)) * (W - pad * 2);
-    const y = H - pad - ((p.eq - min) / (max - min || 1)) * (H - pad * 2);
-    return `${x},${y}`;
-  }).join(" ");
+function Divider() {
+  return <div style={{ width: 1, height: 20, background: T.border, flexShrink: 0 }} />;
+}
 
-  // baseline (starting balance)
-  const baselineY = H - pad - ((starting - min) / (max - min || 1)) * (H - pad * 2);
-  const last  = history[history.length - 1].eq;
-  const color = last >= starting ? "#34d399" : "#f87171";
-  const lastX = pad + ((history.length - 1) / (history.length - 1)) * (W - pad * 2);
-  const lastY = H - pad - ((last - min) / (max - min || 1)) * (H - pad * 2);
+function StatusChip({ color, label, sub }: { color: string; label: string; sub: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px' }}>
+      <span style={{ width: 7, height: 7, borderRadius: '50%', background: color,
+        boxShadow: `0 0 6px ${color}`, display: 'inline-block', flexShrink: 0 }} />
+      <span style={{ color, fontWeight: 700 }}>{label}</span>
+      <span style={{ color: T.dimmer, fontSize: 11 }}>{sub}</span>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════
+   PANEL HEADER
+══════════════════════════════════════════════ */
+function PanelHeader({ label, right }: { label: string; right?: React.ReactNode }) {
+  return (
+    <div style={{
+      padding: '7px 12px', borderBottom: `1px solid ${T.border}`,
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    }}>
+      <span style={{ color: T.dimmer, fontSize: 10, letterSpacing: 2, textTransform: 'uppercase', fontWeight: 600 }}>
+        {label}
+      </span>
+      {right && <span style={{ color: T.dim, fontSize: 10 }}>{right}</span>}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════
+   ANALYTICS SIDEBAR
+══════════════════════════════════════════════ */
+function AnalyticsSidebar({
+  wallet, trades, fng, scanCountdown, scanPct,
+}: {
+  wallet: WalletData | null; trades: Trade[]; fng: FngData | null;
+  scanCountdown: string; scanPct: number;
+}) {
+  const starting   = wallet?.starting ?? 200;
+  const freeCash   = wallet?.available_balance ?? Math.max(0, starting - trades.length * 50 + (wallet?.total_pnl ?? 0));
+  const lockedBal  = wallet?.locked_balance ?? trades.length * 50;
+  const equity     = wallet?.equity ?? starting;
+  const total      = Math.max(freeCash + lockedBal, 0.01);
+
+  const COLORS = ['#39ff14', '#f5a623', '#58a6ff', '#bc8cff', '#79c0ff', '#ff4444'];
+
+  const pieData = [
+    { name: 'Available', value: Math.max(freeCash, 0) },
+    { name: 'Locked', value: Math.max(lockedBal, 0) },
+    ...trades.map(t => ({ name: t.symbol.replace('/USDT', ''), value: t.pos_size ?? 50 })),
+  ].filter(d => d.value > 0);
+
+  // Volatility from average ATR %
+  const avgAtrPct = trades.length > 0
+    ? trades.reduce((s, t) => s + (t.atr / t.entry * 100), 0) / trades.length
+    : 0;
+  const volLabel = avgAtrPct > 3 ? 'HIGH' : avgAtrPct > 1.5 ? 'MEDIUM' : 'LOW';
+  const volColor = avgAtrPct > 3 ? T.red : avgAtrPct > 1.5 ? T.amber : T.green;
+
+  const fngVal   = fng?.value ?? 50;
+  const fColor   = fngColor(fngVal);
+  const equityPct = starting > 0 ? ((equity - starting) / starting * 100) : 0;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 80 }}>
-      {/* baseline */}
-      <line x1={pad} y1={baselineY} x2={W - pad} y2={baselineY}
-        stroke="#374151" strokeWidth={1} strokeDasharray="4 3" />
-      {/* area fill */}
+    <div style={{
+      width: 220, flexShrink: 0,
+      display: 'flex', flexDirection: 'column', gap: 8,
+      fontFamily: T.font,
+    }}>
+      {/* Portfolio Allocation */}
+      <div style={panel}>
+        <PanelHeader label="ANALYTICS" />
+        <div style={{ padding: '12px 12px 4px' }}>
+          <ResponsiveContainer width="100%" height={130}>
+            <PieChart>
+              <Pie data={pieData} cx="50%" cy="50%" innerRadius={38} outerRadius={58}
+                dataKey="value" strokeWidth={0}>
+                {pieData.map((_e, i) => (
+                  <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                ))}
+              </Pie>
+              <Tooltip
+                contentStyle={{ background: T.panel, border: `1px solid ${T.border}`,
+                  borderRadius: 4, fontFamily: T.font, fontSize: 11 }}
+                formatter={(v: number) => [`$${v.toFixed(0)}`, '']}
+              />
+            </PieChart>
+          </ResponsiveContainer>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
+            {pieData.map((d, i) => (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 2,
+                    background: COLORS[i % COLORS.length], display: 'inline-block' }} />
+                  <span style={{ color: T.dim, fontSize: 10 }}>{d.name}</span>
+                </div>
+                <span style={{ color: T.text, fontSize: 10, fontWeight: 600 }}>
+                  ${d.value.toFixed(0)}
+                  <span style={{ color: T.dimmer }}> ({((d.value / total) * 100).toFixed(0)}%)</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Divider */}
+        <div style={{ margin: '10px 12px', height: 1, background: T.border }} />
+
+        {/* Volatility */}
+        <div style={{ padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ color: T.dimmer, fontSize: 10, letterSpacing: 1.5, textTransform: 'uppercase' }}>VOLATILITY</span>
+            <span style={{ color: volColor, fontSize: 12, fontWeight: 700,
+              textShadow: `0 0 8px ${volColor}66` }}>
+              {volLabel}
+            </span>
+          </div>
+          {avgAtrPct > 0 && (
+            <div style={{ background: T.bg, borderRadius: 4, height: 4, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${Math.min(avgAtrPct / 5 * 100, 100)}%`,
+                background: volColor, borderRadius: 4, transition: 'width 0.5s' }} />
+            </div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ color: T.dimmer, fontSize: 10, letterSpacing: 1.5, textTransform: 'uppercase' }}>EQUITY</span>
+            <span style={{ color: equityPct >= 0 ? T.green : T.red, fontSize: 12, fontWeight: 700 }}>
+              {equityPct >= 0 ? '+' : ''}{equityPct.toFixed(2)}%
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Fear & Greed */}
+      <div style={panel}>
+        <PanelHeader label="FEAR & GREED" />
+        <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+            <span style={{ color: fColor, fontSize: 36, fontWeight: 700, lineHeight: 1,
+              textShadow: `0 0 20px ${fColor}55` }}>
+              {fngVal}
+            </span>
+            <div>
+              <div style={{ color: fColor, fontSize: 11, fontWeight: 600 }}>{fng?.label ?? 'Neutral'}</div>
+              <div style={{ color: T.dimmer, fontSize: 10 }}>Fear & Greed</div>
+            </div>
+          </div>
+          {/* FNG bar */}
+          <div style={{ height: 6, background: T.bg, borderRadius: 3, overflow: 'hidden' }}>
+            <div style={{
+              height: '100%', width: `${fngVal}%`, borderRadius: 3,
+              background: `linear-gradient(to right, #ef4444, #f97316, #facc15, #84cc16, #22c55e)`,
+              transition: 'width 1s ease',
+            }} />
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 9, color: '#ef4444' }}>0 Extreme Fear</span>
+            <span style={{ fontSize: 9, color: '#22c55e' }}>100 Extreme Greed</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Scan countdown */}
+      <div style={panel}>
+        <PanelHeader label="NEXT SCAN" />
+        <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+          <SevenSegDisplay value={scanCountdown} />
+          <div style={{ width: '100%', height: 3, background: T.bg, borderRadius: 2, overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${scanPct}%`, background: T.amber, borderRadius: 2, transition: 'width 1s' }} />
+          </div>
+          <span style={{ color: T.dimmer, fontSize: 10 }}>ELAPSED {scanPct}%</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════
+   STAT BOX (large monospace number)
+══════════════════════════════════════════════ */
+function StatBox({
+  label, value, sub, color, glow = false,
+}: { label: string; value: string; sub?: string; color: string; glow?: boolean }) {
+  return (
+    <div style={{ ...panel, padding: '14px 16px', flex: 1 }}>
+      <div style={{ color: T.dimmer, fontSize: 9, letterSpacing: 2, textTransform: 'uppercase', marginBottom: 6 }}>
+        {label}
+      </div>
+      <div style={{
+        color, fontSize: 24, fontWeight: 700, lineHeight: 1, letterSpacing: -0.5,
+        textShadow: glow ? `0 0 16px ${color}55` : undefined, fontFamily: T.font,
+      }}>
+        {value}
+      </div>
+      {sub && (
+        <div style={{ color: T.dimmer, fontSize: 10, marginTop: 4 }}>{sub}</div>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════
+   SL/TP PROGRESS BAR
+══════════════════════════════════════════════ */
+function SlTpBar({ trade }: { trade: Trade }) {
+  const cp    = trade.current_price ?? trade.entry;
+  const isLong = trade.direction === 'LONG';
+  const lo    = Math.min(trade.sl, trade.tp, cp) * 0.999;
+  const hi    = Math.max(trade.sl, trade.tp, cp) * 1.001;
+  const range = hi - lo || 1;
+
+  const pct = (val: number) => ((val - lo) / range) * 100;
+
+  const entryPct = pct(trade.entry);
+  const cpPct    = pct(cp);
+  const slPct    = pct(trade.sl);
+  const tpPct    = pct(trade.tp);
+  const tp1Pct   = trade.tp1 ? pct(trade.tp1) : null;
+  const bePct    = trade.be_lvl ? pct(trade.be_lvl) : null;
+
+  const rawPct = (cp - trade.entry) / trade.entry * 100;
+  const pnlPct = isLong ? rawPct : -rawPct;
+  const fillColor = pnlPct >= 0 ? T.green : T.red;
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ position: 'relative', height: 16, background: T.bg, borderRadius: 3, overflow: 'visible' }}>
+        {/* SL zone */}
+        <div style={{
+          position: 'absolute', left: `${Math.min(slPct, entryPct)}%`,
+          width: `${Math.abs(entryPct - slPct)}%`, top: 0, bottom: 0,
+          background: `${T.red}22`, borderRadius: 2,
+        }} />
+        {/* TP zone */}
+        <div style={{
+          position: 'absolute', left: `${Math.min(tpPct, entryPct)}%`,
+          width: `${Math.abs(tpPct - entryPct)}%`, top: 0, bottom: 0,
+          background: `${T.green}22`, borderRadius: 2,
+        }} />
+        {/* SL marker */}
+        <div style={{
+          position: 'absolute', left: `${slPct}%`, top: 0, bottom: 0, width: 2,
+          background: T.red, transform: 'translateX(-50%)',
+        }} />
+        {/* TP marker */}
+        <div style={{
+          position: 'absolute', left: `${tpPct}%`, top: 0, bottom: 0, width: 2,
+          background: T.green, transform: 'translateX(-50%)',
+        }} />
+        {/* TP1 marker */}
+        {tp1Pct !== null && (
+          <div style={{
+            position: 'absolute', left: `${tp1Pct}%`, top: 2, bottom: 2, width: 1,
+            background: `${T.green}88`, transform: 'translateX(-50%)',
+          }} />
+        )}
+        {/* BE marker */}
+        {bePct !== null && trade.be_triggered && (
+          <div style={{
+            position: 'absolute', left: `${bePct}%`, top: 0, bottom: 0, width: 1,
+            background: T.blue, transform: 'translateX(-50%)', opacity: 0.7,
+          }} />
+        )}
+        {/* Entry marker */}
+        <div style={{
+          position: 'absolute', left: `${entryPct}%`, top: 0, bottom: 0, width: 1.5,
+          background: T.amber, transform: 'translateX(-50%)',
+        }} />
+        {/* Current price cursor */}
+        <div style={{
+          position: 'absolute', left: `${Math.max(0, Math.min(cpPct, 100))}%`,
+          top: -2, bottom: -2, width: 3,
+          background: fillColor, borderRadius: 2, transform: 'translateX(-50%)',
+          boxShadow: `0 0 6px ${fillColor}`,
+          transition: 'left 0.8s ease',
+        }} />
+      </div>
+      {/* Labels */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3, fontSize: 9, color: T.dimmer }}>
+        <span style={{ color: T.red }}>SL {fmt(trade.sl)}</span>
+        <span style={{ color: T.amber }}>ENTRY {fmt(trade.entry)}</span>
+        <span style={{ color: T.green }}>TP {fmt(trade.tp)}</span>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════
+   MINI PRICE CHART (SVG sparkline per trade)
+══════════════════════════════════════════════ */
+function MiniPriceChart({ trade }: { trade: Trade }) {
+  const cp     = trade.current_price ?? trade.entry;
+  const isLong = trade.direction === 'LONG';
+  const lo     = Math.min(trade.sl, cp, trade.entry) * 0.998;
+  const hi     = Math.max(trade.tp, cp, trade.entry) * 1.002;
+  const range  = hi - lo || 1;
+  const W = 120, H = 40;
+
+  const py = (v: number) => H - ((v - lo) / range) * H;
+  const entryY = py(trade.entry);
+  const cpY    = py(cp);
+
+  const pnlPct = isLong ? ((cp - trade.entry) / trade.entry * 100) : ((trade.entry - cp) / trade.entry * 100);
+  const color  = pnlPct >= 0 ? T.green : T.red;
+
+  // Generate a simple wavy line from left (entry) to right (current)
+  const points: string[] = [];
+  const steps = 20;
+  for (let i = 0; i <= steps; i++) {
+    const x = (i / steps) * W;
+    const progress = i / steps;
+    const targetY = entryY + (cpY - entryY) * progress;
+    const noise = Math.sin(i * 2.1) * 2 + Math.cos(i * 1.3) * 1.5;
+    points.push(`${x.toFixed(1)},${(targetY + noise * (1 - progress * 0.5)).toFixed(1)}`);
+  }
+  const polyline = points.join(' ');
+  const lastPt   = points[points.length - 1].split(',');
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H}
+      style={{ display: 'block', flexShrink: 0, opacity: 0.9 }}>
       <defs>
-        <linearGradient id="eq-grad" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={`mg-${trade.symbol}`} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor={color} stopOpacity="0.25" />
           <stop offset="100%" stopColor={color} stopOpacity="0.02" />
         </linearGradient>
       </defs>
+      {/* SL line */}
+      <line x1={0} y1={py(trade.sl)} x2={W} y2={py(trade.sl)}
+        stroke={T.red} strokeWidth={0.7} strokeDasharray="2 2" opacity={0.5} />
+      {/* TP line */}
+      <line x1={0} y1={py(trade.tp)} x2={W} y2={py(trade.tp)}
+        stroke={T.green} strokeWidth={0.7} strokeDasharray="2 2" opacity={0.5} />
+      {/* Entry line */}
+      <line x1={0} y1={entryY} x2={W} y2={entryY}
+        stroke={T.amber} strokeWidth={0.7} strokeDasharray="3 2" opacity={0.7} />
+      {/* Area fill */}
       <polygon
-        points={`${pad},${H - pad} ${pts} ${W - pad},${H - pad}`}
-        fill="url(#eq-grad)"
+        points={`0,${entryY} ${polyline} ${W},${entryY}`}
+        fill={`url(#mg-${trade.symbol})`}
       />
-      {/* line */}
-      <polyline points={pts} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" />
-      {/* last dot */}
-      <circle cx={lastX} cy={lastY} r={4} fill={color} />
+      {/* Price line */}
+      <polyline points={polyline} fill="none" stroke={color} strokeWidth={1.5} strokeLinejoin="round" />
+      {/* Current dot */}
+      <circle cx={parseFloat(lastPt[0])} cy={parseFloat(lastPt[1])} r={3}
+        fill={color} style={{ filter: `drop-shadow(0 0 4px ${color})` }} />
     </svg>
   );
 }
 
-function TradeCard({ trade }: { trade: Trade }) {
-  const isLong  = trade.direction === "LONG";
-  const dirColor = isLong ? "text-green-400" : "text-red-400";
-  const dirBg   = isLong ? "bg-green-500/10 border-green-500/25" : "bg-red-500/10 border-red-500/25";
-  const phase    = trade.phase === "trailing" ? "🔄 Trailing" : "📊 Initial";
-  const beLabel  = trade.be_triggered ? " · 🔒 BE" : "";
-  const p25Label = trade.partial_25_triggered ? " · ⚡25%" : "";
-  const tp1Label = trade.tp1_triggered ? " · TP1 ✅" : "";
-  const tf       = trade.timeframe ?? "4H";
-
-  // Floating P&L for this trade — use live pos_size from bot (accounts for partial closes)
+/* ══════════════════════════════════════════════
+   TERMINAL TRADE CARD
+══════════════════════════════════════════════ */
+function TerminalTradeCard({ trade }: { trade: Trade }) {
+  const [hovered, setHovered] = useState(false);
+  const isLong   = trade.direction === 'LONG';
   const cp       = trade.current_price ?? trade.entry;
   const rawPct   = (cp - trade.entry) / trade.entry * 100;
   const pnlPct   = isLong ? rawPct : -rawPct;
-  const posSize  = trade.pos_size ?? 500;   // live remaining position from bot ($50 × 10x = $500)
+  const posSize  = trade.pos_size ?? 500;
   const pnlUsd   = trade.tp1_triggered
     ? (trade.tp1_pnl ?? 0) + posSize * pnlPct / 100
     : posSize * pnlPct / 100;
   const isProfit = pnlUsd >= 0;
+  const pnlColor = isProfit ? T.green : T.red;
+  const dirColor = isLong ? T.green : T.red;
+  const tf       = trade.timeframe ?? '4H';
+  const bgSymbol = trade.symbol.replace('/', '');
 
-  // Expected P&L at TP and SL  (position size from bot or default $500)
-  const POSITION = posSize;
-  const estProfit = trade.tp && trade.entry
-    ? Math.abs(trade.tp - trade.entry) / trade.entry * POSITION
-    : null;
-  const estLoss = trade.sl && trade.entry
-    ? Math.abs(trade.sl - trade.entry) / trade.entry * POSITION
-    : null;
-  const rr = estProfit && estLoss && estLoss > 0
-    ? (estProfit / estLoss).toFixed(2)
-    : null;
+  const badges = [
+    trade.be_triggered       && { label: 'BE',  color: T.blue  },
+    trade.tp1_triggered      && { label: 'TP1', color: T.green },
+    trade.partial_25_triggered && { label: '25%', color: T.amber },
+    trade.phase === 'trailing' && { label: 'TRAIL', color: T.purple },
+  ].filter(Boolean) as { label: string; color: string }[];
 
-  // price movement colour (green = good for this direction)
-  const priceUp   = cp > trade.entry;
-  const priceGood = isLong ? priceUp : !priceUp;
-  const cpColor   = priceGood ? "text-green-400" : "text-red-400";
-
-  // Bitget futures chart link
-  const bgSymbol  = trade.symbol.replace("/", "");
-  const tvUrl     = `https://www.bitget.com/futures/usdt/${bgSymbol}`;
+  const scoreColor = trade.score >= 95 ? T.green : trade.score >= 90 ? T.amber : T.red;
 
   return (
-    <div className={`border rounded-xl p-4 ${dirBg}`}>
-      <div className="flex items-start justify-between mb-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className={`font-bold text-lg ${dirColor}`}>
-              {trade.symbol.replace("/USDT", "")}
-            </span>
-            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${dirBg} ${dirColor}`}>
-              {isLong ? "▲ LONG" : "▼ SHORT"}
-            </span>
-            <span className="text-xs bg-gray-800 text-gray-400 px-1.5 py-0.5 rounded font-mono">
-              {tf}
-            </span>
-            {/* TradingView chart link */}
-            <a
-              href={tvUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs bg-blue-900/40 hover:bg-blue-800/60 border border-blue-700/40 text-blue-300 px-2 py-0.5 rounded transition-colors"
-              title="פתח גרף ב-Bitget"
-            >
-              📈 גרף Bitget
-            </a>
-          </div>
-          <p className="text-xs text-gray-500 mt-0.5">{phase}{beLabel}{p25Label}{tp1Label}</p>
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        ...panel,
+        borderColor: hovered ? dirColor + '55' : T.border,
+        boxShadow: hovered ? `0 0 12px ${dirColor}18` : undefined,
+        transition: 'border-color 0.2s, box-shadow 0.2s',
+        fontFamily: T.font,
+        overflow: 'hidden',
+      }}
+    >
+      {/* Header row */}
+      <div style={{
+        padding: '8px 12px', borderBottom: `1px solid ${T.border}`,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        background: `${dirColor}08`,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ color: dirColor, fontWeight: 700, fontSize: 15 }}>
+            {trade.symbol.replace('/USDT', '')}
+          </span>
+          <span style={{
+            color: dirColor, fontSize: 10, fontWeight: 700,
+            border: `1px solid ${dirColor}55`, borderRadius: 3, padding: '1px 5px',
+          }}>
+            {isLong ? '▲ LONG' : '▼ SHORT'}
+          </span>
+          <span style={{
+            color: T.dimmer, fontSize: 10,
+            background: T.bg, border: `1px solid ${T.border}`,
+            borderRadius: 3, padding: '1px 4px',
+          }}>{tf}</span>
+          {badges.map(b => (
+            <span key={b.label} style={{
+              color: b.color, fontSize: 9, fontWeight: 700,
+              border: `1px solid ${b.color}55`, borderRadius: 3, padding: '1px 4px',
+            }}>{b.label}</span>
+          ))}
         </div>
-        <ScoreBar score={trade.score} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ color: scoreColor, fontSize: 10, fontWeight: 700 }}>
+            {trade.score}/100
+          </span>
+          <a
+            href={`https://www.bitget.com/futures/usdt/${bgSymbol}`}
+            target="_blank" rel="noopener noreferrer"
+            style={{ color: T.blue, fontSize: 10, textDecoration: 'none' }}
+          >↗ CHART</a>
+        </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
-        {/* מחיר נוכחי — שורה ראשונה ומודגשת */}
-        <div className="col-span-2 flex justify-between items-center bg-gray-800/50 rounded-lg px-3 py-1.5 mb-1">
-          <span className="text-gray-400 font-medium">💹 מחיר נוכחי</span>
-          <span className={`font-mono font-bold text-base ${cpColor}`}>
-            {fmt(cp)}
-            <span className="text-xs text-gray-500 font-normal ml-1">
-              ({rawPct >= 0 ? "+" : ""}{rawPct.toFixed(2)}% מכניסה)
-            </span>
-          </span>
-        </div>
-
-        <div className="flex justify-between">
-          <span className="text-gray-500">כניסה</span>
-          <span className="font-mono text-gray-200">{fmt(trade.entry)}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-gray-500">ATR</span>
-          <span className="font-mono text-gray-400">{fmt(trade.atr)}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-gray-500">🛑 SL</span>
-          <span className="font-mono text-red-400">{fmt(trade.sl)}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-gray-500">🔒 BE</span>
-          <span className={`font-mono ${trade.be_triggered ? "text-blue-400" : "text-gray-500"}`}>
-            {fmt(trade.be_lvl)}
-          </span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-gray-500">🎯 TP1</span>
-          <span className={`font-mono ${trade.tp1_triggered ? "text-green-400 line-through" : "text-green-400/70"}`}>
-            {fmt(trade.tp1)}
-          </span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-gray-500">🎯 TP</span>
-          <span className="font-mono text-green-400">{fmt(trade.tp)}</span>
-        </div>
-
-        {/* ── Expected P&L at TP / SL ── */}
-        {(estProfit !== null || estLoss !== null) && (
-          <div className="col-span-2 border-t border-gray-700/50 mt-1 pt-2 space-y-1">
-            {estProfit !== null && (
-              <div className="flex justify-between items-center">
-                <span className="text-gray-400 text-xs">Est. Profit at TP</span>
-                <span className="font-mono font-semibold text-green-400">
-                  +${estProfit.toFixed(2)}
-                </span>
-              </div>
-            )}
-            {estLoss !== null && (
-              <div className="flex justify-between items-center">
-                <span className="text-gray-400 text-xs">Est. Loss at SL</span>
-                <span className="font-mono font-semibold text-red-400">
-                  -${estLoss.toFixed(2)}
-                </span>
-              </div>
-            )}
-            {rr !== null && (
-              <div className="flex justify-between items-center">
-                <span className="text-gray-500 text-xs">Risk / Reward</span>
-                <span className="font-mono text-xs text-yellow-400">1 : {rr}</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {trade.trailing_sl !== null && (
-          <div className="col-span-2 flex justify-between border-t border-gray-700/50 pt-1.5 mt-0.5">
-            <span className="text-gray-500">📍 Trailing SL</span>
-            <span className="font-mono text-yellow-400">{fmt(trade.trailing_sl)}</span>
-          </div>
-        )}
-        {/* Running Profit / Loss */}
-        <div className="col-span-2 flex justify-between border-t border-gray-700/50 pt-2 mt-1">
-          <span className="text-gray-400 font-medium">{isProfit ? "💰 Running Profit" : "🔻 Running Loss"}</span>
-          <span
-            className="font-mono font-bold text-base"
-            style={{
-              color: isProfit ? "#39ff14" : "#f87171",
-              textShadow: isProfit ? "0 0 8px #39ff1460" : "none",
-            }}
-          >
-            {pnlUsd >= 0 ? "+" : ""}{pnlUsd.toFixed(2)}$ ({pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%)
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Deployed bot Flask API — single source of truth for live data
-const BOT_API = import.meta.env.DEV ? "" : "https://python-script-bymzrkhy.replit.app";
-
-interface FngData { value: number; label: string; updated_at?: number; time_until_update?: number; }
-
-interface RejectedCoin {
-  symbol: string;
-  direction: string;
-  best_score: number;
-  reason: string;
-  scores?: { "4H"?: number; "1H"?: number; "15m"?: number };
-}
-interface BubbleCoin {
-  symbol: string;
-  change_pct: number;
-  direction: string;
-  price: number;
-  volume_usd: number;
-}
-interface ScanData {
-  scan_time: string;
-  total_scanned: number;
-  signals_found: number;
-  active_trades_count: number;
-  btc_regime: string;
-  fng_value: number;
-  fng_label: string;
-  market_sentiment_factor: string;
-  rejected_coins: RejectedCoin[];
-  system_message: string;
-  scan_duration_s: number;
-  bubble_watch?: BubbleCoin[];
-  min_score?: number;
-}
-
-interface AuditTrade {
-  symbol: string;
-  direction: string;
-  track: string;
-  entry_price: number;
-  close_price: number;
-  pnl_usd: number;
-  close_reason: string;
-  score: number;
-  fng_at_entry: number | null;
-  rr_ratio: number | null;
-  rr_achieved: number | null;
-  duration_min: number;
-  opened_at: string;
-  closed_at: string;
-  lesson: string;
-  sniper: boolean;
-  scalp: boolean;
-  hunter_mode: boolean;
-}
-interface AuditData {
-  updated: string | null;
-  count: number;
-  trades: AuditTrade[];
-}
-
-function LastScanStatus({ scan }: { scan: ScanData | null }) {
-  if (!scan) return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center text-gray-600 text-xs">
-      ממתין לסריקה הראשונה...
-    </div>
-  );
-  const scanTime  = scan.scan_time ? new Date(scan.scan_time).toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" }) : "—";
-  const scanDate  = scan.scan_time ? new Date(scan.scan_time).toLocaleDateString("he-IL") : "";
-  const regEmoji  = scan.btc_regime === "BULL" ? "🟢" : scan.btc_regime === "BEAR" ? "🔴" : "🟡";
-  const sigColor  = scan.signals_found > 0 ? "text-green-400" : "text-gray-500";
-
-  return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden"
-         style={{ background: "linear-gradient(135deg, #0d1117 0%, #0a1628 100%)" }}>
-      {/* Header */}
-      <div className="px-5 py-3 border-b border-gray-800 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-base">🔍</span>
-          <h2 className="font-semibold text-gray-300 text-sm">Last Scan Status</h2>
-          {scan.signals_found > 0 && (
-            <span className="text-xs bg-green-500/20 text-green-400 border border-green-500/30 px-2 py-0.5 rounded-full">
-              {scan.signals_found} איתות/ות
-            </span>
-          )}
-        </div>
-        <span className="text-xs text-gray-600">{scanDate} · {scanTime} · {scan.scan_duration_s}s</span>
-      </div>
-
-      <div className="p-4 space-y-3">
-        {/* Summary row */}
-        <div className="grid grid-cols-3 gap-3 text-center">
-          <div className="bg-gray-800/50 rounded-lg py-2">
-            <p className="text-lg font-bold text-blue-400">{scan.total_scanned}</p>
-            <p className="text-xs text-gray-500">מטבעות שנסרקו</p>
-          </div>
-          <div className="bg-gray-800/50 rounded-lg py-2">
-            <p className={`text-lg font-bold ${sigColor}`}>{scan.signals_found}</p>
-            <p className="text-xs text-gray-500">איתותים שנמצאו</p>
-          </div>
-          <div className="bg-gray-800/50 rounded-lg py-2">
-            <p className="text-lg font-bold text-gray-300">{regEmoji} {scan.btc_regime}</p>
-            <p className="text-xs text-gray-500">BTC Regime</p>
-          </div>
-        </div>
-
-        {/* Sentiment factor */}
-        <div className="bg-gray-800/30 border border-gray-700/30 rounded-lg px-3 py-2 text-xs text-gray-400">
-          <span className="text-yellow-400 font-semibold">📊 Sentiment: </span>
-          {scan.market_sentiment_factor}
-        </div>
-
-        {/* System message */}
-        <div className="bg-blue-900/20 border border-blue-700/30 rounded-lg px-3 py-2 text-xs text-blue-300">
-          <span className="font-semibold">💬 </span>{scan.system_message}
-        </div>
-
-        {/* Rejected coins — top 5 near-misses */}
-        {scan.rejected_coins && scan.rejected_coins.length > 0 && (
-          <div>
-            <p className="text-xs text-gray-500 mb-2 font-semibold uppercase tracking-wide">
-              🚫 Top Near-Misses (לא עברו סף {scan.min_score ?? 90}/100)
-            </p>
-            <div className="space-y-1.5">
-              {scan.rejected_coins.slice(0, 5).map((c, i) => {
-                const dirColor  = c.direction === "LONG" ? "text-green-400" : "text-red-400";
-                const scoreColor = c.best_score >= 80 ? "text-yellow-400" : c.best_score >= 60 ? "text-orange-400" : "text-gray-500";
-                return (
-                  <div key={`${c.symbol}-${i}`}
-                       className="flex items-center justify-between bg-gray-800/40 rounded-lg px-3 py-1.5 text-xs">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-gray-600 w-4">{i + 1}.</span>
-                      <span className="font-mono font-semibold text-gray-200">{c.symbol.replace("/USDT", "")}</span>
-                      <span className={`font-semibold ${dirColor}`}>{c.direction}</span>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0 ml-2">
-                      <span className={`font-mono font-bold ${scoreColor}`}>{c.best_score}/100</span>
-                      <span className="text-gray-500 text-right max-w-[160px] truncate">{c.reason}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Bubble Watch — high volatility coins, observation only */}
-        <div>
-          <div className="flex items-center gap-2 mb-2">
-            <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide">
-              🫧 Bubble Watch
-            </p>
-            {scan.bubble_watch && scan.bubble_watch.length > 0 ? (
-              <span className="text-xs bg-orange-500/20 text-orange-400 border border-orange-500/30 px-2 py-0.5 rounded-full">
-                {scan.bubble_watch.length} מטבעות &gt;10% ב-24h
+      {/* Main content: stats + mini chart */}
+      <div style={{ display: 'flex', padding: '10px 12px', gap: 12 }}>
+        {/* Stats column */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {/* Current price */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+            <span style={{ color: T.dimmer, fontSize: 10 }}>PRICE</span>
+            <span style={{ color: isLong ? (cp > trade.entry ? T.green : T.red) : (cp < trade.entry ? T.green : T.red), fontSize: 13, fontWeight: 700 }}>
+              {fmt(cp)}
+              <span style={{ color: T.dimmer, fontSize: 9, marginLeft: 4 }}>
+                {rawPct >= 0 ? '+' : ''}{rawPct.toFixed(2)}%
               </span>
-            ) : (
-              <span className="text-xs text-gray-600">אין תנודתיות קיצונית</span>
-            )}
+            </span>
           </div>
-          {scan.bubble_watch && scan.bubble_watch.length > 0 && (
-            <>
-              <p className="text-xs text-gray-600 mb-2 italic">לתצפית בלבד · ללא שינוי בציון · כל כללי הבטיחות פעילים</p>
-              <div className="grid grid-cols-2 gap-1.5">
-                {scan.bubble_watch.slice(0, 8).map((b, i) => {
-                  const isPos    = b.change_pct >= 0;
-                  const pctColor = isPos ? "text-green-400" : "text-red-400";
-                  const bgColor  = isPos ? "bg-green-900/20 border-green-800/30" : "bg-red-900/20 border-red-800/30";
-                  const fire     = Math.abs(b.change_pct) > 20 ? "🔥" : "⚡";
-                  const volM     = (b.volume_usd / 1_000_000).toFixed(1);
-                  return (
-                    <div key={`bub-${i}`}
-                         className={`flex items-center justify-between border rounded-lg px-2.5 py-1.5 text-xs ${bgColor}`}>
-                      <div className="flex items-center gap-1.5">
-                        <span>{fire}</span>
-                        <span className="font-mono font-semibold text-gray-200">
-                          {b.symbol.replace("/USDT", "")}
-                        </span>
-                      </div>
-                      <div className="text-right">
-                        <span className={`font-mono font-bold ${pctColor}`}>
-                          {isPos ? "+" : ""}{b.change_pct.toFixed(1)}%
-                        </span>
-                        <span className="text-gray-600 ml-1.5">${volM}M</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </>
+          <DataRow label="ENTRY" value={fmt(trade.entry)} color={T.amber} />
+          <DataRow label="SL" value={fmt(trade.sl)} color={T.red} />
+          <DataRow label="TP" value={fmt(trade.tp)} color={`${T.green}cc`} />
+          {trade.trailing_sl !== null && (
+            <DataRow label="TRAIL SL" value={fmt(trade.trailing_sl!)} color={T.purple} />
           )}
+          <DataRow label="ATR" value={fmt(trade.atr)} color={T.dimmer} />
+          {/* P&L */}
+          <div style={{
+            marginTop: 4, display: 'flex', justifyContent: 'space-between',
+            alignItems: 'baseline', borderTop: `1px solid ${T.border}`, paddingTop: 6,
+          }}>
+            <span style={{ color: T.dimmer, fontSize: 10 }}>P&L</span>
+            <span style={{
+              color: pnlColor, fontSize: 14, fontWeight: 700,
+              textShadow: isProfit ? `0 0 8px ${T.green}55` : undefined,
+            }}>
+              {pnlUsd >= 0 ? '+' : ''}{pnlUsd.toFixed(2)}$
+              <span style={{ fontSize: 10, marginLeft: 4 }}>({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%)</span>
+            </span>
+          </div>
         </div>
+
+        {/* Mini chart */}
+        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+          <MiniPriceChart trade={trade} />
+        </div>
+      </div>
+
+      {/* SL/TP progress bar */}
+      <div style={{ padding: '0 12px 10px' }}>
+        <SlTpBar trade={trade} />
       </div>
     </div>
   );
 }
 
-// ── FNG Settings Types ────────────────────────────────────────
-interface FngRange { min: number; max: number; desc: string; }
-interface FngSettings {
-  extreme_fear: number;
-  fear: number;
-  greed: number;
-  ranges: { extreme_fear: FngRange; fear: FngRange; greed: FngRange; };
+function DataRow({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+      <span style={{ color: T.dimmer, fontSize: 10 }}>{label}</span>
+      <span style={{ color, fontSize: 11, fontWeight: 600 }}>{value}</span>
+    </div>
+  );
 }
 
+/* ══════════════════════════════════════════════
+   REASONING LOG (terminal feed)
+══════════════════════════════════════════════ */
+function ReasoningLog({ audit }: { audit: AuditData | null }) {
+  const logRef = useRef<HTMLDivElement>(null);
+  const trades = audit?.trades ?? [];
+
+  useEffect(() => {
+    if (logRef.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight;
+    }
+  }, [trades.length]);
+
+  const entries = [...trades].reverse().slice(0, 20);
+
+  return (
+    <div style={panel}>
+      <PanelHeader
+        label="BOT REASONING LOG"
+        right={`${trades.length} entries · auto-scroll`}
+      />
+      <div
+        ref={logRef}
+        style={{
+          height: 220, overflowY: 'auto', padding: '8px 12px',
+          background: '#0a0e14', fontFamily: T.font, fontSize: 11,
+          display: 'flex', flexDirection: 'column', gap: 3,
+        }}
+      >
+        {entries.length === 0 ? (
+          <span style={{ color: T.dimmer }}>{'>'} waiting for closed trades...</span>
+        ) : (
+          entries.map((t, i) => {
+            const ts = t.closed_at
+              ? new Date(t.closed_at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+              : '--:--:--';
+            const pnlStr = `${t.pnl_usd >= 0 ? '+' : ''}${t.pnl_usd.toFixed(2)}$`;
+            const pnlColor = t.pnl_usd > 0 ? T.green : T.red;
+            const reasonColor =
+              t.close_reason === 'TP' ? T.green :
+              t.close_reason === 'SL' ? T.red :
+              t.close_reason === 'BE' ? T.amber : T.blue;
+            return (
+              <div key={i} style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <span style={{ color: T.dimmer, flexShrink: 0 }}>{ts}</span>
+                <span style={{ color: T.dimmer }}>|</span>
+                <span style={{ color: T.amber, fontWeight: 600, flexShrink: 0 }}>
+                  {t.symbol.replace('/USDT', '')}
+                </span>
+                <span style={{ color: t.direction === 'LONG' ? T.green : T.red, flexShrink: 0 }}>
+                  {t.direction}
+                </span>
+                <span style={{ color: T.dimmer }}>|</span>
+                <span style={{ color: reasonColor, fontWeight: 600, flexShrink: 0 }}>{t.close_reason}</span>
+                <span style={{ color: pnlColor, fontWeight: 700, flexShrink: 0 }}>{pnlStr}</span>
+                <span style={{ color: T.dimmer }}>|</span>
+                <span style={{ color: `${T.text}99`, fontStyle: 'italic', fontSize: 10 }}>{t.lesson}</span>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════
+   FNG SETTINGS PANEL (terminal-restyled)
+══════════════════════════════════════════════ */
 function FngSettingsPanel({ botApi }: { botApi: string }) {
-  const [settings, setSettings]   = useState<FngSettings | null>(null);
-  const [draft, setDraft]         = useState<{ extreme_fear: number; fear: number; greed: number } | null>(null);
-  const [open, setOpen]           = useState(false);
-  const [saving, setSaving]       = useState(false);
-  const [feedback, setFeedback]   = useState<{ ok: boolean; msg: string } | null>(null);
+  const [settings, setSettings] = useState<FngSettings | null>(null);
+  const [draft, setDraft]       = useState<{ extreme_fear: number; fear: number; greed: number } | null>(null);
+  const [open, setOpen]         = useState(false);
+  const [saving, setSaving]     = useState(false);
+  const [feedback, setFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
 
   const load = useCallback(() => {
     fetch(`${botApi}/api/fng_settings`)
-      .then(r => r.json())
-      .then((d: FngSettings) => {
+      .then(r => r.json()).then((d: FngSettings) => {
         setSettings(d);
         setDraft({ extreme_fear: d.extreme_fear, fear: d.fear, greed: d.greed });
-      })
-      .catch(() => {});
+      }).catch(() => {});
   }, [botApi]);
 
   useEffect(() => { load(); }, [load]);
 
   const save = async () => {
     if (!draft) return;
-    setSaving(true);
-    setFeedback(null);
+    setSaving(true); setFeedback(null);
     try {
       const r = await fetch(`${botApi}/api/fng_settings`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(draft),
       });
       const d = await r.json();
       if (r.ok && d.ok) {
         setSettings(s => s ? { ...s, ...draft } : s);
-        setFeedback({ ok: true, msg: 'הוגדר בהצלחה ✓' });
+        setFeedback({ ok: true, msg: 'SAVED ✓' });
         setTimeout(() => setFeedback(null), 3000);
       } else {
-        setFeedback({ ok: false, msg: (d.errors ?? [d.error ?? 'שגיאה']).join(' | ') });
+        setFeedback({ ok: false, msg: (d.errors ?? [d.error ?? 'ERROR']).join(' | ') });
       }
-    } catch {
-      setFeedback({ ok: false, msg: 'שגיאת רשת' });
-    }
+    } catch { setFeedback({ ok: false, msg: 'NETWORK ERROR' }); }
     setSaving(false);
   };
 
   type DraftKey = 'extreme_fear' | 'fear' | 'greed';
-  const rows: Array<{ key: DraftKey; label: string; icon: string; color: string }> = [
-    { key: 'extreme_fear', label: 'Kill-Switch',  icon: '🔴', color: '#ef4444' },
-    { key: 'fear',         label: 'Fear',          icon: '🟠', color: '#f97316' },
-    { key: 'greed',        label: 'Greed',         icon: '🟢', color: '#22c55e' },
+  const rows: Array<{ key: DraftKey; label: string; color: string }> = [
+    { key: 'extreme_fear', label: 'KILL-SWITCH',  color: T.red  },
+    { key: 'fear',         label: 'FEAR LEVEL',   color: T.amber },
+    { key: 'greed',        label: 'GREED LEVEL',  color: T.green },
   ];
 
   if (!settings || !draft) return null;
-
   const changed = draft.extreme_fear !== settings.extreme_fear
-               || draft.fear         !== settings.fear
-               || draft.greed        !== settings.greed;
+               || draft.fear !== settings.fear
+               || draft.greed !== settings.greed;
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden"
-         style={{ background: 'linear-gradient(135deg, #0d1117 0%, #0f1b2d 100%)' }}>
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="w-full px-4 py-3 flex items-center justify-between text-left"
-      >
-        <div className="flex items-center gap-2">
-          <span className="text-base">⚙️</span>
-          <span className="font-semibold text-gray-300 text-sm">הגדרות מדד הפחד</span>
-          <span className="text-xs text-gray-500">
-            KS&lt;{settings.extreme_fear} · Fear≤{settings.fear} · Greed≥{settings.greed}
+    <div style={panel}>
+      <button onClick={() => setOpen(o => !o)} style={{
+        width: '100%', background: 'none', border: 'none', cursor: 'pointer',
+        padding: '8px 12px', display: 'flex', alignItems: 'center',
+        justifyContent: 'space-between', fontFamily: T.font,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ color: T.dimmer, fontSize: 10, letterSpacing: 2, textTransform: 'uppercase', fontWeight: 600 }}>
+            FNG THRESHOLDS
+          </span>
+          <span style={{ color: T.dimmer, fontSize: 10 }}>
+            KS&lt;{settings.extreme_fear} · F≤{settings.fear} · G≥{settings.greed}
           </span>
         </div>
-        <span className="text-gray-500 text-xs">{open ? '▲' : '▼'}</span>
+        <span style={{ color: T.dimmer, fontSize: 10 }}>{open ? '▲' : '▼'}</span>
       </button>
 
       {open && (
-        <div className="px-4 pb-4 space-y-4 border-t border-gray-800 pt-4">
-          {rows.map(({ key, label, icon, color }) => {
+        <div style={{ padding: '0 12px 12px', borderTop: `1px solid ${T.border}` }}>
+          {rows.map(({ key, label, color }) => {
             const range = settings.ranges[key];
-            const val = draft[key];
+            const val   = draft[key];
             return (
-              <div key={key}>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-medium" style={{ color }}>
-                    {icon} {label}
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      min={range.min}
-                      max={range.max}
-                      value={val}
+              <div key={key} style={{ marginTop: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <span style={{ color, fontSize: 10, fontWeight: 700 }}>{label}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <input type="number" min={range.min} max={range.max} value={val}
                       onChange={e => setDraft(d => d ? { ...d, [key]: Number(e.target.value) } : d)}
-                      className="w-16 text-center bg-gray-800 border border-gray-700 rounded text-white text-sm py-0.5"
-                    />
-                    <span className="text-xs text-gray-500">({range.min}–{range.max})</span>
+                      style={{
+                        width: 52, textAlign: 'center', background: T.bg,
+                        border: `1px solid ${T.border}`, borderRadius: 3,
+                        color: T.text, fontSize: 11, padding: '2px 4px', fontFamily: T.font,
+                      }} />
+                    <span style={{ color: T.dimmer, fontSize: 9 }}>({range.min}–{range.max})</span>
                   </div>
                 </div>
-                <input
-                  type="range"
-                  min={range.min}
-                  max={range.max}
-                  value={val}
+                <input type="range" min={range.min} max={range.max} value={val}
                   onChange={e => setDraft(d => d ? { ...d, [key]: Number(e.target.value) } : d)}
-                  className="w-full h-1.5 rounded appearance-none cursor-pointer"
-                  style={{ accentColor: color }}
-                />
-                <p className="text-xs text-gray-600 mt-0.5">{range.desc}</p>
+                  style={{ width: '100%', accentColor: color, cursor: 'pointer', height: 3 }} />
               </div>
             );
           })}
-
-          <div className="flex items-center gap-3 pt-1">
-            <button
-              onClick={save}
-              disabled={!changed || saving}
-              className="flex-1 py-2 rounded-lg text-sm font-semibold transition-all"
-              style={{
-                background: changed ? '#3b82f6' : '#1f2937',
-                color: changed ? '#fff' : '#6b7280',
+          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            <button onClick={save} disabled={!changed || saving} style={{
+              flex: 1, padding: '6px 0', borderRadius: 4, fontFamily: T.font, fontSize: 11, fontWeight: 700,
+              background: changed ? T.blue + '22' : T.bg,
+              border: `1px solid ${changed ? T.blue : T.border}`,
+              color: changed ? T.blue : T.dimmer, cursor: changed ? 'pointer' : 'not-allowed',
+            }}>{saving ? 'SAVING...' : 'SAVE'}</button>
+            <button onClick={() => setDraft({ extreme_fear: settings.extreme_fear, fear: settings.fear, greed: settings.greed })}
+              disabled={!changed} style={{
+                padding: '6px 12px', borderRadius: 4, fontFamily: T.font, fontSize: 11,
+                background: 'none', border: `1px solid ${T.border}`, color: T.dimmer,
                 cursor: changed ? 'pointer' : 'not-allowed',
-              }}
-            >
-              {saving ? 'שומר...' : 'שמור הגדרות'}
-            </button>
-            <button
-              onClick={() => setDraft({ extreme_fear: settings.extreme_fear, fear: settings.fear, greed: settings.greed })}
-              disabled={!changed}
-              className="px-3 py-2 rounded-lg text-xs text-gray-400 border border-gray-700 hover:border-gray-600 transition-all"
-              style={{ cursor: changed ? 'pointer' : 'not-allowed', opacity: changed ? 1 : 0.4 }}
-            >
-              איפוס
-            </button>
+              }}>RESET</button>
           </div>
-
           {feedback && (
-            <p className={`text-xs text-center font-medium ${feedback.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+            <div style={{ marginTop: 8, textAlign: 'center', color: feedback.ok ? T.green : T.red, fontSize: 11 }}>
               {feedback.msg}
-            </p>
+            </div>
           )}
         </div>
       )}
@@ -891,49 +964,33 @@ function FngSettingsPanel({ botApi }: { botApi: string }) {
   );
 }
 
-// ── Slots Panel ────────────────────────────────────────────────
-interface SlotsData {
-  max_trades: number;
-  active_trades: number;
-  open_slots: number;
-  min: number;
-  max: number;
-}
-
+/* ══════════════════════════════════════════════
+   SLOTS PANEL (terminal-restyled)
+══════════════════════════════════════════════ */
 function SlotsPanel({ botApi }: { botApi: string }) {
   const [data,     setData]     = useState<SlotsData | null>(null);
   const [pending,  setPending]  = useState<number | null>(null);
   const [feedback, setFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
 
   const load = useCallback(() => {
-    fetch(`${botApi}/api/slots`)
-      .then(r => r.json())
-      .then((d: SlotsData) => setData(d))
-      .catch(() => {});
+    fetch(`${botApi}/api/slots`).then(r => r.json()).then((d: SlotsData) => setData(d)).catch(() => {});
   }, [botApi]);
-
   useEffect(() => { load(); const id = setInterval(load, 15_000); return () => clearInterval(id); }, [load]);
 
   const setSlots = async (v: number) => {
-    setPending(v);
-    setFeedback(null);
+    setPending(v); setFeedback(null);
     try {
       const r  = await fetch(`${botApi}/api/slots`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ max_trades: v }),
       });
       const d = await r.json();
       if (r.ok && d.ok) {
         setData(d as SlotsData);
-        setFeedback({ ok: true, msg: `✓ Slots עודכן ל-${v}` });
+        setFeedback({ ok: true, msg: `SLOTS → ${v}` });
         setTimeout(() => setFeedback(null), 3000);
-      } else {
-        setFeedback({ ok: false, msg: d.error ?? 'שגיאה' });
-      }
-    } catch {
-      setFeedback({ ok: false, msg: 'שגיאת רשת' });
-    }
+      } else { setFeedback({ ok: false, msg: d.error ?? 'ERROR' }); }
+    } catch { setFeedback({ ok: false, msg: 'NETWORK ERROR' }); }
     setPending(null);
   };
 
@@ -941,79 +998,224 @@ function SlotsPanel({ botApi }: { botApi: string }) {
   const nOpen   = data?.active_trades ?? 0;
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden"
-         style={{ background: 'linear-gradient(135deg, #0d1117 0%, #0f1b2d 100%)' }}>
-      <div className="px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-base">💼</span>
-          <span className="font-semibold text-gray-300 text-sm">ניהול Slots</span>
-          <span className="text-xs text-gray-500">
-            {nOpen}/{current} פעילות · {Math.max(0, current - nOpen)} פנויות
+    <div style={panel}>
+      <div style={{
+        padding: '8px 12px', borderBottom: `1px solid ${T.border}`,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ color: T.dimmer, fontSize: 10, letterSpacing: 2, textTransform: 'uppercase', fontWeight: 600 }}>
+            TRADE SLOTS
+          </span>
+          <span style={{ color: T.dimmer, fontSize: 10 }}>
+            {nOpen}/{current} ACTIVE · {Math.max(0, current - nOpen)} FREE
           </span>
         </div>
-        <div className="flex items-center gap-1" dir="ltr">
-          {[1, 2, 3, 4, 5].map(v => {
-            const isActive  = v === current;
-            const isWarn    = v < nOpen;
+        {/* Slot buttons */}
+        <div style={{ display: 'flex', gap: 4 }}>
+          {[1,2,3,4,5].map(v => {
+            const isActive = v === current;
+            const isWarn   = v < nOpen;
             return (
-              <button
-                key={v}
-                onClick={() => setSlots(v)}
+              <button key={v} onClick={() => setSlots(v)}
                 disabled={pending !== null || isActive}
                 style={{
-                  width: 36, height: 32,
-                  borderRadius: 8,
-                  border: `1.5px solid ${isActive ? '#22c55e' : isWarn ? '#f97316' : '#374151'}`,
-                  background: isActive ? 'rgba(34,197,94,0.15)' : 'rgba(55,65,81,0.3)',
-                  color: isActive ? '#22c55e' : isWarn ? '#f97316' : '#9ca3af',
-                  fontWeight: isActive ? 700 : 500,
-                  fontSize: 14,
+                  width: 30, height: 26, borderRadius: 4, fontFamily: T.font,
+                  fontSize: 12, fontWeight: isActive ? 700 : 500,
+                  border: `1px solid ${isActive ? T.green : isWarn ? T.amber : T.border}`,
+                  background: isActive ? `${T.green}18` : 'none',
+                  color: isActive ? T.green : isWarn ? T.amber : T.dimmer,
                   cursor: isActive || pending !== null ? 'not-allowed' : 'pointer',
                   opacity: pending !== null && pending !== v ? 0.5 : 1,
-                  transition: 'all 0.15s',
                 }}
-              >
-                {pending === v ? '…' : v}
-              </button>
+              >{pending === v ? '…' : v}</button>
             );
           })}
         </div>
       </div>
-      {/* slot bar */}
-      <div className="px-4 pb-3">
-        <div className="flex gap-1.5" dir="ltr">
-          {Array.from({ length: 5 }, (_, i) => (
-            <div key={i} style={{
-              flex: 1, height: 6, borderRadius: 4,
-              background: i < nOpen ? '#22c55e' : i < current ? '#1f2937' : 'transparent',
-              border: i < current ? '1px solid #374151' : '1px solid transparent',
-              transition: 'background 0.3s',
-            }} />
-          ))}
+      {/* Slot bar */}
+      <div style={{ padding: '8px 12px', display: 'flex', gap: 4 }}>
+        {Array.from({ length: 5 }, (_, i) => (
+          <div key={i} style={{
+            flex: 1, height: 4, borderRadius: 2,
+            background: i < nOpen ? T.green : i < current ? `${T.green}22` : 'none',
+            border: `1px solid ${i < current ? T.border : 'transparent'}`,
+            transition: 'background 0.3s',
+          }} />
+        ))}
+      </div>
+      {feedback && (
+        <div style={{ padding: '0 12px 8px', color: feedback.ok ? T.green : T.red, fontSize: 10, textAlign: 'center' }}>
+          {feedback.msg}
         </div>
-        {feedback && (
-          <p className={`text-xs mt-2 text-center font-medium ${feedback.ok ? 'text-emerald-400' : 'text-red-400'}`}>
-            {feedback.msg}
-          </p>
-        )}
-        {nOpen > current && (
-          <p className="text-xs mt-2 text-center text-amber-400">
-            ⚠️ {nOpen} עסקאות פתוחות — הבוט לא יפתח חדשות עד שירד מ-{current}
-          </p>
-        )}
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════
+   LAST SCAN (compact terminal panel)
+══════════════════════════════════════════════ */
+function LastScanPanel({ scan }: { scan: ScanData | null }) {
+  const [open, setOpen] = useState(false);
+  if (!scan) return (
+    <div style={{ ...panel, padding: '8px 12px', color: T.dimmer, fontSize: 11 }}>
+      — waiting for first scan...
+    </div>
+  );
+  const scanTime = scan.scan_time ? new Date(scan.scan_time).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }) : '—';
+  const regColor = scan.btc_regime === 'BULL' ? T.green : scan.btc_regime === 'BEAR' ? T.red : T.amber;
+
+  return (
+    <div style={panel}>
+      <button onClick={() => setOpen(o => !o)} style={{
+        width: '100%', background: 'none', border: 'none', cursor: 'pointer',
+        padding: '8px 12px', display: 'flex', alignItems: 'center',
+        justifyContent: 'space-between', fontFamily: T.font,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ color: T.dimmer, fontSize: 10, letterSpacing: 2, textTransform: 'uppercase', fontWeight: 600 }}>
+            LAST SCAN
+          </span>
+          <span style={{ color: T.dim, fontSize: 10 }}>{scanTime}</span>
+          <span style={{ color: T.dim, fontSize: 10 }}>{scan.total_scanned} scanned</span>
+          <span style={{ color: scan.signals_found > 0 ? T.green : T.dimmer, fontSize: 10, fontWeight: 700 }}>
+            {scan.signals_found} signals
+          </span>
+          <span style={{ color: regColor, fontSize: 10 }}>BTC:{scan.btc_regime}</span>
+        </div>
+        <span style={{ color: T.dimmer, fontSize: 10 }}>{open ? '▲' : '▼'}</span>
+      </button>
+
+      {open && (
+        <div style={{ padding: '0 12px 12px', borderTop: `1px solid ${T.border}` }}>
+          {/* Sentiment */}
+          <div style={{
+            marginTop: 8, padding: '6px 10px', background: T.bg, borderRadius: 4,
+            color: T.amber, fontSize: 10,
+          }}>
+            SENTIMENT: {scan.market_sentiment_factor}
+          </div>
+          {/* System msg */}
+          <div style={{
+            marginTop: 6, padding: '6px 10px', background: `${T.blue}11`,
+            border: `1px solid ${T.blue}33`, borderRadius: 4,
+            color: T.blue, fontSize: 10,
+          }}>
+            {scan.system_message}
+          </div>
+          {/* Near-misses */}
+          {scan.rejected_coins && scan.rejected_coins.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ color: T.dimmer, fontSize: 9, letterSpacing: 2, marginBottom: 6, textTransform: 'uppercase' }}>
+                NEAR-MISSES (score &lt; {scan.min_score ?? 90})
+              </div>
+              {scan.rejected_coins.slice(0, 5).map((c, i) => (
+                <div key={i} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '4px 0', borderBottom: `1px solid ${T.border}33`,
+                }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span style={{ color: T.dimmer, fontSize: 10 }}>{i+1}.</span>
+                    <span style={{ color: T.text, fontSize: 11, fontWeight: 600 }}>{c.symbol.replace('/USDT', '')}</span>
+                    <span style={{ color: c.direction === 'LONG' ? T.green : T.red, fontSize: 10 }}>{c.direction}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                    <span style={{ color: c.best_score >= 80 ? T.amber : T.dimmer, fontSize: 11, fontWeight: 700 }}>
+                      {c.best_score}/100
+                    </span>
+                    <span style={{ color: T.dimmer, fontSize: 10, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {c.reason}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════
+   HOT CANDIDATES (compact strip)
+══════════════════════════════════════════════ */
+function HotStrip({ candidates }: { candidates: Candidate[] }) {
+  if (candidates.length === 0) return null;
+  return (
+    <div style={panel}>
+      <PanelHeader label="HOT CANDIDATES" right={`Top ${candidates.length} Gainers`} />
+      <div style={{ padding: '8px 12px', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {candidates.map((c, i) => {
+          const color = c.change_pct >= 5 ? T.green : c.change_pct >= 0 ? `${T.green}aa` : T.red;
+          return (
+            <span key={c.symbol} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              background: T.bg, border: `1px solid ${T.border}`,
+              borderRadius: 4, padding: '3px 8px', fontSize: 10, fontFamily: T.font,
+            }}>
+              <span style={{ color: T.dimmer }}>{i+1}.</span>
+              <span style={{ color: T.text, fontWeight: 600 }}>{c.symbol.replace('/USDT', '')}</span>
+              <span style={{ color }}>{c.change_pct >= 0 ? '+' : ''}{c.change_pct.toFixed(1)}%</span>
+              <span style={{ color: T.dimmer }}>{formatVolume(c.volume_usd)}</span>
+            </span>
+          );
+        })}
       </div>
     </div>
   );
 }
 
+/* ══════════════════════════════════════════════
+   EQUITY SPARKLINE (for sidebar / main area)
+══════════════════════════════════════════════ */
+function EquitySparkline({ history, starting }: { history: EquityPoint[]; starting: number }) {
+  if (!history || history.length < 2) return null;
+  const vals = history.map(p => p.eq);
+  const min  = Math.min(...vals, starting * 0.95);
+  const max  = Math.max(...vals, starting * 1.05);
+  const W = 300, H = 60, pad = 6;
+  const pts = history.map((p, i) => {
+    const x = pad + (i / (history.length - 1)) * (W - pad * 2);
+    const y = H - pad - ((p.eq - min) / (max - min || 1)) * (H - pad * 2);
+    return `${x},${y}`;
+  }).join(' ');
+  const baseY = H - pad - ((starting - min) / (max - min || 1)) * (H - pad * 2);
+  const last  = history[history.length - 1].eq;
+  const color = last >= starting ? T.green : T.red;
+  const lastX = pad + ((history.length - 1) / (history.length - 1)) * (W - pad * 2);
+  const lastY = H - pad - ((last - min) / (max - min || 1)) * (H - pad * 2);
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 60, display: 'block' }}>
+      <defs>
+        <linearGradient id="eq-g2" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.2" />
+          <stop offset="100%" stopColor={color} stopOpacity="0.01" />
+        </linearGradient>
+      </defs>
+      <line x1={pad} y1={baseY} x2={W-pad} y2={baseY}
+        stroke={T.border} strokeWidth={1} strokeDasharray="3 2" />
+      <polygon points={`${pad},${H-pad} ${pts} ${W-pad},${H-pad}`} fill="url(#eq-g2)" />
+      <polyline points={pts} fill="none" stroke={color} strokeWidth={1.5} strokeLinejoin="round" />
+      <circle cx={lastX} cy={lastY} r={3} fill={color} />
+    </svg>
+  );
+}
+
+/* ══════════════════════════════════════════════
+   MAIN APP
+══════════════════════════════════════════════ */
 export default function App() {
-  const now        = useClock();
-  const { data: hotData,   refetch: refetchHot   } = useJson<HotData>(`${BOT_API}/api/hot`,       "/hot_candidates.json",      60_000);
-  const { data: tradesData, refetch: refetchTrades } = useJson<TradesData>(`${BOT_API}/api/trades`, "/active_trades.json",       30_000);
-  const { data: walletData, refetch: refetchWallet } = useJson<WalletData>(`${BOT_API}/api/wallet`, "/wallet.json",              30_000);
-  const { data: fngData,   refetch: refetchFng   } = useJson<FngData>(`${BOT_API}/api/fng`,       "/fng.json",                120_000);
-  const { data: scanData,  refetch: refetchScan  } = useJson<ScanData>(`${BOT_API}/api/last_scan`, "/last_scan_results.json",  120_000);
-  const { data: auditData } = useJson<AuditData>(`${BOT_API}/api/trade_audit`, "/trade_audit.json", 60_000);
+  const clock = useClock();
+
+  const { data: hotData,    refetch: refetchHot    } = useJson<HotData>(`${BOT_API}/api/hot`,        '/hot_candidates.json',     60_000);
+  const { data: tradesData, refetch: refetchTrades  } = useJson<TradesData>(`${BOT_API}/api/trades`,  '/active_trades.json',      30_000);
+  const { data: walletData, refetch: refetchWallet  } = useJson<WalletData>(`${BOT_API}/api/wallet`,  '/wallet.json',             30_000);
+  const { data: fngData,    refetch: refetchFng     } = useJson<FngData>(`${BOT_API}/api/fng`,        '/fng.json',               120_000);
+  const { data: scanData,   refetch: refetchScan    } = useJson<ScanData>(`${BOT_API}/api/last_scan`, '/last_scan_results.json', 120_000);
+  const { data: auditData }                            = useJson<AuditData>(`${BOT_API}/api/trade_audit`, '/trade_audit.json',    10_000);
 
   const [refreshing, setRefreshing] = useState(false);
   const refreshAll = useCallback(() => {
@@ -1022,358 +1224,218 @@ export default function App() {
     setTimeout(() => setRefreshing(false), 1200);
   }, [refetchHot, refetchTrades, refetchWallet, refetchFng, refetchScan]);
 
-  const SCAN_INTERVAL = 3600; // seconds
-  // חישוב "סריקה הבאה" לפי זמן הסריקה האחרונה + שעה — לא לפי שעה עגולה
-  const lastScanTs  = scanData?.scan_time ? new Date(scanData.scan_time).getTime() : null;
-  const nextScanTs  = lastScanTs
+  // Scan countdown
+  const SCAN_INTERVAL = 3600;
+  const lastScanTs = scanData?.scan_time ? new Date(scanData.scan_time).getTime() : null;
+  const nextScanTs = lastScanTs
     ? lastScanTs + SCAN_INTERVAL * 1000
-    : Math.ceil(now.getTime() / (SCAN_INTERVAL * 1000)) * (SCAN_INTERVAL * 1000);
-  const diff  = Math.max(0, Math.floor((nextScanTs - now.getTime()) / 1000));
-  const mm    = String(Math.floor(diff / 60)).padStart(2, "0");
-  const ss    = String(diff % 60).padStart(2, "0");
+    : Math.ceil(clock.getTime() / (SCAN_INTERVAL * 1000)) * (SCAN_INTERVAL * 1000);
+  const diff    = Math.max(0, Math.floor((nextScanTs - clock.getTime()) / 1000));
+  const mm      = String(Math.floor(diff / 60)).padStart(2, '0');
+  const ss      = String(diff % 60).padStart(2, '0');
   const scanPct = Math.round(((SCAN_INTERVAL - diff) / SCAN_INTERVAL) * 100);
 
-  const candidates  = hotData?.candidates ?? [];
+  // Derived values
   const trades      = tradesData?.trades ?? [];
-  const longTrades  = trades.filter((t) => t.direction === "LONG");
-  const shortTrades = trades.filter((t) => t.direction === "SHORT");
+  const candidates  = hotData?.candidates ?? [];
+  const starting    = walletData?.starting ?? 200;
+  const MARGIN      = 50;
 
-  const starting = walletData?.starting ?? 200;
-  const realized = walletData?.total_pnl ?? 0;
-  const history  = walletData?.equity_history ?? [];
-
-  const MARGIN = 50;   // $50 margin per slot (March 26-27 config)
-
-  // Floating P&L — prefer authoritative value from API, fall back to client-side calc
-  const floatingAPI = walletData?.unrealized_pnl;
+  const floatingAPI  = walletData?.unrealized_pnl;
   const floatingCalc = trades.reduce((sum, t) => {
-    const cp     = t.current_price ?? t.entry;
-    const raw    = (cp - t.entry) / t.entry * 100;
-    const pct    = t.direction === "LONG" ? raw : -raw;
-    const tSize  = t.pos_size ?? 500;   // use live pos_size from bot
-    const usd = t.tp1_triggered
-      ? (t.tp1_pnl ?? 0) + tSize * pct / 100
-      : tSize * pct / 100;
+    const cp   = t.current_price ?? t.entry;
+    const raw  = (cp - t.entry) / t.entry * 100;
+    const pct  = t.direction === 'LONG' ? raw : -raw;
+    const tSz  = t.pos_size ?? 500;
+    const usd  = t.tp1_triggered ? (t.tp1_pnl ?? 0) + tSz * pct / 100 : tSz * pct / 100;
     return sum + usd;
   }, 0);
-  const floating = floatingAPI ?? floatingCalc;
-
-  // Equity — prefer API value (includes unrealized), fall back to local sum
-  const totalBalance = walletData?.equity ?? (starting + realized + floating);
-  // Free cash — prefer API available_balance, fall back to estimated
+  const floating  = floatingAPI ?? floatingCalc;
+  const realized  = walletData?.total_pnl ?? 0;
+  const equity    = walletData?.equity ?? (starting + realized + floating);
   const freeCash  = walletData?.available_balance
     ?? Math.max(0, starting - (trades.length * MARGIN) + realized + Math.min(0, floating));
-  // Locked margin — prefer API locked_balance
   const lockedBal = walletData?.locked_balance ?? (trades.length * MARGIN);
 
-  const totalPct     = starting > 0 ? ((totalBalance - starting) / starting * 100) : 0;
-  const floatPos     = floating >= 0;
-  const realizedPos  = realized >= 0;
+  const floatPos = floating >= 0;
+  const floatColor = floatPos ? T.green : T.red;
+
+  // Responsive: detect mobile
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const fn = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', fn);
+    return () => window.removeEventListener('resize', fn);
+  }, []);
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white" dir="rtl">
-      {/* Header */}
-      <div className="border-b border-gray-800 bg-gray-900/50 backdrop-blur sticky top-0 z-10">
-        <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="text-2xl">🤖</span>
-            <div>
-              <h1 className="font-bold text-lg leading-none">Crypto Trading Bot</h1>
-              <p className="text-xs text-gray-400 mt-0.5">Professional Scoring · Bitget Demo · 4H/1H</p>
+    <div style={{ background: T.bg, minHeight: '100vh', fontFamily: T.font, color: T.text }}>
+      {/* Fixed status bar */}
+      <StatusBar
+        fng={fngData ?? null}
+        equity={equity}
+        starting={starting}
+        tradesCount={trades.length}
+        clock={clock}
+      />
+
+      {/* Page body — below status bar */}
+      <div style={{
+        paddingTop: 44,
+        display: isMobile ? 'block' : 'grid',
+        gridTemplateColumns: isMobile ? undefined : '220px 1fr',
+        gap: 8,
+        padding: isMobile ? '52px 8px 24px' : '52px 12px 24px',
+        maxWidth: 1400,
+        margin: '0 auto',
+      }}>
+
+        {/* ── SIDEBAR ── */}
+        {isMobile ? (
+          /* Mobile: compact top strip */
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8, overflow: 'auto', paddingBottom: 4 }}>
+            <div style={{ ...panel, padding: '8px 12px', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ color: T.dimmer, fontSize: 10 }}>FNG</span>
+              <span style={{ color: fngColor(fngData?.value ?? 50), fontWeight: 700 }}>{fngData?.value ?? 50}</span>
+              <span style={{ color: T.dimmer, fontSize: 10 }}>|</span>
+              <span style={{ color: T.dimmer, fontSize: 10 }}>NEXT SCAN</span>
+              <SevenSegDisplay value={`${mm}:${ss}`} />
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={refreshAll}
-              disabled={refreshing}
-              className="flex items-center gap-1.5 bg-orange-500/10 border border-orange-500/30 rounded-full px-3 py-1.5 hover:bg-orange-500/20 transition-colors disabled:opacity-60"
-              title="רענן נתונים"
-            >
-              <span className={`text-base ${refreshing ? "animate-spin" : ""}`}>🔄</span>
-              <span className="text-orange-400 text-sm font-medium">{refreshing ? "מרענן..." : "סנכרן"}</span>
-            </button>
-            <a
-              href={`${BOT_API}/api/audit`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/30 rounded-full px-3 py-1.5 hover:bg-blue-500/20 transition-colors"
-              title="הורד דוח Audit"
-            >
-              <span className="text-base">📥</span>
-              <span className="text-blue-400 text-sm font-medium">דוח Audit</span>
-            </a>
-            <a
-              href="https://t.me/avi_cripto_bot"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 bg-sky-500/10 border border-sky-500/30 rounded-full px-3 py-1.5 hover:bg-sky-500/20 transition-colors"
-              title="פתח בוט טלגרם"
-            >
-              <span className="text-base">✈️</span>
-              <span className="text-sky-400 text-sm font-medium">Telegram</span>
-            </a>
-            <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/30 rounded-full px-3 py-1.5">
-              <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-              <span className="text-green-400 text-sm font-medium">פעיל</span>
-            </div>
+        ) : (
+          <div style={{ position: 'sticky', top: 52, maxHeight: 'calc(100vh - 60px)', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <AnalyticsSidebar
+              wallet={walletData ?? null}
+              trades={trades}
+              fng={fngData ?? null}
+              scanCountdown={`${mm}:${ss}`}
+              scanPct={scanPct}
+            />
           </div>
-        </div>
-      </div>
+        )}
 
-      <div className="max-w-4xl mx-auto px-6 py-6 space-y-6">
+        {/* ── MAIN CONTENT ── */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
 
-        {/* ── Wallet Panel ── */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-lg">💼</span>
-              <h2 className="font-semibold text-gray-200">ארנק וירטואלי</h2>
-              <span className="text-xs text-gray-500">התחיל ב-${starting}</span>
+          {/* Stat boxes row */}
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4, 1fr)', gap: 8 }}>
+            <StatBox
+              label="BALANCE AVAILABLE"
+              value={`$${freeCash.toFixed(2)}`}
+              sub={`Starting $${starting.toFixed(0)}`}
+              color={T.blue}
+            />
+            <StatBox
+              label="UNREALIZED P&L"
+              value={`${floatPos ? '+' : ''}${floating.toFixed(2)}$`}
+              sub={`${trades.length} open position${trades.length !== 1 ? 's' : ''}`}
+              color={floatColor}
+              glow={floatPos && floating > 0}
+            />
+            <StatBox
+              label="REALIZED P&L"
+              value={`${realized >= 0 ? '+' : ''}${realized.toFixed(2)}$`}
+              sub={`${walletData?.trades_opened ?? 0} trades total`}
+              color={realized >= 0 ? T.green : T.red}
+            />
+            <StatBox
+              label="LOCKED MARGIN"
+              value={`$${lockedBal.toFixed(2)}`}
+              sub={`${trades.length}/3 slots used`}
+              color={T.amber}
+            />
+          </div>
+
+          {/* Equity curve */}
+          {(walletData?.equity_history?.length ?? 0) >= 2 && (
+            <div style={panel}>
+              <PanelHeader
+                label="EQUITY CURVE"
+                right={`$${starting.toFixed(0)} start → $${equity.toFixed(2)} now`}
+              />
+              <div style={{ padding: '8px 12px 12px' }}>
+                <EquitySparkline history={walletData!.equity_history} starting={starting} />
+              </div>
             </div>
-            <span className={`text-sm font-bold ${totalBalance >= starting ? "text-emerald-400" : "text-red-400"}`}>
-              {totalPct >= 0 ? "+" : ""}{totalPct.toFixed(1)}% total
+          )}
+
+          {/* Active Positions */}
+          <div style={panel}>
+            <PanelHeader
+              label={`ACTIVE POSITIONS (${trades.length})`}
+              right={trades.length > 0
+                ? `${trades.filter(t => t.direction === 'LONG').length}L · ${trades.filter(t => t.direction === 'SHORT').length}S`
+                : undefined}
+            />
+            {trades.length === 0 ? (
+              <div style={{ padding: '24px', textAlign: 'center', color: T.dimmer, fontSize: 12 }}>
+                {'>'} no active positions — bot will open when score ≥90/100
+              </div>
+            ) : (
+              <div style={{
+                padding: '10px',
+                display: 'grid',
+                gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(320px, 1fr))',
+                gap: 8,
+              }}>
+                {trades.map(t => <TerminalTradeCard key={t.symbol} trade={t} />)}
+              </div>
+            )}
+          </div>
+
+          {/* Hot candidates strip */}
+          <HotStrip candidates={candidates} />
+
+          {/* Controls row */}
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 8 }}>
+            <FngSettingsPanel botApi={BOT_API} />
+            <SlotsPanel botApi={BOT_API} />
+          </div>
+
+          {/* Last scan */}
+          <LastScanPanel scan={scanData ?? null} />
+
+          {/* Reasoning log */}
+          <ReasoningLog audit={auditData ?? null} />
+
+          {/* Footer + actions */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0' }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={refreshAll}
+                disabled={refreshing}
+                style={{
+                  background: 'none', border: `1px solid ${T.border}`, borderRadius: 4,
+                  color: refreshing ? T.dimmer : T.amber, cursor: 'pointer',
+                  padding: '5px 12px', fontFamily: T.font, fontSize: 11,
+                }}
+              >
+                {refreshing ? '⟳ SYNCING...' : '⟳ SYNC'}
+              </button>
+              <a
+                href={`${BOT_API}/api/audit`}
+                target="_blank" rel="noopener noreferrer"
+                style={{
+                  border: `1px solid ${T.border}`, borderRadius: 4,
+                  color: T.blue, padding: '5px 12px', fontFamily: T.font, fontSize: 11,
+                  textDecoration: 'none',
+                }}
+              >↓ AUDIT REPORT</a>
+              <a
+                href="https://t.me/avi_cripto_bot"
+                target="_blank" rel="noopener noreferrer"
+                style={{
+                  border: `1px solid ${T.border}`, borderRadius: 4,
+                  color: T.cyan, padding: '5px 12px', fontFamily: T.font, fontSize: 11,
+                  textDecoration: 'none',
+                }}
+              >✈ TELEGRAM</a>
+            </div>
+            <span style={{ color: T.dimmer, fontSize: 10 }}>
+              BotOS v2 · Score≥90 · 4H→1H→15m · {clock.toLocaleTimeString('he-IL')}
             </span>
           </div>
-
-          {/* Row 1: Total Balance (big) */}
-          <div className="px-5 py-4 border-b border-gray-800 text-center">
-            <p className="text-xs text-gray-500 uppercase tracking-widest mb-1">Total Balance</p>
-            <p className={`text-4xl font-bold ${totalBalance >= starting ? "text-white" : "text-red-400"}`}>
-              ${totalBalance.toFixed(2)}
-            </p>
-            <p className="text-xs text-gray-500 mt-1">
-              ${starting.toFixed(0)} התחלתי
-              {totalPct >= 0 ? " +" : " "}{totalPct.toFixed(2)}%
-            </p>
-          </div>
-
-          {/* Row 2: Realized | Floating | Available | Locked */}
-          <div className="grid grid-cols-4 divide-x divide-gray-800 text-center">
-            <div className="p-4">
-              <p className={`text-lg font-bold ${realizedPos ? "text-emerald-400" : "text-red-400"}`}>
-                {realizedPos ? "+" : ""}{realized.toFixed(2)}$
-              </p>
-              <p className="text-xs text-gray-500 mt-1">Realized P&L</p>
-            </div>
-            <div className="p-4">
-              <p className={`text-lg font-bold ${floatPos ? "text-[#39ff14]" : "text-red-500"}`}
-                 style={{ textShadow: floatPos ? "0 0 8px #39ff1460" : "none" }}>
-                {floatPos ? "+" : ""}{floating.toFixed(2)}$
-              </p>
-              <p className="text-xs text-gray-500 mt-1">Unrealized P&L</p>
-            </div>
-            <div className="p-4">
-              <p className="text-lg font-bold text-blue-400">${freeCash.toFixed(2)}</p>
-              <p className="text-xs text-gray-500 mt-1">💰 פנוי</p>
-            </div>
-            <div className="p-4">
-              <p className="text-lg font-bold text-amber-400">${lockedBal.toFixed(2)}</p>
-              <p className="text-xs text-gray-500 mt-1">🔒 נעול</p>
-            </div>
-          </div>
-
-          {/* Equity Curve */}
-          <div className="px-4 pb-4">
-            <EquitySparkline history={history} starting={starting} />
-            <div className="flex justify-between text-xs text-gray-600 mt-1 font-mono">
-              <span>{history[0]?.t ?? ""}</span>
-              <span className="text-gray-500">עקומת Equity</span>
-              <span>{history[history.length - 1]?.t ?? ""}</span>
-            </div>
-          </div>
         </div>
-
-        {/* Stats Row */}
-        <div className="grid grid-cols-3 gap-4">
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
-            <p className="text-3xl font-bold text-emerald-400">{trades.length}<span className="text-lg text-gray-600">/5</span></p>
-            <p className="text-gray-400 text-sm mt-1">עסקאות פעילות</p>
-          </div>
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center flex flex-col items-center gap-2"
-               style={{ background: 'linear-gradient(135deg, #0a1628 0%, #0d1f3c 100%)' }}>
-            <SevenSegDisplay value={`${mm}:${ss}`} />
-            <p className="text-gray-500 text-xs tracking-wide">עד סריקה הבאה</p>
-          </div>
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
-            <p className="text-3xl font-bold text-violet-400">90+</p>
-            <p className="text-gray-400 text-sm mt-1">סף כניסה</p>
-          </div>
-        </div>
-
-        {/* Fear & Greed Gauge */}
-        <FearGreedDigital value={fngData?.value ?? null} label={fngData?.label ?? null} />
-
-        {/* FNG Settings Panel */}
-        <FngSettingsPanel botApi={BOT_API} />
-
-        {/* Slots Panel */}
-        <SlotsPanel botApi={BOT_API} />
-
-        {/* Last Scan Status */}
-        <LastScanStatus scan={scanData ?? null} />
-
-        {/* Active Trades */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-lg">📊</span>
-              <h2 className="font-semibold text-gray-200">עסקאות פעילות</h2>
-              {trades.length > 0 && (
-                <span dir="ltr" className="text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full">
-                  {longTrades.length} LONG · {shortTrades.length} SHORT
-                </span>
-              )}
-            </div>
-            {tradesData?.updated && (
-              <span className="text-xs text-gray-500">עודכן {tradesData.updated}</span>
-            )}
-          </div>
-
-          {trades.length === 0 ? (
-            <div className="px-5 py-10 text-center">
-              <p className="text-gray-500 text-sm">אין עסקאות פעילות כרגע</p>
-              <p className="text-gray-600 text-xs mt-1">הבוט יפתח עסקאות כשניקוד ≥ 90/100</p>
-            </div>
-          ) : (
-            <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-              {trades.map((t) => (
-                <TradeCard key={t.symbol} trade={t} />
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Hot Candidates */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-          <div className="px-5 py-3 border-b border-gray-800 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span>🌡️</span>
-              <h2 className="font-semibold text-gray-300 text-sm">Hot Scan Candidates</h2>
-              <span className="text-xs text-gray-600 bg-gray-800 px-2 py-0.5 rounded-full">Top 15 Gainers</span>
-            </div>
-            {hotData?.updated && (
-              <span className="text-xs text-gray-600">עודכן {hotData.updated}</span>
-            )}
-          </div>
-          {candidates.length === 0 ? (
-            <div className="px-5 py-4 text-center text-gray-600 text-xs">ממתין לסריקה הראשונה...</div>
-          ) : (
-            <div className="px-4 py-3 flex flex-wrap gap-2">
-              {candidates.map((c, i) => (
-                <span key={c.symbol}
-                  className="flex items-center gap-1.5 text-xs font-mono bg-gray-800/80 border border-gray-700/50 text-gray-300 px-2.5 py-1.5 rounded-lg">
-                  <span className="text-gray-600">{i + 1}.</span>
-                  <span className="font-semibold">{c.symbol.replace("/USDT", "")}</span>
-                  <span className="text-green-400">+{c.change_pct.toFixed(1)}%</span>
-                  <span className="text-gray-600">{formatVolume(c.volume_usd)}</span>
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Post-Trade Audit Log */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-          <div className="px-5 py-3 border-b border-gray-800 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span>🧠</span>
-              <h2 className="font-semibold text-gray-300 text-sm">Post-Trade Audit Log</h2>
-              {auditData && auditData.count > 0 && (
-                <span className="text-xs text-gray-600 bg-gray-800 px-2 py-0.5 rounded-full">
-                  {auditData.count} עסקאות
-                </span>
-              )}
-            </div>
-            {auditData?.updated && (
-              <span className="text-xs text-gray-600">
-                {new Date(auditData.updated).toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" })}
-              </span>
-            )}
-          </div>
-          {(!auditData || auditData.trades.length === 0) ? (
-            <div className="px-5 py-6 text-center text-gray-600 text-xs">
-              אין עסקאות סגורות עדיין — הלוג יתמלא בכל סגירת עסקה
-            </div>
-          ) : (
-            <div className="divide-y divide-gray-800/60">
-              {[...auditData.trades].reverse().map((t, i) => {
-                const win    = t.pnl_usd > 0;
-                const even   = t.pnl_usd === 0;
-                const pclr   = win ? "text-green-400" : even ? "text-gray-400" : "text-red-400";
-                const dclr   = t.direction === "LONG" ? "text-green-400" : "text-red-400";
-                const closedTime = t.closed_at
-                  ? new Date(t.closed_at).toLocaleString("he-IL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
-                  : "—";
-                const reasonColors: Record<string, string> = {
-                  TP: "bg-green-500/20 text-green-300 border-green-500/30",
-                  SL: "bg-red-500/20 text-red-300 border-red-500/30",
-                  BE: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30",
-                  Trailing: "bg-blue-500/20 text-blue-300 border-blue-500/30",
-                };
-                const rcls = reasonColors[t.close_reason] ?? "bg-gray-700/40 text-gray-400 border-gray-600/40";
-                const badge = t.sniper ? "🎯" : t.scalp ? "⚡" : t.hunter_mode ? "🎯H" : "🌊";
-                return (
-                  <div key={i} className="px-5 py-3 hover:bg-gray-800/30 transition-colors">
-                    {/* Row 1: symbol + direction + badges + P&L + reason + time */}
-                    <div className="flex items-center justify-between mb-1.5">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono font-semibold text-gray-200 text-sm">
-                          {t.symbol.replace("/USDT", "")}
-                        </span>
-                        <span className={`text-xs font-semibold ${dclr}`}>{t.direction}</span>
-                        <span className="text-xs">{badge}</span>
-                        <span className={`text-xs border rounded px-1.5 py-0.5 ${rcls}`}>{t.close_reason}</span>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className={`font-mono font-bold text-sm ${pclr}`}>
-                          {t.pnl_usd >= 0 ? "+" : ""}{t.pnl_usd.toFixed(2)}$
-                        </span>
-                        <span className="text-xs text-gray-600">{closedTime}</span>
-                      </div>
-                    </div>
-                    {/* Row 2: entry context metrics */}
-                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-500 mb-1.5">
-                      <span>Score: <span className="text-gray-400">{t.score}</span></span>
-                      {t.fng_at_entry !== null && (
-                        <span>FNG: <span className="text-gray-400">{t.fng_at_entry}</span></span>
-                      )}
-                      {t.rr_ratio !== null && (
-                        <span>RR מתוכנן: <span className="text-gray-400">1:{t.rr_ratio}</span></span>
-                      )}
-                      {t.rr_achieved !== null && (
-                        <span>RR בפועל: <span className={t.rr_achieved >= (t.rr_ratio ?? 1) ? "text-green-400" : "text-red-400"}>1:{t.rr_achieved}</span></span>
-                      )}
-                      <span>⏱ {t.duration_min.toFixed(0)} דקות</span>
-                    </div>
-                    {/* Row 3: lesson */}
-                    <p className="text-xs text-gray-500 italic leading-relaxed">
-                      {t.lesson}
-                    </p>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Info bar */}
-        <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4 flex items-start gap-3">
-          <span className="text-2xl flex-shrink-0">✈️</span>
-          <div>
-            <p className="font-medium text-blue-300">עדכונים בטלגרם</p>
-            <p className="text-blue-400/80 text-sm mt-1">
-              כל האיתותים, TP/SL, BE, Trailing והדוח היומי נשלחים בזמן אמת.
-              פקודות:{" "}
-              <span className="font-mono">/status</span> ·{" "}
-              <span className="font-mono">/report</span> ·{" "}
-              <span className="font-mono">/close SYMBOL</span>
-            </p>
-          </div>
-        </div>
-
-        <p className="text-center text-gray-700 text-xs pb-4">
-          {now.toLocaleTimeString("he-IL")} · Trading Bot v4.1 · Score ≥90 · Max 3 Trades · 4H→1H→15m · Anti-FOMO
-        </p>
       </div>
     </div>
   );
