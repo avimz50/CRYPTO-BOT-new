@@ -1,31 +1,31 @@
 {
-  "scan_time": "2026-04-08T21:06:58+03:00",
-  "total_scanned": 31,
-  "signals_found": 0,
-  "active_trades_count": 1,
+  "scan_time": "2026-05-03T22:22:30+03:00",
+  "total_scanned": 33,
+  "signals_found": 3,
+  "active_trades_count": 3,
   "max_trades": 5,
-  "min_score": 92,
+  "min_score": 78,
   "btc_regime": "BULL",
-  "fng_value": 17,
-  "fng_label": "Extreme Fear",
-  "market_sentiment_factor": "Fear & Greed=17 (Extreme Fear) — ⚡ BTC BULL Compass: Kill-Switch מבוטל! סורק בחופשיות",
+  "fng_value": 47,
+  "fng_label": "Neutral",
+  "market_sentiment_factor": "Fear & Greed=47 (Neutral) — מצב ניטרלי",
   "rejected_coins": [
     {
-      "symbol": "TRADOOR/USDT",
+      "symbol": "BABY/USDT",
       "direction": "LONG",
-      "best_score": 87,
-      "reason": "ניקוד 87/100 — MACD חסר (15/25)",
+      "best_score": 77,
+      "reason": "ניקוד 77/100 — MACD חסר (10/25), RSI חלש (10/20)",
       "scores": {
-        "4H": 87,
+        "4H": 77,
         "1H": 0,
         "15m": 0
       }
     },
     {
-      "symbol": "XCX/USDT",
+      "symbol": "B/USDT",
       "direction": "LONG",
       "best_score": 0,
-      "reason": "RSI veto (97.5 > 85 extreme overbought)",
+      "reason": "EMA200 chase veto (131.9% above EMA200)",
       "scores": {
         "4H": 0,
         "1H": 0,
@@ -33,7 +33,18 @@
       }
     },
     {
-      "symbol": "LAB/USDT",
+      "symbol": "TAC/USDT",
+      "direction": "LONG",
+      "best_score": 0,
+      "reason": "EMA200 chase veto (170.8% above EMA200)",
+      "scores": {
+        "4H": 0,
+        "1H": 0,
+        "15m": 0
+      }
+    },
+    {
+      "symbol": "AIGENSYN/USDT",
       "direction": "LONG",
       "best_score": 0,
       "reason": "ניקוד 0/100 — כלל הפילטרים",
@@ -44,18 +55,7 @@
       }
     },
     {
-      "symbol": "ZEC/USDT",
-      "direction": "LONG",
-      "best_score": 0,
-      "reason": "EMA200 chase veto (39.2% above EMA200)",
-      "scores": {
-        "4H": 0,
-        "1H": 0,
-        "15m": 0
-      }
-    },
-    {
-      "symbol": "MON/USDT",
+      "symbol": "GENIUS/USDT",
       "direction": "LONG",
       "best_score": 0,
       "reason": "ניקוד 0/100 — כלל הפילטרים",
@@ -66,106 +66,79 @@
       }
     }
   ],
-  "system_message": "אף מטבע לא הגיע לציון 92/100. הטוב ביותר: TRADOOR/USDT עם 87/100",
-  "scan_duration_s": 12.3,
+  "system_message": "3 עסקה/ות נפתחו — סריקה ידנית",
+  "scan_duration_s": 12.1,
   "bubble_watch": [
     {
-      "symbol": "XCX/USDT",
-      "change_pct": 443.15,
+      "symbol": "B/USDT",
+      "change_pct": 32.43,
       "direction": "LONG",
-      "price": 0.012916,
-      "volume_usd": 1082814
+      "price": 0.41759,
+      "volume_usd": 6050798
     },
     {
       "symbol": "LAB/USDT",
-      "change_pct": 28.08,
+      "change_pct": 22.59,
       "direction": "LONG",
-      "price": 0.40973,
-      "volume_usd": 2596324
+      "price": 2.27011,
+      "volume_usd": 91365264
+    },
+    {
+      "symbol": "TAC/USDT",
+      "change_pct": 19.11,
+      "direction": "LONG",
+      "price": 0.024782,
+      "volume_usd": 1562249
+    },
+    {
+      "symbol": "AIGENSYN/USDT",
+      "change_pct": 18.93,
+      "direction": "LONG",
+      "price": 0.038426,
+      "volume_usd": 13542364
+    },
+    {
+      "symbol": "NAORIS/USDT",
+      "change_pct": 17.33,
+      "direction": "LONG",
+      "price": 0.11997,
+      "volume_usd": 1848530
+    },
+    {
+      "symbol": "GENIUS/USDT",
+      "change_pct": 16.59,
+      "direction": "LONG",
+      "price": 0.61925,
+      "volume_usd": 2540870
     },
     {
       "symbol": "TRADOOR/USDT",
-      "change_pct": 25.25,
+      "change_pct": 12.56,
       "direction": "LONG",
-      "price": 4.1164,
-      "volume_usd": 3061007
+      "price": 0.8027,
+      "volume_usd": 1180518
     },
     {
-      "symbol": "ZEC/USDT",
-      "change_pct": 23.24,
+      "symbol": "BIO/USDT",
+      "change_pct": 11.53,
       "direction": "LONG",
-      "price": 332.19,
-      "volume_usd": 4237657
+      "price": 0.06382,
+      "volume_usd": 2610974
     },
     {
-      "symbol": "MON/USDT",
-      "change_pct": 20.64,
-      "direction": "LONG",
-      "price": 0.03174,
-      "volume_usd": 4045370
+      "symbol": "SPACE/USDT",
+      "change_pct": -11.12,
+      "direction": "SHORT",
+      "price": 0.007308,
+      "volume_usd": 2254015
     },
     {
-      "symbol": "FARTCOIN/USDT",
-      "change_pct": 14.45,
+      "symbol": "H/USDT",
+      "change_pct": 10.82,
       "direction": "LONG",
-      "price": 0.2044,
-      "volume_usd": 1587797
-    },
-    {
-      "symbol": "ARIA/USDT",
-      "change_pct": 14.36,
-      "direction": "LONG",
-      "price": 0.65468,
-      "volume_usd": 1047575
-    },
-    {
-      "symbol": "ENA/USDT",
-      "change_pct": 10.32,
-      "direction": "LONG",
-      "price": 0.0909,
-      "volume_usd": 1888519
+      "price": 0.2117988,
+      "volume_usd": 1598629
     }
   ],
-  "sandbox_analysis": [
-    {
-      "symbol": "XCX/USDT",
-      "direction": "LONG",
-      "change_24h": 443.15,
-      "price": 0.012896,
-      "rsi_4h": 97.5,
-      "rsi_1h": 90.7,
-      "rsi_15m": 62.0,
-      "volume_ratio": 2.15,
-      "score": 0,
-      "verdict": "REJECT ❌",
-      "analysis": "The RSI alignment across timeframes is extremely overbought, indicating the move is overextended.",
-      "ema200_4h": 0.002513,
-      "fib_500": 0.008618,
-      "fib_618": 0.006959,
-      "entry_zone": "0.002009 - 0.006959",
-      "entry_reason": "EMA200 1H retest",
-      "rsi_wait": "Wait for RSI 15m to drop below 45",
-      "overextended": true
-    },
-    {
-      "symbol": "LAB/USDT",
-      "direction": "LONG",
-      "change_24h": 28.08,
-      "price": 0.40895,
-      "rsi_4h": 72.7,
-      "rsi_1h": 62.0,
-      "rsi_15m": 63.9,
-      "volume_ratio": 3.7,
-      "score": 0,
-      "verdict": "REJECT ❌",
-      "analysis": "The 3-TF RSI is aligned but the move appears overextended.",
-      "ema200_4h": 0.211061,
-      "fib_500": 0.35988,
-      "fib_618": 0.347233,
-      "entry_zone": "0.34723 - 0.35988",
-      "entry_reason": "Fib 0.618 pullback",
-      "rsi_wait": "Wait for RSI 15m to drop below 45",
-      "overextended": true
-    }
-  ]
+  "sandbox_analysis": []
 }
