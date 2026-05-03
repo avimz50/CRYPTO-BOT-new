@@ -3,8 +3,10 @@ import io
 import json
 import signal
 import sys
+import asyncio
 import requests
 import ccxt
+import ccxt.async_support as ccxt_async
 import telebot
 import time
 import threading
@@ -15,6 +17,14 @@ from zoneinfo import ZoneInfo
 from keep_alive import keep_alive, app as flask_app
 from flask import jsonify as flask_jsonify, request as flask_request
 import gdrive_reporter
+from config import *
+from market_logic import (
+    get_fear_greed, get_fng_mode,
+    score_symbol, detect_fvg, detect_order_blocks,
+    detect_flag, detect_bb_squeeze, detect_volume_buildup,
+    detect_rsi_divergence, score_candles,
+    calc_risk_position, get_dynamic_sl,
+)
 
 # ── אזור זמן ישראל — ZoneInfo עובד גם ב-Production ──
 _IL_TZ = ZoneInfo('Asia/Jerusalem')
@@ -70,23 +80,7 @@ _fng_cache = {'value': 50, 'label': 'Neutral', 'ts': 0}
 # None = לא ידוע (הפעלה ראשונה) | True = פעיל | False = כבוי
 _kill_switch_active: bool | None = None
 
-def get_fear_greed():
-    """מחזיר (value:int, label:str) — Alternative.me API עם cache של שעה."""
-    import time as _time
-    now = _time.time()
-    if now - _fng_cache['ts'] < 3600:
-        return _fng_cache['value'], _fng_cache['label']
-    try:
-        import requests as _req
-        r = _req.get('https://api.alternative.me/fng/?limit=1', timeout=5)
-        d = r.json()['data'][0]
-        prev_val = _fng_cache['value']
-        _fng_cache.update({'value': int(d['value']), 'label': d['value_classification'], 'ts': now})
-        if _fng_cache['value'] != prev_val:   # הדפס רק אם הערך השתנה
-            print(f"[FNG] {prev_val} → {_fng_cache['value']} – {_fng_cache['label']}")
-    except Exception as e:
-        print(f"[FNG] שגיאת רענון: {e}")
-    return _fng_cache['value'], _fng_cache['label']
+# get_fear_greed() → moved to market_logic.py
 
 # ─── Global Sentiment Thresholds ──────────────────────────────────────────────
 _FNG_SETTINGS_FILE = os.path.join(os.path.dirname(__file__), 'fng_settings.json')
@@ -1528,6 +1522,86 @@ def get_data(symbol, timeframe='1h', limit=250):
     df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     return df
 
+
+# ── Async OHLCV Pre-fetcher ────────────────────────────────────────────────────
+# Cache for async-fetched DataFrames: {(symbol, timeframe): DataFrame}
+_ohlcv_cache: dict = {}
+_async_exchange_instance = None
+
+
+async def _get_async_exchange():
+    """Returns (or creates) the shared ccxt.async_support.bitget instance."""
+    global _async_exchange_instance
+    if _async_exchange_instance is None:
+        _async_exchange_instance = ccxt_async.bitget({
+            'apiKey':          os.environ.get('BITGET_KEY', ''),
+            'secret':          os.environ.get('BITGET_SECRET', ''),
+            'password':        os.environ.get('BITGET_PW', ''),
+            'enableRateLimit': True,
+        })
+    return _async_exchange_instance
+
+
+async def _fetch_ohlcv_async(symbol: str, timeframe: str, limit: int = 250) -> pd.DataFrame:
+    """Async wrapper around ccxt fetch_ohlcv."""
+    ex   = await _get_async_exchange()
+    bars = await ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+    return pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+
+
+async def _prefetch_ohlcv(candidates: list, timeframes: list = None):
+    """
+    Pre-fetches OHLCV data for all candidates in parallel using asyncio.gather.
+    Results stored in _ohlcv_cache[(symbol, timeframe)].
+    Speeds up _scan_batch significantly by eliminating sequential API latency.
+    """
+    global _ohlcv_cache, _async_exchange_instance
+    if timeframes is None:
+        timeframes = ['4h', '1h']
+
+    tasks = []
+    keys  = []
+    for c in candidates:
+        sym = c['symbol'] if isinstance(c, dict) else c
+        for tf in timeframes:
+            key = (sym, tf)
+            if key not in _ohlcv_cache:
+                tasks.append(_fetch_ohlcv_async(sym, tf, 250))
+                keys.append(key)
+
+    if not tasks:
+        return
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    ok = 0
+    for key, result in zip(keys, results):
+        if isinstance(result, Exception):
+            print(f"[ASYNC] pre-fetch failed {key}: {result}")
+        else:
+            _ohlcv_cache[key] = result
+            ok += 1
+
+    # Close and reset the async exchange to free connections
+    try:
+        if _async_exchange_instance is not None:
+            await _async_exchange_instance.close()
+            _async_exchange_instance = None
+    except Exception:
+        pass
+    print(f"[ASYNC] pre-fetched {ok}/{len(tasks)} OHLCV tasks in parallel")
+
+
+def get_data_cached(symbol: str, timeframe: str = '1h', limit: int = 250) -> pd.DataFrame:
+    """
+    Returns pre-fetched OHLCV DataFrame from _ohlcv_cache if available.
+    Falls back to synchronous get_data() on cache miss.
+    Used inside _scan_batch to transparently benefit from async pre-fetch.
+    """
+    key = (symbol, timeframe)
+    if key in _ohlcv_cache:
+        return _ohlcv_cache[key]
+    return get_data(symbol, timeframe, limit)
+
 def generate_chart(df, symbol, entry, sl, tp, direction='LONG',
                    fvg_top=None, fvg_bot=None):
     """מייצר גרף נרות עם EMA200, Bollinger Bands, RSI, ווליום וקווי SL/Entry/TP.
@@ -2043,892 +2117,12 @@ SWING_TRACK_LEVERAGE   = 3            # מינוף 3x מקסימום
 SWING_TRACK_BE_PCT     = 4.0          # BE — ברירת מחדל (מוחלף ע"י FNG Mode)
 
 
-def get_fng_mode(fng_v: int) -> dict:
-    """מחזיר פרמטרי SL/TP/BE עבור מסלול Swing לפי Fear & Greed Index.
+# get_fng_mode, score_candles, detect_*, score_symbol, calc_risk_position,
+# get_dynamic_sl, and all strategy constants → moved to market_logic.py / config.py
 
-    Stages:
-      0-25  → Conservative  | SL 3%  TP1 2%  TP 4%   BE 1.0%  RR-min 1.3
-      26-45 → Careful       | SL 4%  TP1 3.5% TP 7%  BE 1.5%  RR-min 1.5
-      46-55 → Standard      | SL 5%  TP1 5%  TP 10%  BE 2.5%  RR-min 2.0
-      56-75 → Aggressive    | SL 6%  TP1 7%  TP 15%  BE 3.5%  RR-min 2.0
-      76+   → Moon          | SL 8%  TP1 10% TP 25%  BE 5.0%  RR-min 2.5 + Trailing 2%
-    """
-    if fng_v <= 25:
-        return {'name': 'Conservative', 'emoji': '🛡️',
-                'sl': 3.0, 'tp1': 2.0, 'tp': 4.0, 'be': 1.0,
-                'min_rr': 1.3, 'trailing': None}
-    elif fng_v <= 45:
-        return {'name': 'Careful', 'emoji': '⚠️',
-                'sl': 4.0, 'tp1': 3.5, 'tp': 7.0, 'be': 1.5,
-                'min_rr': 1.5, 'trailing': None}
-    elif fng_v <= 55:
-        return {'name': 'Standard', 'emoji': '⚖️',
-                'sl': 5.0, 'tp1': 5.0, 'tp': 10.0, 'be': 2.5,
-                'min_rr': 2.0, 'trailing': None}
-    elif fng_v <= 75:
-        return {'name': 'Aggressive', 'emoji': '🚀',
-                'sl': 6.0, 'tp1': 7.0, 'tp': 15.0, 'be': 3.5,
-                'min_rr': 2.0, 'trailing': None}
-    else:
-        return {'name': 'Moon', 'emoji': '🌕',
-                'sl': 8.0, 'tp1': 10.0, 'tp': 25.0, 'be': 5.0,
-                'min_rr': 2.5, 'trailing': 2.0}
-
-# 🛡️ חוקי-על גלובליים
-MAX_EQUITY_RISK_PCT    = 1.5          # סיכון מקסימלי 1.5% מהון לעסקה
-MIN_RR_RATIO           = 2.0          # יחס RR מינימלי 1:2
-
-# 🎯 Precision Hunter — מצב מתח שוק גבוה
-HUNTER_FNG_THRESHOLD   = 70           # FNG ≥ 70 → Hunter Mode (Greed)
-HUNTER_PUMP_PCT_24H    = 15.0         # נכס עלה >15% ב-24h → Hunter Mode
-HUNTER_MIN_RR          = 3.0          # מינ' RR 1:3 במצב Hunter
-HUNTER_TP1_RR          = 1.0          # TP1 ב-1:1 RR (= מרחק SL) במצב Hunter
-WEEKLY_PROFIT_TARGET   = 50.0         # יעד רווח שבועי ($)
-
-# ── Top 10 Breakout Scan — /top10 command ─────────────────────────────────────
-TOP10_SYMBOLS = [
-    # Leaders — BTC + ETH תמיד ראשונים (Priority בסורטינג)
-    'BTC/USDT', 'ETH/USDT',
-    # Top-10 Market Cap
-    'BNB/USDT', 'SOL/USDT', 'XRP/USDT', 'ADA/USDT',
-    'DOGE/USDT', 'AVAX/USDT', 'DOT/USDT', 'LINK/USDT', 'TRX/USDT',
-    # Top 11-20 Expansion
-    'ATOM/USDT', 'NEAR/USDT', 'APT/USDT', 'SUI/USDT', 'ARB/USDT',
-    'OP/USDT',   'INJ/USDT',
-    # Sector Bonus — AI + RWA
-    'FET/USDT', 'RENDER/USDT', 'ONDO/USDT',
-]
-
-# Sector-priority coins: get moved to front of candidates list
-SECTOR_PRIORITY_SYMBOLS = {'FET/USDT', 'RENDER/USDT', 'ONDO/USDT'}
-
-# 🏦 Major Coins Watch — מטבעות גדולים במעקב Momentum Breakout
-MAJOR_WATCH_COINS = [
-    'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'XRP/USDT',
-    'SOL/USDT', 'ADA/USDT', 'AVAX/USDT', 'DOGE/USDT',
-]
-MAJOR_WATCH_ICONS = {
-    'BTC': '₿',  'ETH': '🔷', 'BNB': '🟡', 'XRP': '🔵',
-    'SOL': '🌞', 'ADA': '🔶', 'AVAX': '🔺', 'DOGE': '🐕',
-}
 _major_watch_state: dict = {}   # {symbol: {decision, trend_ok, breakout}}
 
-# ── Low-Resource Logging ──────────────────────────────────────────────────────
-# False = only critical events (Entry, Exit, Errors) are printed.
-# True  = verbose per-symbol scoring breakdown (debugging only).
-VERBOSE_LOG             = False
 
-
-def score_candles(df_15m, direction):
-    """
-    זיהוי תבניות נרות יפניים על טיים-פריים 15m — 10 נקודות מקסימום.
-
-    LONG:  Hammer, Bullish Engulfing, Morning Star, Three White Soldiers, Bullish Harami
-    SHORT: Shooting Star, Bearish Engulfing, Evening Star, Three Black Crows, Bearish Harami
-
-    משתמש בשלושת הנרות הסגורים האחרונים (iloc[-4:-1]).
-    מחזיר: (points: int, pattern_name: str)
-    """
-    try:
-        if len(df_15m) < 6:
-            return 0, "no data"
-
-        # 3 נרות סגורים: c3=הישן, c2=האמצעי, c1=האחרון
-        o3 = df_15m['open'].iloc[-4];  c3 = df_15m['close'].iloc[-4]
-        h3 = df_15m['high'].iloc[-4];  l3 = df_15m['low'].iloc[-4]
-        o2 = df_15m['open'].iloc[-3];  c2 = df_15m['close'].iloc[-3]
-        h2 = df_15m['high'].iloc[-3];  l2 = df_15m['low'].iloc[-3]
-        o1 = df_15m['open'].iloc[-2];  c1 = df_15m['close'].iloc[-2]
-        h1 = df_15m['high'].iloc[-2];  l1 = df_15m['low'].iloc[-2]
-
-        body1 = abs(c1 - o1);  range1 = h1 - l1 if h1 != l1 else 1e-10
-        body2 = abs(c2 - o2);  body3  = abs(c3 - o3)
-        upper_wick1 = h1 - max(c1, o1)
-        lower_wick1 = min(c1, o1) - l1
-
-        green1 = c1 > o1;  red1 = c1 < o1
-        green2 = c2 > o2;  red2 = c2 < o2
-        green3 = c3 > o3;  red3 = c3 < o3
-
-        if direction == 'LONG':
-            # 1. Hammer — גוף קטן, צל תחתון ארוך, צל עליון קצר
-            if (body1 < range1 * 0.35 and
-                    lower_wick1 >= 2.0 * max(body1, range1 * 0.01) and
-                    upper_wick1 <= body1 * 1.1):
-                return 10, "Hammer"
-
-            # 2. Bullish Engulfing — נר אדום אחריו נר ירוק שבולע
-            if red2 and green1 and c1 > o2 and o1 < c2:
-                return 10, "Bullish Engulfing"
-
-            # 3. Morning Star — אדום, גוף קטן (doji/spinning), ירוק מעל אמצע הראשון
-            if (red3 and body2 < body3 * 0.35 and green1 and
-                    c1 > (o3 + c3) / 2):
-                return 10, "Morning Star"
-
-            # 4. Three White Soldiers — 3 נרות ירוקים עולים
-            if green3 and green2 and green1 and c1 > c2 > c3:
-                return 10, "Three White Soldiers"
-
-            # 5. Bullish Harami — נר אדום גדול אחריו ירוק קטן בתוכו
-            if (red2 and green1 and
-                    o1 >= c2 and c1 <= o2 and body1 < body2 * 0.5):
-                return 5, "Bullish Harami"
-
-        else:  # SHORT
-            # 1. Shooting Star — גוף קטן, צל עליון ארוך, צל תחתון קצר
-            if (body1 < range1 * 0.35 and
-                    upper_wick1 >= 2.0 * max(body1, range1 * 0.01) and
-                    lower_wick1 <= body1 * 1.1):
-                return 10, "Shooting Star"
-
-            # 2. Bearish Engulfing — נר ירוק אחריו אדום שבולע
-            if green2 and red1 and c1 < o2 and o1 > c2:
-                return 10, "Bearish Engulfing"
-
-            # 3. Evening Star — ירוק, גוף קטן, אדום מתחת אמצע הראשון
-            if (green3 and body2 < body3 * 0.35 and red1 and
-                    c1 < (o3 + c3) / 2):
-                return 10, "Evening Star"
-
-            # 4. Three Black Crows — 3 נרות אדומים יורדים
-            if red3 and red2 and red1 and c1 < c2 < c3:
-                return 10, "Three Black Crows"
-
-            # 5. Bearish Harami — נר ירוק גדול אחריו אדום קטן בתוכו
-            if (green2 and red1 and
-                    o1 <= c2 and c1 >= o2 and body1 < body2 * 0.5):
-                return 5, "Bearish Harami"
-
-        return 0, "no pattern"
-
-    except Exception as e:
-        print(f"  score_candles error: {e}")
-        return 0, "error"
-
-
-def detect_flag(df, direction):
-    """
-    זיהוי תבנית דגל — Bull Flag (LONG) / Bear Flag (SHORT).
-
-    שלבים:
-      1. Pole  : עלייה/ירידה ≥3% ב-3–5 נרות עם נפח גבוה
-      2. Flag  : 4–10 נרות התגבשות צרה, נפח יורד, דריפט קל נגד המגמה
-      3. Breakout: שבירת גג/תחתית הדגל בנר האחרון עם נפח ≥1.5× ממוצע
-
-    מחזיר: (is_flag: bool, description: str)
-    """
-    try:
-        if len(df) < 25:
-            return False, "not enough data"
-
-        recent  = df.iloc[-25:].reset_index(drop=True)
-        closes  = recent['close'].values
-        highs   = recent['high'].values
-        lows    = recent['low'].values
-        vols    = recent['volume'].values
-        vol_avg = vols[:-2].mean() if len(vols) > 2 else 1.0
-
-        # ── שלב 1: מציאת העמוד (Pole) ────────────────────────────────
-        best_pole_end     = None
-        best_pole_move    = 0.0
-        best_pole_vol_avg = 0.0
-
-        for pole_len in range(3, 6):           # חלון 3–5 נרות
-            for start in range(0, 15):         # עמדות התחלה ישנות יותר
-                end = start + pole_len
-                if end >= len(recent) - 4:     # חייבים ≥4 נרות לדגל אחר כך
-                    continue
-                start_price = closes[start]
-                end_price   = closes[end - 1]
-                if start_price == 0:
-                    continue
-                pct_move  = (end_price - start_price) / start_price * 100
-                pole_vol  = vols[start:end].mean()
-
-                if direction == 'LONG' and pct_move >= 3.0 and pole_vol > vol_avg * 1.2:
-                    if pct_move > best_pole_move:
-                        best_pole_move    = pct_move
-                        best_pole_end     = end
-                        best_pole_vol_avg = pole_vol
-
-                elif direction == 'SHORT' and pct_move <= -3.0 and pole_vol > vol_avg * 1.2:
-                    if abs(pct_move) > abs(best_pole_move):
-                        best_pole_move    = pct_move
-                        best_pole_end     = end
-                        best_pole_vol_avg = pole_vol
-
-        if best_pole_end is None:
-            return False, "no pole found"
-
-        # ── שלב 2: בדיקת הדגל (Consolidation) ───────────────────────
-        flag_df   = recent.iloc[best_pole_end:-1]   # ללא הנר הנוכחי (עדיין פתוח)
-        flag_len  = len(flag_df)
-
-        if flag_len < 4 or flag_len > 10:
-            return False, f"flag length {flag_len} not in 4–10 range"
-
-        flag_high  = flag_df['high'].max()
-        flag_low   = flag_df['low'].min()
-        flag_range = flag_high - flag_low
-
-        # טווח הדגל חייב להיות צר — פחות מ-60% מגודל העמוד
-        pole_price_start = closes[best_pole_end - (int(best_pole_move / abs(best_pole_move)) > 0 and 1 or 1)]
-        pole_range       = abs(closes[best_pole_end - 1] - closes[max(0, best_pole_end - 5)])
-        if pole_range > 0 and flag_range > pole_range * 0.6:
-            return False, f"flag too wide ({flag_range:.4g} > 60% of pole {pole_range:.4g})"
-
-        # נפח בדגל חייב לרדת ביחס לעמוד
-        flag_vol_avg = flag_df['volume'].mean()
-        if flag_vol_avg >= best_pole_vol_avg * 0.85:
-            return False, f"volume not declining in flag ({flag_vol_avg:.0f} vs pole {best_pole_vol_avg:.0f})"
-
-        # דריפט קל נגד המגמה (לא יותר מ-2% בכיוון שלנו)
-        flag_drift = (flag_df['close'].iloc[-1] - flag_df['close'].iloc[0]) / flag_df['close'].iloc[0] * 100
-        if direction == 'LONG'  and flag_drift >  2.0:
-            return False, f"flag drifting up {flag_drift:.1f}% (should be flat/down)"
-        if direction == 'SHORT' and flag_drift < -2.0:
-            return False, f"flag drifting down {flag_drift:.1f}% (should be flat/up)"
-
-        # ── שלב 3: Breakout ──────────────────────────────────────────
-        bo_candle = recent.iloc[-2]             # הנר הסגור האחרון
-        bo_vol    = bo_candle['volume']
-
-        if direction == 'LONG':
-            breakout_ok = bo_candle['close'] > flag_high
-        else:
-            breakout_ok = bo_candle['close'] < flag_low
-
-        if not breakout_ok:
-            return False, f"no breakout (high={flag_high:.4g} low={flag_low:.4g})"
-
-        if vol_avg > 0 and bo_vol < vol_avg * 1.5:
-            return False, f"breakout vol weak ({bo_vol/vol_avg:.2f}× < 1.5×)"
-
-        lbl = "Bull" if direction == 'LONG' else "Bear"
-        return True, (f"{lbl} Flag ✓ Pole{best_pole_move:+.1f}% "
-                      f"| Flag {flag_len}c | BO×{bo_vol/vol_avg:.1f}")
-
-    except Exception as e:
-        return False, f"flag error: {str(e)[:50]}"
-
-
-def detect_fvg(df, direction: str, lookback: int = 20) -> tuple[bool, float, float, str]:
-    """
-    זיהוי Fair Value Gap (FVG) — ICT Concept.
-
-    הגדרה:
-      Bullish FVG: low[i] > high[i-2]  → גאפ בין high של נר i-2 ל-low של נר i
-      Bearish FVG: high[i] < low[i-2]  → גאפ בין low של נר i-2 ל-high של נר i
-
-    לוגיקת ציון:
-      LONG  — מחפש Bullish FVG; מחיר בתוך הגאפ או עד 1% מעליו = תמיכה חזקה
-      SHORT — מחפש Bearish FVG; מחיר בתוך הגאפ או עד 1% מתחתיו = התנגדות חזקה
-
-    מחזיר: (found: bool, fvg_top: float, fvg_bot: float, description: str)
-    """
-    try:
-        if len(df) < lookback + 3:
-            return False, 0.0, 0.0, "not enough data"
-
-        recent = df.iloc[-(lookback + 3):].reset_index(drop=True)
-        highs  = recent['high'].values
-        lows   = recent['low'].values
-        closes = recent['close'].values
-        price  = closes[-1]     # מחיר נוכחי (נר אחרון)
-
-        best_fvg_top = 0.0
-        best_fvg_bot = 0.0
-        best_dist    = float('inf')
-        found        = False
-
-        # סרוק מהנר הכי חדש אחורה (מדלג על הנר הפתוח האחרון [-1])
-        for i in range(len(recent) - 2, 2, -1):
-            if direction == 'LONG':
-                # Bullish FVG: low[i] > high[i-2]
-                fvg_bot = highs[i - 2]
-                fvg_top = lows[i]
-                if fvg_top > fvg_bot:
-                    dist = abs(price - (fvg_bot + fvg_top) / 2) / price
-                    if dist < best_dist:
-                        best_dist    = dist
-                        best_fvg_top = fvg_top
-                        best_fvg_bot = fvg_bot
-                        found        = True
-            else:
-                # Bearish FVG: high[i] < low[i-2]
-                fvg_top = lows[i - 2]
-                fvg_bot = highs[i]
-                if fvg_top > fvg_bot:
-                    dist = abs(price - (fvg_bot + fvg_top) / 2) / price
-                    if dist < best_dist:
-                        best_dist    = dist
-                        best_fvg_top = fvg_top
-                        best_fvg_bot = fvg_bot
-                        found        = True
-
-        if not found:
-            return False, 0.0, 0.0, "no FVG found"
-
-        gap_pct  = round((best_fvg_top - best_fvg_bot) / best_fvg_bot * 100, 2)
-        zone_mid = round((best_fvg_top + best_fvg_bot) / 2, 8)
-
-        # מחיר בתוך הגאפ עצמו (in-zone) — הכי חזק
-        in_zone = best_fvg_bot <= price <= best_fvg_top
-        # מחיר עד 1.5% מחוץ לגאפ לכיוון הנכון (near-zone)
-        if direction == 'LONG':
-            near_zone = not in_zone and price <= best_fvg_top * 1.015
-        else:
-            near_zone = not in_zone and price >= best_fvg_bot * 0.985
-
-        if in_zone:
-            status = "IN_ZONE"
-        elif near_zone:
-            status = "NEAR"
-        else:
-            status = f"AWAY({best_dist*100:.1f}%)"
-
-        desc = (f"FVG({direction}) gap={gap_pct}% "
-                f"[{best_fvg_bot:.4g}–{best_fvg_top:.4g}] mid={zone_mid:.4g} {status}")
-        return found and (in_zone or near_zone), best_fvg_top, best_fvg_bot, desc
-
-    except Exception as e:
-        return False, 0.0, 0.0, f"FVG error: {e}"
-
-
-def detect_bb_squeeze(df, direction: str) -> tuple[bool, int, str]:
-    """
-    זיהוי Bollinger Band Squeeze — אות לפני הפריצה.
-
-    לוגיקה:
-      1. מחשב BB Width = (BBU - BBL) / BBM לכל נר ב-lookback נרות
-      2. אם width נוכחי < ממוצע_width × BB_SQUEEZE_RATIO → Squeeze פעיל
-      3. Breakout מתחיל: מחיר קרוב ל-Band הנכון (Upper ל-LONG, Lower ל-SHORT)
-
-    ניקוד:
-      +12: Squeeze פעיל + מחיר מתחיל לפרוץ לכיוון הנכון  (Pre-Breakout)
-      +6:  Squeeze פעיל בלבד (הצטמצמות — פריצה עדיין לא החלה)
-       0:  אין Squeeze
-
-    מחזיר: (score_pts: int, is_squeeze: bool, description: str)
-    """
-    try:
-        if len(df) < BB_SQUEEZE_LOOKBACK + 5:
-            return False, 0, "not enough data"
-
-        close = df['close']
-        bb    = ta.bbands(close, length=20, std=2)
-        if bb is None or bb.isna().all().all():
-            return False, 0, "BB calc failed"
-
-        bbu_col = next((c for c in bb.columns if 'BBU_' in c), None)
-        bbl_col = next((c for c in bb.columns if 'BBL_' in c), None)
-        bbm_col = next((c for c in bb.columns if 'BBM_' in c), None)
-        if not all([bbu_col, bbl_col, bbm_col]):
-            return False, 0, "BB columns missing"
-
-        bbu = bb[bbu_col]
-        bbl = bb[bbl_col]
-        bbm = bb[bbm_col]
-
-        # BB Width יחסי = (Upper - Lower) / Middle
-        width_series = (bbu - bbl) / bbm
-
-        # רק נרות שיש להם ערכים תקינים
-        valid_w = width_series.dropna()
-        if len(valid_w) < BB_SQUEEZE_LOOKBACK:
-            return False, 0, "not enough BB data"
-
-        curr_width = float(valid_w.iloc[-1])
-        hist_avg   = float(valid_w.iloc[-(BB_SQUEEZE_LOOKBACK + 1):-1].mean())
-
-        if hist_avg <= 0 or curr_width <= 0:
-            return False, 0, "BB width invalid"
-
-        squeeze_ratio = curr_width / hist_avg
-        is_squeeze    = squeeze_ratio < BB_SQUEEZE_RATIO
-
-        if not is_squeeze:
-            return False, 0, f"no squeeze (width={squeeze_ratio:.2f}× avg)"
-
-        # בדיקת כיוון פריצה: האם המחיר מתחיל לפרוץ לכיוון הנכון?
-        price     = float(close.iloc[-1])
-        curr_bbu  = float(bbu.iloc[-1])
-        curr_bbl  = float(bbl.iloc[-1])
-        curr_bbm  = float(bbm.iloc[-1])
-
-        if direction == 'LONG':
-            # מחיר מעל Middle + קרוב ל-Upper Band
-            above_mid = price > curr_bbm
-            near_band = price >= curr_bbu * (1 - BB_SQUEEZE_BREAKOUT)
-            breakout_starting = above_mid and near_band
-        else:
-            # מחיר מתחת ל-Middle + קרוב ל-Lower Band
-            below_mid = price < curr_bbm
-            near_band = price <= curr_bbl * (1 + BB_SQUEEZE_BREAKOUT)
-            breakout_starting = below_mid and near_band
-
-        squeeze_pct = round((1 - squeeze_ratio) * 100, 1)
-        width_pct   = round(curr_width * 100, 2)
-
-        if breakout_starting:
-            desc = (f"BB_SQUEEZE ✅ width={width_pct}% ({squeeze_pct}% צר מהממוצע) "
-                    f"→ פריצה {'עולה' if direction=='LONG' else 'יורדת'} מתחילה")
-            return True, 12, desc
-        else:
-            desc = (f"BB_SQUEEZE 🔄 width={width_pct}% ({squeeze_pct}% צר) "
-                    f"— מתכווץ, פריצה טרם החלה")
-            return True, 6, desc
-
-    except Exception as e:
-        return False, 0, f"BB squeeze error: {e}"
-
-
-def detect_volume_buildup(df, candles: int = 5) -> tuple[int, str]:
-    """
-    זיהוי צבירת נפח הדרגתית — Smart Money נכנס לפני הפריצה.
-
-    לוגיקה:
-      בודק את N הנרות האחרונים: כל נר צריך נפח >= קודמו × 1.05.
-      4+ נרות עולים בהדרגה = כסף חכם מצטבר.
-
-    ניקוד:
-      +8: 4-5 נרות עם נפח עולה בהדרגה (×1.05 כל נר)
-      +4: 3 נרות עולים
-       0: אין צבירה
-    """
-    try:
-        if len(df) < candles + 2:
-            return 0, "not enough data"
-
-        vols   = df['volume'].iloc[-(candles + 1):].values
-        streak = 0
-        for i in range(1, len(vols)):
-            if vols[i] >= vols[i - 1] * 1.05:
-                streak += 1
-            else:
-                streak = 0  # reset — צריך רצף רציף
-
-        if streak >= 4:
-            avg_growth = round(((vols[-1] / vols[-streak - 1]) ** (1 / streak) - 1) * 100, 1)
-            return 8, f"Vol buildup ✅ {streak} נרות עולים (~{avg_growth}% לנר)"
-        elif streak == 3:
-            return 4, f"Vol buildup 🔄 3 נרות עולים"
-        else:
-            return 0, f"no buildup (streak={streak})"
-
-    except Exception as e:
-        return 0, f"vol buildup error: {e}"
-
-
-def detect_rsi_divergence(df, direction: str, lookback: int = 30) -> tuple[int, str]:
-    """
-    זיהוי RSI Divergence — אות מוקדם לפני היפוך/פריצה.
-
-    Bullish (LONG): מחיר עושה Low נמוך יותר, RSI עושה Low גבוה יותר.
-    Bearish (SHORT): מחיר עושה High גבוה יותר, RSI עושה High נמוך יותר.
-
-    ניקוד:
-      +10: דיברג'נס ברור (פער מחיר ≥ 1.5% בין שני הנקודות)
-      +5:  דיברג'נס חלש (פער מחיר < 1.5%)
-       0:  אין דיברג'נס
-    """
-    try:
-        if len(df) < lookback + 5:
-            return 0, "not enough data"
-
-        df_s  = df.iloc[-lookback:].copy().reset_index(drop=True)
-        close = df_s['close'].values
-        rsi_s = ta.rsi(df_s['close'], length=14)
-        if rsi_s is None or rsi_s.isna().all():
-            return 0, "RSI calc failed"
-
-        rsi   = rsi_s.values
-        n     = len(close)
-
-        if direction == 'LONG':
-            # חפש שני Lows: נקודה A (ישנה) ונקודה B (חדשה, Lower Low)
-            # נסרוק ב-2 חלקים: A בחציה הראשונה, B בחציה השנייה
-            half  = n // 2
-            a_idx = int(df_s['low'].iloc[:half].idxmin())
-            b_idx = half + int(df_s['low'].iloc[half:].idxmin())
-
-            price_a, price_b = close[a_idx], close[b_idx]
-            rsi_a,   rsi_b   = rsi[a_idx],   rsi[b_idx]
-
-            # Bullish divergence: price_b < price_a AND rsi_b > rsi_a
-            if price_b < price_a and rsi_b > rsi_a and not (pd.isna(rsi_a) or pd.isna(rsi_b)):
-                price_diff = round((price_a - price_b) / price_a * 100, 2)
-                rsi_diff   = round(rsi_b - rsi_a, 1)
-                pts        = 10 if price_diff >= 1.5 else 5
-                return pts, (f"RSI Div ✅ Bullish: Low מחיר -{price_diff}% "
-                             f"אבל RSI +{rsi_diff}pts")
-            else:
-                return 0, "no bullish divergence"
-
-        else:  # SHORT
-            half  = n // 2
-            a_idx = int(df_s['high'].iloc[:half].idxmax())
-            b_idx = half + int(df_s['high'].iloc[half:].idxmax())
-
-            price_a, price_b = close[a_idx], close[b_idx]
-            rsi_a,   rsi_b   = rsi[a_idx],   rsi[b_idx]
-
-            # Bearish divergence: price_b > price_a AND rsi_b < rsi_a
-            if price_b > price_a and rsi_b < rsi_a and not (pd.isna(rsi_a) or pd.isna(rsi_b)):
-                price_diff = round((price_b - price_a) / price_a * 100, 2)
-                rsi_diff   = round(rsi_a - rsi_b, 1)
-                pts        = 10 if price_diff >= 1.5 else 5
-                return pts, (f"RSI Div ✅ Bearish: High מחיר +{price_diff}% "
-                             f"אבל RSI -{rsi_diff}pts")
-            else:
-                return 0, "no bearish divergence"
-
-    except Exception as e:
-        return 0, f"RSI div error: {e}"
-
-
-def score_symbol(df_3h, df_1h, symbol, direction='LONG'):
-    """
-    מערכת ניקוד מקצועית 0–100 נקודות.
-
-    direction='LONG'  → גיינרים, מחפש עלייה
-    direction='SHORT' → לוזרים,  מחפש ירידה
-
-    ניקוד (v2 — High-Performance):
-      Trend     (25): EMA200 ב-4H (+15) + ב-1H (+10)
-      MACD      (15): Signal Cross (+10) + Histogram (+5)
-      RSI       (10): Sweet-spot (+10), Acceptable (+5)
-      BB        (20): מחיר מעל MidBB (+12) + נגיעה בBand הנכון (+8)
-      Volume    (30): ×1.5 (+20) | ×2.0 (+30) | <×1.5 → VETO!
-      Flag      (15): Bull/Bear Flag Pattern על 1H
-      FVG       (10): Fair Value Gap (ICT) — מחיר בתוך/ליד הגאפ על 1H
-      FNG       (±5): Fear & Greed Index adjustment
-
-    מחזיר: (score: int, breakdown: str, atr: float)
-    """
-    score = 0
-    parts = []
-
-    try:
-        close_3h = df_3h['close']
-
-        # ── אינדיקטורים 3H ──
-        ema200_1h = ta.ema(close_3h, length=200)
-        macd_df   = ta.macd(close_3h, fast=12, slow=26, signal=9)
-        rsi_s     = ta.rsi(close_3h, length=14)
-        bb_df     = ta.bbands(close_3h, length=20, std=2)
-        atr_s     = ta.atr(df_3h['high'], df_3h['low'], close_3h, length=14)
-
-        # ── EMA200 על 1H (אישור משני) ──
-        ema200_15 = ta.ema(df_1h['close'], length=200)
-
-        if any(v is None for v in [ema200_1h, macd_df, rsi_s, bb_df, atr_s, ema200_15]):
-            if VERBOSE_LOG:
-                print(f"  [{symbol}] indicator calc failed")
-            return 0, "indicator error", 0
-
-        price      = close_3h.iloc[-1]
-        ema200_v   = ema200_1h.iloc[-1]
-        ema200_15v = ema200_15.iloc[-1]
-
-        # MACD — איתור עמודות (pandas_ta משתנה בשמות לפי פרמטרים)
-        macd_col = next(c for c in macd_df.columns if c.startswith('MACD_'))
-        sig_col  = next(c for c in macd_df.columns if c.startswith('MACDs_'))
-        hist_col = next(c for c in macd_df.columns if c.startswith('MACDh_'))
-        macd_v   = macd_df[macd_col].iloc[-1]
-        sig_v    = macd_df[sig_col].iloc[-1]
-        hist_v   = macd_df[hist_col].iloc[-1]
-        hist_p   = macd_df[hist_col].iloc[-2]
-
-        rsi_v    = rsi_s.iloc[-1]
-
-        # Bollinger Middle
-        bb_mid_col = next(c for c in bb_df.columns if 'BBM_' in c)
-        bb_mid     = bb_df[bb_mid_col].iloc[-1]
-
-        atr_v    = atr_s.iloc[-1]
-
-        # השתמש בנר הסגור האחרון (iloc[-2]) — לא בנר הנוכחי שעדיין פתוח
-        vol_curr = df_3h['volume'].iloc[-2]
-        vol_avg  = df_3h['volume'].iloc[-12:-2].mean()
-        vol_rat  = vol_curr / vol_avg if vol_avg > 0 else 0
-
-        if any(pd.isna(v) for v in [ema200_v, ema200_15v, macd_v, sig_v,
-                                      hist_v, hist_p, rsi_v, bb_mid, atr_v]):
-            if VERBOSE_LOG:
-                print(f"  [{symbol}] NaN in indicators")
-            return 0, "NaN values", 0
-
-        # ════════════════════════════════════════════════
-        # ANTI-FOMO HARD VETOES (לפני כל ניקוד)
-        # ════════════════════════════════════════════════
-
-        # ── וטו 1: EMA200 Proximity — Anti-Chase ──
-        # BYPASS: אם Volume ≥ ×1.5 → הפריצה עצמה היא המגמה החדשה, EMA200 לא רלוונטי
-        ema_gap_pct      = (price - ema200_v) / ema200_v * 100
-        vol_ema_bypassed = (vol_rat >= VOL_EMA_BYPASS_MULT)
-        if vol_ema_bypassed and abs(ema_gap_pct) > EMA_PROXIMITY_PCT:
-            parts.append(f"EMA_bypass(vol×{vol_rat:.1f}≥{VOL_EMA_BYPASS_MULT})")
-        else:
-            if direction == 'LONG' and ema_gap_pct > EMA_PROXIMITY_PCT:
-                return 0, f"EMA200 chase veto ({ema_gap_pct:.1f}% above EMA200)", atr_v
-            if direction == 'SHORT' and ema_gap_pct < -EMA_PROXIMITY_PCT:
-                return 0, f"EMA200 chase veto ({abs(ema_gap_pct):.1f}% below EMA200)", atr_v
-
-        # ── וטו 2: Wick Rejection — Anti-False Breakout ──
-        last_c  = df_3h.iloc[-2]
-        c_body  = abs(last_c['close'] - last_c['open'])
-        c_upper = last_c['high'] - max(last_c['close'], last_c['open'])
-        c_lower = min(last_c['close'], last_c['open']) - last_c['low']
-        if direction == 'LONG' and c_upper > c_body and c_body > 0:
-            return 0, f"Wick rejection LONG (upper wick {c_upper:.4g} > body {c_body:.4g})", atr_v
-        if direction == 'SHORT' and c_lower > c_body and c_body > 0:
-            return 0, f"Wick rejection SHORT (lower wick {c_lower:.4g} > body {c_body:.4g})", atr_v
-
-        # ════════════════════════════════
-        # 1. TREND / EMA200 — 25 נקודות
-        # ════════════════════════════════
-        t1h  = price > ema200_v   if direction == 'LONG' else price < ema200_v
-        t15m = price > ema200_15v if direction == 'LONG' else price < ema200_15v
-
-        t_pts = 0
-        if t1h:  t_pts += 15          # EMA200 4H — מגמה ראשית
-        if t15m: t_pts += 10          # EMA200 1H — אישור משני
-        score += t_pts
-        parts.append(f"Trend={t_pts}/25")
-        if VERBOSE_LOG:
-            print(f"  [{symbol}] {direction} | Trend={t_pts} "
-                  f"(4H={'✓' if t1h else '✗'} 1H={'✓' if t15m else '✗'})")
-
-        # ════════════════════════════════
-        # 2. MOMENTUM (MACD) — 15 נקודות
-        # ════════════════════════════════
-        macd_ok = (macd_v > sig_v)  if direction == 'LONG' else (macd_v < sig_v)
-        hist_ok = (hist_v > hist_p) if direction == 'LONG' else (hist_v < hist_p)
-
-        m_pts = 0
-        if macd_ok: m_pts += 10
-        if hist_ok: m_pts += 5
-        score += m_pts
-        parts.append(f"MACD={m_pts}/15")
-        if VERBOSE_LOG:
-            print(f"  [{symbol}] {direction} | MACD={m_pts} "
-                  f"(aligned={'✓' if macd_ok else '✗'} hist={'✓' if hist_ok else '✗'})")
-
-        # ════════════════════════════════
-        # 3. RSI STRENGTH — 10 נקודות
-        # ════════════════════════════════
-
-        # וטו קשה — RSI קיצוני = פסילה מוחלטת (כעת 85/20 — הורחב מ-70/28)
-        if direction == 'LONG' and rsi_v > RSI_VETO_LONG:
-            return 0, f"RSI veto ({rsi_v:.1f} > {RSI_VETO_LONG} extreme overbought)", atr_v
-        if direction == 'SHORT' and rsi_v < RSI_VETO_SHORT:
-            return 0, f"RSI veto ({rsi_v:.1f} < {RSI_VETO_SHORT} extreme oversold)", atr_v
-
-        # RSI Override: RSI 70–85 מותר אם המחיר גם "חובק" את Upper BB (פריצה אמיתית)
-        rsi_bb_override = False
-        if direction == 'LONG' and rsi_v > 70:
-            try:
-                _bbu_col = next(c for c in bb_df.columns if 'BBU_' in c)
-                _bbu_val = float(bb_df[_bbu_col].iloc[-1])
-                if price >= _bbu_val * 0.985:          # תוך 1.5% מ-Upper Band
-                    rsi_bb_override = True
-                    parts.append(f"RSI_BB_override(RSI={rsi_v:.0f}@UBB)")
-                else:
-                    # RSI גבוה + לא בBand → עדיין חוסם (FOMO ללא אישור טכני)
-                    return 0, (f"RSI overbought ({rsi_v:.1f}>70) — "
-                               f"not at Upper BB (price={price:.4g} BB={_bbu_val:.4g})"), atr_v
-            except Exception:
-                pass   # אם BB חסר, נמשיך (ה-RSI_VETO_LONG מעל הגן)
-        if direction == 'SHORT' and rsi_v < 30:
-            try:
-                _bbl_col = next(c for c in bb_df.columns if 'BBL_' in c)
-                _bbl_val = float(bb_df[_bbl_col].iloc[-1])
-                if price <= _bbl_val * 1.015:
-                    rsi_bb_override = True
-                    parts.append(f"RSI_BB_override(RSI={rsi_v:.0f}@LBB)")
-                else:
-                    return 0, (f"RSI oversold ({rsi_v:.1f}<30) — "
-                               f"not at Lower BB"), atr_v
-            except Exception:
-                pass
-
-        if direction == 'LONG':
-            rsi_ideal = 50 <= rsi_v <= 70     # ממש אידיאלי
-            rsi_ok    = 45 <= rsi_v <= 80     # מקובל (כולל overbought עם BB confirmation)
-        else:
-            rsi_ideal = 30 <= rsi_v <= 50
-            rsi_ok    = 20 <= rsi_v <= 55
-
-        r_pts = 10 if rsi_ideal else (5 if rsi_ok else 0)
-        score += r_pts
-        parts.append(f"RSI={r_pts}/10(={rsi_v:.0f})")
-        if VERBOSE_LOG:
-            print(f"  [{symbol}] {direction} | RSI={r_pts} (rsi={rsi_v:.1f})")
-
-        # ════════════════════════════════
-        # 4. BOLLINGER BANDS — 20 נקודות
-        # ════════════════════════════════
-        # קבל Upper/Lower מ-bbands
-        try:
-            bb_lower_col = next(c for c in bb_df.columns if 'BBL_' in c)
-            bb_upper_col = next(c for c in bb_df.columns if 'BBU_' in c)
-            bb_lower     = bb_df[bb_lower_col].iloc[-1]
-            bb_upper     = bb_df[bb_upper_col].iloc[-1]
-        except Exception:
-            bb_lower = bb_upper = None
-
-        bb_mid_ok = (price > bb_mid) if direction == 'LONG' else (price < bb_mid)
-
-        # "value zone" — מחיר קרוב לBand הנכון (תוך 2% מ-Lower/Upper)
-        bb_band_touch = False
-        if bb_lower is not None and bb_upper is not None and bb_upper != bb_lower:
-            if direction == 'LONG':
-                bb_band_touch = price <= bb_lower * 1.02   # קרוב ל-Lower band
-            else:
-                bb_band_touch = price >= bb_upper * 0.98   # קרוב ל-Upper band
-
-        b_pts = 0
-        if bb_mid_ok:    b_pts += 12
-        if bb_band_touch: b_pts += 8
-        score += b_pts
-        parts.append(f"BB={b_pts}/20")
-        if VERBOSE_LOG:
-            print(f"  [{symbol}] {direction} | BB={b_pts} "
-                  f"(mid={'✓' if bb_mid_ok else '✗'} band={'✓' if bb_band_touch else '✗'})")
-
-        # ════════════════════════════════════════
-        # 5. VOLUME — 30 נקודות | HARD VETO <×1.2
-        # ════════════════════════════════════════
-        if vol_rat < 1.5:
-            # Volume מתחת לסף מינימום — Adaptive Sniper: חייב ×1.5 לפחות
-            return 0, f"Volume VETO: {vol_rat:.2f}× < 1.5× avg (Adaptive Sniper threshold)", atr_v
-
-        if   vol_rat >= 2.0: v_pts = 30   # ספייק חזק ×2 — אישור מלא
-        elif vol_rat >= 1.5: v_pts = 20   # ספייק טוב ×1.5 — סף מינימום Adaptive Sniper
-        else:                v_pts = 10   # (לא ייגע לכאן יותר)
-
-        score += v_pts
-        parts.append(f"Vol={v_pts}/30(×{vol_rat:.1f})")
-        if VERBOSE_LOG:
-            print(f"  [{symbol}] {direction} | Volume={v_pts} (×{vol_rat:.2f})")
-
-        # ════════════════════════════════════════
-        # 6. CANDLES — 0 נקודות (מוסרות — רעש)
-        # ════════════════════════════════════════
-        # נרות יפניים על TF נמוך (1m/5m/15m) הוכחו כרועשים.
-        # המערכת מסתמכת על Volume, EMA200 ו-BB כאישור מספק.
-        parts.append("Candles=0/0(filtered)")
-
-        # ════════════════════════════════════════
-        # 7. FLAG PATTERN BONUS — +15 נקודות
-        # ════════════════════════════════════════
-        # בדיקה על 1H DataFrame (df_1h) — TF מהימן לתבניות דגל
-        is_flag, flag_desc = detect_flag(df_1h, direction)
-        if is_flag:
-            score += 15
-            parts.append(f"Flag=+15({flag_desc})")
-            if VERBOSE_LOG:
-                print(f"  [{symbol}] {direction} | FLAG DETECTED: {flag_desc}")
-        else:
-            parts.append(f"Flag=0(no:{flag_desc[:30]})")
-            if VERBOSE_LOG:
-                print(f"  [{symbol}] {direction} | no flag: {flag_desc}")
-
-        # ════════════════════════════════════════
-        # 7b. FVG — Fair Value Gap — +10 נקודות (ICT)
-        # ════════════════════════════════════════
-        # בדיקה על 1H DataFrame — גאפ מחיר שהשוק נוטה לחזור למלא
-        fvg_hit, _fvg_top, _fvg_bot, fvg_desc = detect_fvg(df_1h, direction, lookback=20)
-        if fvg_hit:
-            score += 10
-            parts.append(f"FVG=+10({fvg_desc})")
-            if VERBOSE_LOG:
-                print(f"  [{symbol}] {direction} | FVG HIT: {fvg_desc}")
-        else:
-            parts.append(f"FVG=0({fvg_desc[:35]})")
-            if VERBOSE_LOG:
-                print(f"  [{symbol}] {direction} | no FVG: {fvg_desc}")
-
-        # ════════════════════════════════════════
-        # 7c. BB SQUEEZE — +12/+6 נקודות (Pre-Breakout)
-        # ════════════════════════════════════════
-        # בדיקה על 1H — האם השוק מתכווץ לפני פריצה?
-        sq_hit, sq_pts, sq_desc = detect_bb_squeeze(df_1h, direction)
-        if sq_pts > 0:
-            score += sq_pts
-            parts.append(f"Squeeze=+{sq_pts}({sq_desc[:40]})")
-            if VERBOSE_LOG:
-                print(f"  [{symbol}] {direction} | SQUEEZE: {sq_desc}")
-        else:
-            parts.append(f"Squeeze=0({sq_desc[:30]})")
-            if VERBOSE_LOG:
-                print(f"  [{symbol}] {direction} | no squeeze: {sq_desc}")
-
-        # ════════════════════════════════════════
-        # 7d. VOLUME BUILDUP — +8/+4 נקודות (Smart Money)
-        # ════════════════════════════════════════
-        # נפח עולה בהדרגה ב-3-5 נרות = כסף חכם נכנס לפני הכולם
-        vb_pts, vb_desc = detect_volume_buildup(df_1h, candles=5)
-        if vb_pts > 0:
-            score += vb_pts
-            parts.append(f"VolBuild=+{vb_pts}({vb_desc[:40]})")
-            if VERBOSE_LOG:
-                print(f"  [{symbol}] {direction} | VOL BUILDUP: {vb_desc}")
-        else:
-            parts.append(f"VolBuild=0({vb_desc[:25]})")
-            if VERBOSE_LOG:
-                print(f"  [{symbol}] {direction} | no vol buildup: {vb_desc}")
-
-        # ════════════════════════════════════════
-        # 7e. RSI DIVERGENCE — +10/+5 נקודות (Early Reversal)
-        # ════════════════════════════════════════
-        # מחיר עושה Low חדש אבל RSI עולה = כוח נסתר לפני פריצה
-        rd_pts, rd_desc = detect_rsi_divergence(df_1h, direction, lookback=30)
-        if rd_pts > 0:
-            score += rd_pts
-            parts.append(f"RSIDiv=+{rd_pts}({rd_desc[:45]})")
-            if VERBOSE_LOG:
-                print(f"  [{symbol}] {direction} | RSI DIV: {rd_desc}")
-        else:
-            parts.append(f"RSIDiv=0({rd_desc[:25]})")
-            if VERBOSE_LOG:
-                print(f"  [{symbol}] {direction} | no RSI div: {rd_desc}")
-
-        # ════════════════════════════════════
-        # 8. FEAR & GREED INDEX — ±5 נקודות
-        # ════════════════════════════════════
-        fng_v, fng_lbl = get_fear_greed()
-        if direction == 'LONG':
-            if   fng_v < 25: fng_adj = +5
-            elif fng_v < 45: fng_adj = +2
-            elif fng_v > 75: fng_adj = -5
-            elif fng_v > 55: fng_adj = -2
-            else:            fng_adj =  0
-        else:
-            if   fng_v > 75: fng_adj = +5
-            elif fng_v > 55: fng_adj = +2
-            elif fng_v < 25: fng_adj = -5
-            elif fng_v < 45: fng_adj = -2
-            else:            fng_adj =  0
-        score = max(0, min(100, score + fng_adj))
-        sign  = f"+{fng_adj}" if fng_adj >= 0 else str(fng_adj)
-        parts.append(f"FNG={fng_v}({sign})")
-        if VERBOSE_LOG:
-            print(f"  [{symbol}] {direction} | FNG={fng_v} adj={sign}")
-
-        breakdown = " | ".join(parts) + f"  →  TOTAL={score}/100"
-        # Only print when a signal qualifies (score ≥ threshold)
-        if score >= MIN_SCORE:
-            print(f"[Score] 🟢 {symbol} {direction} SCORE={score}/100 | {breakdown}")
-        elif VERBOSE_LOG:
-            print(f"[Score] 🔴 {symbol} {direction} {score}/100 — skip")
-        return score, breakdown, atr_v
-
-    except Exception as e:
-        print(f"[Score] ⚠️ {symbol} error: {e}")
-        return 0, str(e), 0
 
 # --- ניהול עסקאות דמו ---
 
@@ -2987,63 +2181,7 @@ def is_hunter_mode(fng_v: int, change_24h: float = 0.0) -> tuple:
     return False, ""
 
 
-def calc_risk_position(track: str, equity: float, fng_v: int = None) -> tuple:
-    """
-    מחשב גודל פוזיציה לפי חוק הסיכון 1.5% מהון.
-      max_risk_usd = equity × 1.5%
-      pos_size     = max_risk_usd / sl_pct          (כך ש-pos_size × sl_pct = max_risk)
-      margin       = pos_size / leverage             (מוגבל $5–$50)
-    עבור Swing — ה-SL/TP/TP1 נקבעים דינמית לפי FNG Mode (get_fng_mode).
-    מחזיר: (margin, pos_size, leverage, sl_pct, tp1_pct, tp_pct)
-    """
-    if track == 'Scalp':
-        sl_pct   = SCALP_TRACK_SL_PCT
-        tp1_pct  = SCALP_TRACK_TP1_PCT
-        tp_pct   = SCALP_TRACK_TP_PCT
-        leverage = SCALP_TRACK_LEVERAGE
-    else:
-        if fng_v is not None:
-            _mode  = get_fng_mode(fng_v)
-            sl_pct  = _mode['sl']
-            tp1_pct = _mode['tp1']
-            tp_pct  = _mode['tp']
-        else:
-            sl_pct   = SWING_TRACK_SL_PCT
-            tp1_pct  = SWING_TRACK_TP1_PCT
-            tp_pct   = SWING_TRACK_TP_PCT
-        leverage = SWING_TRACK_LEVERAGE
-
-    max_risk = equity * (MAX_EQUITY_RISK_PCT / 100)   # e.g. $200 × 1.5% = $3
-    pos_size = max_risk / (sl_pct / 100)              # $3 / 0.02 = $150 (Scalp), $3/0.06=$50 (Swing)
-    margin   = pos_size / leverage
-    margin   = round(max(5.0, min(margin, MARGIN)), 2)  # clamp $5–$50
-    pos_size = round(margin * leverage, 2)
-    return margin, pos_size, leverage, sl_pct, tp1_pct, tp_pct
-
-
-def get_dynamic_sl(symbol: str, price: float, atr: float, fng_v: int) -> float:
-    """
-    מחשב SL דינמי לפי שלוש שכבות:
-      1. Base SL לפי סוג נכס: Major (BTC/ETH/SOL) = 3%, Altcoin = 5%
-      2. Fear Buffer: אם FNG < 25 → +1% (שוק תנודתי מאוד)
-      3. ATR Floor: SL ≥ 1.5 × ATR%  (מספיק מקום לנשום)
-    מחזיר: sl_pct (float, %)
-    """
-    ticker_base = symbol.split('/')[0].upper()
-    base_sl = SL_BASE_MAJOR if ticker_base in MAJOR_COINS else SL_BASE_ALTCOIN
-
-    fear_buffer = SL_FEAR_BUFFER if (fng_v is not None and fng_v < 25) else 0.0
-
-    sl_candidate = base_sl + fear_buffer
-
-    # ATR% ביחס למחיר
-    atr_pct = (atr / price * 100) if (price > 0 and atr > 0) else 0.0
-    atr_floor = round(SL_ATR_MULT * atr_pct, 2)
-
-    final_sl = round(max(sl_candidate, atr_floor), 2)
-    print(f"  [DynSL] {ticker_base}: base={base_sl}% + fear={fear_buffer}% | "
-          f"ATR={atr_pct:.2f}% × {SL_ATR_MULT} = {atr_floor}% → SL={final_sl}%")
-    return final_sl
+# calc_risk_position, get_dynamic_sl → moved to market_logic.py
 
 
 def track_badge(track: str) -> str:
@@ -6079,6 +5217,17 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                 })
             return 0
 
+    # ── Async OHLCV Pre-fetch — parallel fetch 4H+1H for all candidates ─────
+    global _ohlcv_cache
+    _ohlcv_cache = {}   # clear any stale cache from previous scan
+    try:
+        asyncio.run(_prefetch_ohlcv(candidates, timeframes=['4h', '1h']))
+    except RuntimeError:
+        # Already in an event loop (shouldn't happen in scan thread, but safe fallback)
+        pass
+    except Exception as _ae:
+        print(f"[ASYNC] pre-fetch skipped (non-fatal): {_ae}")
+
     found = 0
     for candidate in candidates:
         if len(active_trades) >= MAX_TRADES:
@@ -6112,13 +5261,13 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
 
         df_15m = None  # אתחול — נטען רק אם 4H+1H לא מספיקים
         try:
-            # ── שלב 1: ניסיון על 4H — טרנד ראשי ──
-            df_4h  = get_data(symbol, timeframe='4h', limit=250)
-            df_1h  = get_data(symbol, timeframe='1h', limit=250)
+            # ── שלב 1: ניסיון על 4H — טרנד ראשי (cache hits from async pre-fetch) ──
+            df_4h  = get_data_cached(symbol, timeframe='4h', limit=250)
+            df_1h  = get_data_cached(symbol, timeframe='1h', limit=250)
             price  = df_4h['close'].iloc[-1]
 
             print(f"Scoring {symbol} [{direction}] @ {price:.6g} [4H]")
-            score, breakdown, atr = score_symbol(df_4h, df_1h, symbol, direction)
+            score, breakdown, atr = score_symbol(df_4h, df_1h, symbol, direction, fng_v=fng_v_scan)
             score_4h  = score
             score_1h  = 0
             score_15m = 0
@@ -6168,7 +5317,7 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
             # ── שלב 2: אם 4H לא מספיק — נסה 1H ──
             if score < MIN_SCORE:
                 df_15m = get_data(symbol, timeframe='15m', limit=250)
-                score_1h, breakdown_1h, atr_1h = score_symbol(df_1h, df_15m, symbol, direction)
+                score_1h, breakdown_1h, atr_1h = score_symbol(df_1h, df_15m, symbol, direction, fng_v=fng_v_scan)
                 print(f"  4H={score_4h} < {MIN_SCORE} → try 1H: {score_1h}")
                 if score_1h > best_score:
                     best_score     = score_1h
@@ -6184,7 +5333,7 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
 
                 # ── שלב 3: אם גם 1H לא מספיק — נסה 15m (Scalp) ──
                 else:
-                    score_15m, breakdown_15m, atr_15m = score_symbol(df_15m, df_1h, symbol, direction)
+                    score_15m, breakdown_15m, atr_15m = score_symbol(df_15m, df_1h, symbol, direction, fng_v=fng_v_scan)
                     print(f"  1H={score_1h} < {MIN_SCORE} → try 15m: {score_15m}")
                     if score_15m > best_score:
                         best_score     = score_15m

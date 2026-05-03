@@ -1,0 +1,199 @@
+"""
+config.py — Adaptive Sniper 2026
+All static constants and environment-sourced values.
+Dynamic runtime settings (MAX_TRADES, FNG thresholds) remain in bot.py
+because they change at runtime via Telegram / API.
+"""
+import os
+
+# ── File Paths ─────────────────────────────────────────────────────────────────
+HOT_CANDIDATES_FILE = 'artifacts/bot-dashboard/public/hot_candidates.json'
+ACTIVE_TRADES_FILE  = 'artifacts/bot-dashboard/public/active_trades.json'
+WALLET_FILE         = 'artifacts/bot-dashboard/public/wallet.json'
+AUDIT_LOG_FILE      = 'artifacts/bot-dashboard/public/trade_audit.json'
+SCAN_REPORT_FILE    = 'artifacts/bot-dashboard/public/last_scan_results.json'
+FNG_SETTINGS_FILE   = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fng_settings.json')
+CONFIG_FILE         = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
+
+# ── Bot Identity ───────────────────────────────────────────────────────────────
+STARTING_BALANCE = 200.0
+DASHBOARD_URL    = 'https://python-script-bymzrkhy.replit.app/'
+
+# ── Environment Flags ──────────────────────────────────────────────────────────
+IS_DEPLOYED = bool(os.environ.get('REPLIT_DEPLOYMENT', ''))
+GEMINI_URL  = os.environ.get('AI_INTEGRATIONS_GEMINI_BASE_URL', '')
+GEMINI_KEY  = os.environ.get('AI_INTEGRATIONS_GEMINI_API_KEY', '')
+
+# ── Position Sizing ────────────────────────────────────────────────────────────
+LEVERAGE      = 10
+MARGIN        = 50           # $50 margin per trade
+POSITION_SIZE = MARGIN * LEVERAGE  # $500 controlled
+
+# ── Circuit Breaker ────────────────────────────────────────────────────────────
+DAILY_LOSS_LIMIT = -30.0     # -$30 = 15% of $200 starting balance
+
+# ── Scoring Thresholds ─────────────────────────────────────────────────────────
+MIN_SCORE           = 78     # Entry threshold
+RSI_VETO_LONG       = 65     # Hard veto — extreme overbought
+RSI_VETO_SHORT      = 28     # Hard veto — extreme oversold
+EMA_PROXIMITY_PCT   = 2.5    # Anti-chase: max % above EMA200
+VOL_EMA_BYPASS_MULT = 1.5    # Volume ≥ ×1.5 bypasses EMA proximity veto
+
+# ── Trade Lifecycle ────────────────────────────────────────────────────────────
+TRAIL_ACTIVATION_PCT = 2.0
+BE_BUFFER_PCT        = 2.0
+BE_LOCK_BUFFER_PCT   = 0.1
+TRAIL_PCT            = 1.5
+ATR_TRAIL_MULT       = 1.5
+PARTIAL_25_TRIGGER   = 5.0
+PARTIAL_25_DROP      = 1.0
+SL_PCT_FIXED         = 3.5
+TP1_PCT_FIXED        = 5.0
+TP_PCT_FIXED         = 15.0
+
+# ── Dynamic SL Parameters ─────────────────────────────────────────────────────
+MAJOR_COINS     = {'BTC', 'ETH', 'SOL'}
+SL_BASE_MAJOR   = 3.0   # % SL for major coins
+SL_BASE_ALTCOIN = 5.0   # % SL for altcoins
+SL_FEAR_BUFFER  = 1.0   # Extra % when FNG < 25
+SL_ATR_MULT     = 1.5   # SL must be at least 1.5 × ATR%
+
+# ── Regime Filters ─────────────────────────────────────────────────────────────
+EXTREME_FEAR_LONG_MIN_SCORE    = 95   # LONG in extreme fear: score > 95 only
+STRONG_UPTREND_SHORT_MIN_SCORE = 90   # BTC strong uptrend: SHORT score > 90
+
+# ── Sniper Exception ───────────────────────────────────────────────────────────
+SNIPER_MIN_SCORE   = 92
+SNIPER_EMA_PCT     = 5.0
+SNIPER_VOL_MIN     = 2.5
+SNIPER_MARGIN_MULT = 0.5   # Half-size entry during Kill-Switch
+
+# ── Hunter / Risk ──────────────────────────────────────────────────────────────
+MAX_EQUITY_RISK_PCT  = 1.5    # Max 1.5% equity risk per trade
+MIN_RR_RATIO         = 2.0    # Minimum 1:2 R:R
+HUNTER_FNG_THRESHOLD = 70
+HUNTER_PUMP_PCT_24H  = 15.0
+HUNTER_MIN_RR        = 3.0
+HUNTER_TP1_RR        = 1.0
+WEEKLY_PROFIT_TARGET = 50.0
+
+# ── Bollinger Band Squeeze ─────────────────────────────────────────────────────
+BB_SQUEEZE_RATIO    = 0.50
+BB_SQUEEZE_LOOKBACK = 20
+BB_SQUEEZE_BREAKOUT = 0.005
+
+# ── Scalp Track ───────────────────────────────────────────────────────────────
+SCALP_TRACK_VOL_MIN    = 50_000_000
+SCALP_TRACK_SL_PCT     = 2.0
+SCALP_TRACK_TP1_PCT    = 4.0
+SCALP_TRACK_TP_PCT     = 8.0
+SCALP_TRACK_LEVERAGE   = 10
+SCALP_TRACK_BE_TRIGGER = 0.50
+
+# ── Swing Track ───────────────────────────────────────────────────────────────
+SWING_TRACK_VOL_MIN  = 10_000_000
+SWING_TRACK_SL_PCT   = 6.0
+SWING_TRACK_TP1_PCT  = 6.0
+SWING_TRACK_TP_PCT   = 12.0
+SWING_TRACK_LEVERAGE = 3
+SWING_TRACK_BE_PCT   = 4.0
+
+# ── Scalp Mode (Mean-Reversion) ────────────────────────────────────────────────
+SCALP_LEVERAGE         = 5
+SCALP_MARGIN           = 15.0
+SCALP_POS_SIZE         = SCALP_MARGIN * SCALP_LEVERAGE
+SCALP_TP_PCT           = 3.0
+SCALP_SL_PCT           = 1.5
+SCALP_MAX_DURATION_MIN = 60
+MAX_SCALP_TRADES       = 2
+
+# ── Stagnation Exit ────────────────────────────────────────────────────────────
+STAGNATION_MIN_HOURS        = 4.0
+STAGNATION_PROFIT_MIN_HOURS = 24.0
+STAGNATION_RANGE_PCT        = 0.5
+
+# ── Scalp Scan Triggers ────────────────────────────────────────────────────────
+SCALP_BUBBLE_MIN_PCT   = 30.0
+SCALP_CRASH_MIN_PCT    = 20.0
+SCALP_SHORT_RSI_THRESH = 82.0
+SCALP_LONG_RSI_THRESH  = 18.0
+SCALP_BOUNCE_PCT       = 1.0
+SCALP_SCAN_INTERVAL    = 300
+SCALP_SCAN_INTERVAL_WAIT = 600
+
+# ── High-Velocity / Cliff ──────────────────────────────────────────────────────
+CLIFF_DROP_PCT        = 2.5
+CLIFF_VOL_MULT        = 3.0
+CLIFF_RSI_OVERBOUGHT  = 70.0
+CLIFF_SL_PCT          = 2.5
+CLIFF_TP_PCT          = 3.0
+CLIFF_BE_TRIGGER_PCT  = 1.5
+CLIFF_TRAIL_PCT       = 1.5
+CLIFF_LEVERAGE        = 10
+CLIFF_MARGIN          = 50.0
+CLIFF_POS_SIZE        = CLIFF_MARGIN * CLIFF_LEVERAGE
+CLIFF_MAX_DURATION_MIN = 30
+MAX_CLIFF_TRADES      = 2
+CLIFF_SCAN_INTERVAL   = 120
+
+# ── Slow-Movers Blacklist ──────────────────────────────────────────────────────
+SLOW_MOVERS = {'TRX/USDT', 'ADA/USDT'}
+
+# ── Logging ────────────────────────────────────────────────────────────────────
+VERBOSE_LOG = False
+
+# ── Symbol Lists ──────────────────────────────────────────────────────────────
+ENERGY_GEO = ['POWR/USDT', 'HNT/USDT', 'WLD/USDT']
+
+TOP10_SYMBOLS = [
+    'BTC/USDT', 'ETH/USDT',
+    'BNB/USDT', 'SOL/USDT', 'XRP/USDT', 'ADA/USDT',
+    'DOGE/USDT', 'AVAX/USDT', 'DOT/USDT', 'LINK/USDT', 'TRX/USDT',
+    'ATOM/USDT', 'NEAR/USDT', 'APT/USDT', 'SUI/USDT', 'ARB/USDT',
+    'OP/USDT',   'INJ/USDT',
+    'FET/USDT', 'RENDER/USDT', 'ONDO/USDT',
+]
+
+SECTOR_PRIORITY_SYMBOLS = {'FET/USDT', 'RENDER/USDT', 'ONDO/USDT'}
+
+MAJOR_WATCH_COINS = [
+    'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'XRP/USDT',
+    'SOL/USDT', 'ADA/USDT', 'AVAX/USDT', 'DOGE/USDT',
+]
+MAJOR_WATCH_ICONS = {
+    'BTC': '₿', 'ETH': '🔷', 'BNB': '🟡', 'XRP': '🔵',
+    'SOL': '🌞', 'ADA': '🔶', 'AVAX': '🔺', 'DOGE': '🐕',
+}
+
+# ── Sector Map ────────────────────────────────────────────────────────────────
+SECTOR_MAP: dict[str, str] = {
+    'ETH': 'L1', 'SOL': 'L1', 'AVAX': 'L1', 'APT': 'L1', 'NEAR': 'L1',
+    'SUI': 'L1', 'SEI': 'L1', 'ATOM': 'L1', 'DOT': 'L1', 'ADA': 'L1',
+    'TRX': 'L1', 'TON': 'L1', 'FTM': 'L1', 'ONE': 'L1', 'ALGO': 'L1',
+    'MATIC': 'L2', 'ARB': 'L2', 'OP': 'L2', 'IMX': 'L2', 'ZK': 'L2',
+    'STRK': 'L2', 'MANTA': 'L2', 'BLAST': 'L2', 'METIS': 'L2',
+    'UNI': 'DeFi', 'AAVE': 'DeFi', 'CRV': 'DeFi', 'MKR': 'DeFi',
+    'COMP': 'DeFi', 'SNX': 'DeFi', 'BAL': 'DeFi', 'SUSHI': 'DeFi',
+    'JUP': 'DeFi', 'DYDX': 'DeFi', 'GMX': 'DeFi', 'ENA': 'DeFi',
+    'FET': 'AI', 'AGIX': 'AI', 'OCEAN': 'AI', 'RENDER': 'AI', 'TAO': 'AI',
+    'WLD': 'AI', 'ALT': 'AI', 'GRT': 'AI',
+    'AXS': 'Gaming', 'SAND': 'Gaming', 'MANA': 'Gaming', 'ENJ': 'Gaming',
+    'GALA': 'Gaming', 'ILV': 'Gaming', 'YGG': 'Gaming',
+    'DOGE': 'Meme', 'SHIB': 'Meme', 'PEPE': 'Meme', 'FLOKI': 'Meme',
+    'BONK': 'Meme', 'WIF': 'Meme', 'BOME': 'Meme',
+    'BNB': 'CEX', 'OKB': 'CEX', 'CRO': 'CEX', 'KCS': 'CEX', 'GT': 'CEX',
+    'HT': 'CEX', 'BGB': 'CEX',
+    'BTC': 'BTC', 'WBTC': 'BTC', 'STX': 'BTC', 'ORDI': 'BTC',
+    'LINK': 'Oracle', 'BAND': 'Oracle', 'TRB': 'Oracle', 'API3': 'Oracle',
+}
+
+# ── FNG Defaults ───────────────────────────────────────────────────────────────
+FNG_DEFAULTS = {'extreme_fear': 25, 'fear': 30, 'greed': 70}
+CONFIG_DEFAULTS = {'max_trades': 3}
+
+# ── Heartbeat / Audit ──────────────────────────────────────────────────────────
+HEARTBEAT_INTERVAL = 1800   # 30 minutes
+AUDIT_HOURS = {12}          # Daily report at 12:00
+
+# ── Make.com Webhook ───────────────────────────────────────────────────────────
+MAKE_INCOMING_SECRET = 'sniper2026'

@@ -48,14 +48,29 @@ Every package extends `tsconfig.base.json` which sets `composite: true`. The roo
 - `pnpm run build` — runs `typecheck` first, then recursively runs `build` in all packages that define it
 - `pnpm run typecheck` — runs `tsc --build --emitDeclarationOnly` using project references
 
-## Trading Bot (bot.py)
+## Trading Bot — Modular Architecture
 
-Python crypto trading bot running on Bitget demo mode.
+Python crypto trading bot running on Bitget demo mode. **Refactored into 3 modules** (May 2026).
 
-### Key Constants (bot.py top)
-- `MIN_SCORE=90`, `MAX_TRADES=5`, `LEVERAGE=10`, `MARGIN=50`, `POSITION_SIZE=500`
+### Module layout
+| File | Purpose |
+|------|---------|
+| `config.py` | All static constants, file paths, env-loaded values. Import everywhere with `from config import *`. |
+| `market_logic.py` | Pure strategy engine: `score_symbol`, `detect_fvg`, `detect_order_blocks` (ICT OB, NEW), `detect_flag`, `detect_bb_squeeze`, `detect_volume_buildup`, `detect_rsi_divergence`, `get_fear_greed`, `get_fng_mode`, `calc_risk_position`, `get_dynamic_sl`. |
+| `bot.py` | Orchestration: scan loop, trade management, Telegram handlers, Flask API, async pre-fetch. |
+| `keep_alive.py` | Flask app — unchanged helper. |
+| `gdrive_reporter.py` | Google Drive audit reporter — unchanged helper. |
+
+### Key Constants (now in config.py)
+- `MIN_SCORE=78`, `MAX_TRADES=3` (dynamic, loaded from config.json), `LEVERAGE=10`, `MARGIN=50`
 - `VERBOSE_LOG=False` — set to `True` for per-symbol scoring breakdown (debug only)
 - `SCALP_SCAN_INTERVAL=300` (5 min active), `SCALP_SCAN_INTERVAL_WAIT=600` (10 min WAIT mode)
+
+### Async OHLCV Pre-fetch
+`_scan_batch()` now calls `asyncio.run(_prefetch_ohlcv(candidates))` before the scoring loop, fetching 4H+1H data for all candidates in parallel via `ccxt.async_support.bitget`. Results cached in `_ohlcv_cache`; `get_data_cached()` serves cache hits transparently.
+
+### Order Block Detection (ICT)
+`detect_order_blocks(df, direction)` in `market_logic.py`: finds the last bearish candle before a 3-candle bullish impulse (Bullish OB) or last bullish candle before a 3-candle bearish impulse (Bearish OB). Scores +3 points if current price is inside or within 1% of the zone.
 
 ### Threads
 | Thread | Interval | Notes |
