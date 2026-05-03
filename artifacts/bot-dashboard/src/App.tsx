@@ -112,6 +112,7 @@ interface Trade {
   peak_price: number;
   trailing_sl: number | null;
   timeframe?: string;
+  track?: string;
 }
 interface TradesData { updated: string; count: number; trades: Trade[]; }
 
@@ -388,9 +389,9 @@ function AnalyticsSidebar({
 
   const COLORS = ['#39ff14', '#f5a623', '#58a6ff', '#bc8cff', '#79c0ff', '#ff4444'];
 
+  // Pie: USDT (available) + per-symbol position share — matches "USDT%/BTC%/active-symbol%" spec
   const pieData = [
-    { name: 'Available', value: Math.max(freeCash, 0) },
-    { name: 'Locked', value: Math.max(lockedBal, 0) },
+    { name: 'USDT', value: Math.max(freeCash, 0) },
     ...trades.map(t => ({ name: t.symbol.replace('/USDT', ''), value: t.pos_size ?? 50 })),
   ].filter(d => d.value > 0);
 
@@ -747,6 +748,13 @@ function TerminalTradeCard({ trade }: { trade: Trade }) {
             background: T.bg, border: `1px solid ${T.border}`,
             borderRadius: 3, padding: '1px 4px',
           }}>{tf}</span>
+          {/* Strategy label — derived from track field (Swing / Breakout / Scalp etc.) */}
+          {trade.track && (
+            <span style={{
+              color: T.purple, fontSize: 9, fontWeight: 700,
+              border: `1px solid ${T.purple}55`, borderRadius: 3, padding: '1px 4px',
+            }}>{trade.track.toUpperCase()}</span>
+          )}
           {badges.map(b => (
             <span key={b.label} style={{
               color: b.color, fontSize: 9, fontWeight: 700,
@@ -893,13 +901,13 @@ function ReasoningLog({
     });
   }
 
-  // Sort by timestamp desc, take newest 20
-  entries.sort((a, b) => b.ts - a.ts);
-  const visible = entries.slice(0, 20);
+  // Sort ascending (oldest→newest) so newest entry is at the bottom; auto-scroll there
+  entries.sort((a, b) => a.ts - b.ts);
+  const visible = entries.slice(-20); // last 20 = newest 20, oldest at top
 
   const totalCount = entries.length;
   useEffect(() => {
-    if (logRef.current) logRef.current.scrollTop = 0; // newest is at top
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; // scroll to newest
   }, [totalCount]);
 
   const LINE_H   = 18;
