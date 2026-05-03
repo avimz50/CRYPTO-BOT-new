@@ -1,10 +1,11 @@
 """
 config.py — Adaptive Sniper 2026
-All static constants and environment-sourced values.
-Dynamic runtime settings (MAX_TRADES, FNG thresholds) remain in bot.py
-because they change at runtime via Telegram / API.
+All static constants, environment-sourced values, and JSON settings loaders.
+Dynamic runtime state (MAX_TRADES, FNG thresholds) is initialised in bot.py
+from the loaders below and mutated there at runtime via Telegram / API.
 """
 import os
+import json
 
 # ── File Paths ─────────────────────────────────────────────────────────────────
 HOT_CANDIDATES_FILE = 'artifacts/bot-dashboard/public/hot_candidates.json'
@@ -196,4 +197,38 @@ HEARTBEAT_INTERVAL = 1800   # 30 minutes
 AUDIT_HOURS = {12}          # Daily report at 12:00
 
 # ── Make.com Webhook ───────────────────────────────────────────────────────────
-MAKE_INCOMING_SECRET = 'sniper2026'
+# Set MAKE_WEBHOOK_SECRET as a Replit secret; never hardcode auth tokens.
+MAKE_INCOMING_SECRET = os.environ.get('MAKE_WEBHOOK_SECRET', '')
+
+
+# ── JSON Settings Loaders ───────────────────────────────────────────────────────
+def load_fng_settings() -> dict:
+    """
+    Reads fng_settings.json and returns validated thresholds.
+    Falls back to FNG_DEFAULTS on any error.
+    """
+    try:
+        with open(FNG_SETTINGS_FILE, 'r') as _f:
+            _d = json.load(_f)
+        return {
+            'extreme_fear': int(_d.get('extreme_fear', FNG_DEFAULTS['extreme_fear'])),
+            'fear':         int(_d.get('fear',         FNG_DEFAULTS['fear'])),
+            'greed':        int(_d.get('greed',        FNG_DEFAULTS['greed'])),
+        }
+    except Exception:
+        return dict(FNG_DEFAULTS)
+
+
+def load_config() -> dict:
+    """
+    Reads config.json and returns validated settings (max_trades clamped 1-5).
+    Falls back to CONFIG_DEFAULTS on any error.
+    """
+    try:
+        with open(CONFIG_FILE, 'r') as _f:
+            _d = json.load(_f)
+        return {
+            'max_trades': max(1, min(5, int(_d.get('max_trades', CONFIG_DEFAULTS['max_trades'])))),
+        }
+    except Exception:
+        return dict(CONFIG_DEFAULTS)

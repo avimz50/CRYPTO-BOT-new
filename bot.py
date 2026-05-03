@@ -6,7 +6,7 @@ import sys
 import asyncio
 import requests
 import ccxt
-import ccxt.async_support as ccxt_async
+import ccxt.pro as ccxt_async
 import telebot
 import time
 import threading
@@ -82,32 +82,8 @@ _kill_switch_active: bool | None = None
 
 # get_fear_greed() → moved to market_logic.py
 
-# ─── Global Sentiment Thresholds ──────────────────────────────────────────────
-_FNG_SETTINGS_FILE = os.path.join(os.path.dirname(__file__), 'fng_settings.json')
-_FNG_DEFAULTS      = {'extreme_fear': 25, 'fear': 30, 'greed': 70}   # Adaptive Sniper: Extreme Fear = <25
-
-def _load_fng_settings() -> dict:
-    try:
-        with open(_FNG_SETTINGS_FILE, 'r') as f:
-            d = json.load(f)
-        return {
-            'extreme_fear': int(d.get('extreme_fear', _FNG_DEFAULTS['extreme_fear'])),
-            'fear':         int(d.get('fear',         _FNG_DEFAULTS['fear'])),
-            'greed':        int(d.get('greed',        _FNG_DEFAULTS['greed'])),
-        }
-    except Exception:
-        return dict(_FNG_DEFAULTS)
-
-def _save_fng_settings():
-    try:
-        with open(_FNG_SETTINGS_FILE, 'w') as f:
-            json.dump({'extreme_fear': EXTREME_FEAR_THRESHOLD,
-                       'fear':         FEAR_THRESHOLD,
-                       'greed':        GREED_THRESHOLD}, f)
-    except Exception as e:
-        print(f"[FNG Settings] שגיאת שמירה: {e}", flush=True)
-
-_fng_loaded         = _load_fng_settings()
+# ─── Global Sentiment Thresholds — loaded via config.load_fng_settings() ──────
+_fng_loaded            = load_fng_settings()   # from config import *
 EXTREME_FEAR_THRESHOLD = _fng_loaded['extreme_fear']  # Kill-Switch: אין עסקאות חדשות בכלל
 FEAR_THRESHOLD         = _fng_loaded['fear']           # Fear Filter: RSI<30 ל-LONG + SL+1%
 GREED_THRESHOLD        = _fng_loaded['greed']          # Greed Filter: פוזיציה ×60% + BE@+2%
@@ -116,30 +92,33 @@ FEAR_EXTRA_SL_PCT      = 1.0  # % נוסף ל-SL בתנאי פחד
 
 print(f"[FNG Settings] נטענו: extreme={EXTREME_FEAR_THRESHOLD} fear={FEAR_THRESHOLD} greed={GREED_THRESHOLD}", flush=True)
 
-# ─── Bot Config — max_trades ו-הגדרות שנשמרות בין הפעלות ─────────────────────
-_CONFIG_FILE    = os.path.join(os.path.dirname(__file__), 'config.json')
-_CONFIG_DEFAULTS = {'max_trades': 3}
 
-def _load_config() -> dict:
+def _save_fng_settings():
+    """Persist runtime FNG thresholds to fng_settings.json."""
     try:
-        with open(_CONFIG_FILE, 'r') as f:
-            d = json.load(f)
-        return {
-            'max_trades': max(1, min(5, int(d.get('max_trades', _CONFIG_DEFAULTS['max_trades'])))),
-        }
-    except Exception:
-        return dict(_CONFIG_DEFAULTS)
+        import json as _json
+        with open(FNG_SETTINGS_FILE, 'w') as _f:
+            _json.dump({'extreme_fear': EXTREME_FEAR_THRESHOLD,
+                        'fear':         FEAR_THRESHOLD,
+                        'greed':        GREED_THRESHOLD}, _f)
+    except Exception as _e:
+        print(f"[FNG Settings] שגיאת שמירה: {_e}", flush=True)
+
+
+# ─── Bot Config — max_trades via config.load_config() ─────────────────────────
+_config_loaded = load_config()   # from config import *
+print(f"[Config] נטען: max_trades={_config_loaded['max_trades']}", flush=True)
+
 
 def _save_config():
+    """Persist runtime MAX_TRADES to config.json."""
     try:
-        with open(_CONFIG_FILE, 'w') as f:
-            json.dump({'max_trades': MAX_TRADES}, f, indent=2)
+        import json as _json
+        with open(CONFIG_FILE, 'w') as _f:
+            _json.dump({'max_trades': MAX_TRADES}, _f, indent=2)
         print(f"[Config] שמור: max_trades={MAX_TRADES}", flush=True)
-    except Exception as e:
-        print(f"[Config] שגיאת שמירה: {e}", flush=True)
-
-_config_loaded = _load_config()
-print(f"[Config] נטען: max_trades={_config_loaded['max_trades']}", flush=True)
+    except Exception as _e:
+        print(f"[Config] שגיאת שמירה: {_e}", flush=True)
 
 # ─── Daily Circuit Breaker ─────────────────────────────────────────────────────
 DAILY_LOSS_LIMIT            = -30.0   # -$30 = 15% מ-$200 יתרת פתיחה
@@ -921,7 +900,7 @@ def api_fng_settings_get():
     })
 
 # ─── Make.com Incoming Webhook ────────────────────────────────────────────────
-MAKE_INCOMING_SECRET = "sniper2026"   # טוקן אימות — Make צריך לשלוח בJSON
+# MAKE_INCOMING_SECRET loaded from env via config.py (from config import *)
 
 @flask_app.route('/api/make', methods=['POST'])
 def api_make_command():
@@ -929,7 +908,7 @@ def api_make_command():
     מקבל פקודות / ניתוח מ-Make.com Agent.
 
     גוף JSON נדרש:
-      { "secret": "sniper2026", "command": "<cmd>", ... }
+      { "secret": "<MAKE_WEBHOOK_SECRET env var>", "command": "<cmd>", ... }
 
     פקודות נתמכות:
       news_alert   — { symbol, headline, sentiment }
@@ -1530,7 +1509,7 @@ _async_exchange_instance = None
 
 
 async def _get_async_exchange():
-    """Returns (or creates) the shared ccxt.async_support.bitget instance."""
+    """Returns (or creates) the shared ccxt.pro.bitget async instance."""
     global _async_exchange_instance
     if _async_exchange_instance is None:
         _async_exchange_instance = ccxt_async.bitget({
