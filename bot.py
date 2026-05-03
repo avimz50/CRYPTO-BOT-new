@@ -1235,6 +1235,10 @@ def wallet_credit(pnl_usd: float, amount: float = MARGIN):
     """זיכוי מרג'ין + P&L בסגירת עסקה. amount צריך להתאים ל-wallet_deduct."""
     wallet['balance']   = round(wallet.get('balance', STARTING_BALANCE) + amount + pnl_usd, 2)
     wallet['total_pnl'] = round(wallet.get('total_pnl', 0.0) + pnl_usd, 2)
+    if pnl_usd >= 0:
+        wallet['total_wins']   = wallet.get('total_wins', 0) + 1
+    else:
+        wallet['total_losses'] = wallet.get('total_losses', 0) + 1
     _append_equity_point()
     save_wallet()
 
@@ -4174,6 +4178,50 @@ def handle_test(message):
     except Exception as e:
         send_msg(f"❌ שגיאה בטסט: {e}")
 
+@bot.message_handler(commands=['wallet'])
+def handle_wallet(message):
+    """מציג סיכום מלא של הארנק הווירטואלי."""
+    with trades_lock:
+        n_open      = len(active_trades)
+        locked      = sum(t.get('margin', MARGIN) for t in active_trades)
+    available   = wallet.get('balance', STARTING_BALANCE)
+    start       = wallet.get('starting', STARTING_BALANCE)
+    realized    = wallet.get('total_pnl', 0.0)
+    unrealized  = _get_unrealized_pnl()
+    equity      = _get_equity()
+    eq_pct      = round((equity - start) / start * 100, 1)
+    today_pnl   = round(daily_stats.get('total_pnl', 0.0), 2)
+    wins        = daily_stats.get('wins', 0)
+    losses      = daily_stats.get('losses', 0)
+    total_trades= wallet.get('trades_opened', 0)
+    total_wins  = wallet.get('total_wins', 0)
+    total_losses= wallet.get('total_losses', 0)
+    wr          = round(total_wins / (total_wins + total_losses) * 100) if (total_wins + total_losses) > 0 else 0
+
+    eq_arrow    = "📈" if equity >= start else "📉"
+    r_icon      = "📈" if realized  >= 0 else "📉"
+    u_icon      = "📈" if unrealized >= 0 else "📉"
+    t_icon      = "📈" if today_pnl >= 0 else "📉"
+    eq_color    = "🟢" if equity >= start else "🔴"
+
+    msg  = f"💼 *ארנק וירטואלי — סיכום מלא*\n"
+    msg += f"{'━' * 22}\n"
+    msg += f"💰 *יתרה פנויה:* `${available:.2f}`\n"
+    msg += f"🔒 *נעול בעסקאות:* `${locked:.2f}` ({n_open} עסקאות)\n"
+    msg += f"{'━' * 22}\n"
+    msg += f"{u_icon} *Unrealized P&L:* `${unrealized:+.2f}`\n"
+    msg += f"{r_icon} *Realized P&L כולל:* `${realized:+.2f}`\n"
+    msg += f"{t_icon} *Realized היום:* `${today_pnl:+.2f}`\n"
+    msg += f"{'━' * 22}\n"
+    msg += f"{eq_color} *Equity:* `${equity:.2f}` ({eq_arrow} {eq_pct:+.1f}% מ-${start:.0f})\n"
+    msg += f"{'━' * 22}\n"
+    msg += f"📊 *סטטיסטיקה היום:* ✅{wins} / ❌{losses}\n"
+    msg += f"📈 *Win Rate כולל:* {wr}% ({total_wins}W / {total_losses}L)\n"
+    msg += f"🔢 *סה\"כ עסקאות שנפתחו:* {total_trades}\n"
+
+    send_msg(msg)
+
+
 @bot.message_handler(commands=['status'])
 def handle_status(message):
     # רענן מחירים חיים לפני הצגת הסטטוס
@@ -5496,6 +5544,7 @@ def handle_home(message):
         f"{'─' * 30}\n"
         f"📋 *פקודות מידע*\n"
         f"  /status     — עסקאות פעילות + SL/TP\n"
+        f"  /wallet     — סיכום ארנק מלא (יתרה, equity, win rate)\n"
         f"  /report     — דוח יומי מלא (סטטיסטיקות)\n"
         f"  /audit      — דוח ניתוח AI מלא (Gemini)\n"
         f"  /scanreport — דוח סריקה אחרון\n"
