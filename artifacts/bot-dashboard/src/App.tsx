@@ -191,6 +191,26 @@ function FearGreedGauge({ value, label }: { value: number | null; label: string 
   );
 }
 
+function FearGreedDigital({ value, label }: { value: number | null; label: string | null }) {
+  const v = value ?? 50;
+  const color = fngColor(v);
+  const strength = v < 25 ? 'קיצוני' : v < 45 ? 'פחד' : v < 55 ? 'נייטרלי' : v < 75 ? 'חמדנות' : 'קיצוני';
+  return (
+    <div className="rounded-2xl border border-gray-800 bg-gray-950/70 px-4 py-4 text-center shadow-lg"
+      style={{ background: 'linear-gradient(135deg, #08111f 0%, #0d1b2f 100%)' }}>
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-xs uppercase tracking-[0.25em] text-gray-500">Fear & Greed</span>
+        <span className="text-xs text-gray-500">Alternative.me · live</span>
+      </div>
+      <div className="font-mono leading-none" style={{ color, textShadow: `0 0 18px ${color}55` }}>
+        <div className="text-7xl md:text-8xl font-black">{v}</div>
+        <div className="mt-2 text-lg font-bold">{label ?? 'Neutral'}</div>
+        <div className="mt-1 text-sm text-gray-400">מצב: {strength}</div>
+      </div>
+    </div>
+  );
+}
+
 interface Candidate {
   symbol: string;
   change_pct: number;
@@ -1181,34 +1201,7 @@ export default function App() {
         </div>
 
         {/* Fear & Greed Gauge */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4"
-             style={{ background: 'linear-gradient(135deg, #0d1117 0%, #0f1b2d 100%)' }}>
-          <div className="flex items-center justify-between mb-1">
-            <div className="flex items-center gap-2">
-              <span className="text-base">📊</span>
-              <h2 className="font-semibold text-gray-300 text-sm">מדד הפחד והחמדנות</h2>
-            </div>
-            <span className="text-xs text-gray-600">Alternative.me · live</span>
-          </div>
-          <FearGreedGauge value={fngData?.value ?? null} label={fngData?.label ?? null} />
-          {fngData && (
-            <>
-              <p className="text-center text-xs mt-1" style={{ color: fngColor(fngData.value) }}>
-                {fngData.value < 25 || fngData.value > 75
-                  ? `השפעה על ניקוד: ${fngData.value < 25 ? 'LONG +5 / SHORT -5' : 'SHORT +5 / LONG -5'}`
-                  : fngData.value < 45 || fngData.value > 55
-                  ? `השפעה על ניקוד: ${fngData.value < 45 ? 'LONG +2 / SHORT -2' : 'SHORT +2 / LONG -2'}`
-                  : 'השפעה על ניקוד: נייטרלי (0)'}
-              </p>
-              {fngData.updated_at ? (
-                <p className="text-center text-xs mt-1 text-gray-600">
-                  עודכן: {new Date(fngData.updated_at * 1000).toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                  {fngData.time_until_update ? ` · עדכון הבא בעוד ${Math.round(fngData.time_until_update / 3600)}ש` : ''}
-                </p>
-              ) : null}
-            </>
-          )}
-        </div>
+        <FearGreedDigital value={fngData?.value ?? null} label={fngData?.label ?? null} />
 
         {/* FNG Settings Panel */}
         <FngSettingsPanel botApi={BOT_API} />
