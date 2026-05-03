@@ -47,15 +47,45 @@ function fetchFromFlask(endpoint: string, fallbackFile: string, fallback: unknow
   });
 }
 
+/** In-memory close-price series accumulated from active_trades polling */
+const _priceHistory = new Map<string, Array<{ ts: number; price: number }>>();
+const MAX_HIST = 80;
+
+function _recordPrices(tradesPayload: unknown): void {
+  const payload = tradesPayload as { trades?: Array<{ symbol: string; current_price?: number }> };
+  if (!Array.isArray(payload?.trades)) return;
+  const now = Date.now();
+  for (const t of payload.trades) {
+    if (!t.symbol || t.current_price == null) continue;
+    const arr = _priceHistory.get(t.symbol) ?? [];
+    // Only append if price changed or >15 s since last point
+    const last = arr[arr.length - 1];
+    if (!last || last.price !== t.current_price || now - last.ts > 15_000) {
+      arr.push({ ts: now, price: t.current_price });
+      if (arr.length > MAX_HIST) arr.splice(0, arr.length - MAX_HIST);
+    }
+    _priceHistory.set(t.symbol, arr);
+  }
+}
+
 router.get("/trades", async (_req, res) => {
   const data = await fetchFromFlask("/api/trades", path.join(PUBLIC, "active_trades.json"), { updated: null, count: 0, trades: [] });
+  _recordPrices(data);
   res.json(data);
 });
 
 /** Alias: /active_trades → same as /trades (required by dashboard spec) */
 router.get("/active_trades", async (_req, res) => {
   const data = await fetchFromFlask("/api/trades", path.join(PUBLIC, "active_trades.json"), { updated: null, count: 0, trades: [] });
+  _recordPrices(data);
   res.json(data);
+});
+
+/** Close-price series for a single symbol — used by dashboard mini charts */
+router.get("/price_history/:symbol", (req, res) => {
+  const symbol = decodeURIComponent(req.params.symbol ?? "");
+  const hist   = _priceHistory.get(symbol) ?? [];
+  res.json({ symbol, count: hist.length, series: hist });
 });
 
 /** /status — combined connection/equity/FNG snapshot for the top status bar */

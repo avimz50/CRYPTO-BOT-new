@@ -1,6 +1,6 @@
 {
-  "updated": "2026-05-03T22:20:05+03:00",
-  "count": 17,
+  "updated": "2026-05-03T23:36:28+03:00",
+  "count": 18,
   "trades": [
     {
       "symbol": "TRX/USDT",
@@ -541,6 +541,38 @@
       "scalp": false,
       "hunter_mode": false,
       "lesson": "📉 Stagnation — עסקה הפסידה $-0.23 · 18758 דקות · Score=88. חזור על ניתוח הכניסה.",
+      "prebreakout_signals": "None"
+    },
+    {
+      "symbol": "LAB/USDT",
+      "direction": "LONG",
+      "timeframe": "1H",
+      "entry_price": 2.26133,
+      "close_price": 2.26022,
+      "sl_at_open": 2.26359133,
+      "tp_at_open": 3.981749864,
+      "dist_sl_pct": 0.1,
+      "dist_tp_pct": 76.08,
+      "rr_ratio": 760.8,
+      "rr_achieved": 0.49,
+      "score": 82,
+      "rsi": 60.37,
+      "ema200": 1.108624,
+      "score_breakdown": "EMA_bypass(vol×1.8≥1.5) | Trend=25/25 | MACD=15/15 | RSI=10/10(=60) | BB=12/20 | Vol=20/30(×1.8) | Candles=0/0(filtered) | Flag=0(no:flag too wide (0.8335 > 60% of) | FVG=0(FVG(LONG) gap=14.13% [1.825–2.082] ) | Squeeze=0(no squeeze (width=2.09× avg)) | VolBuild=0(no buildup (streak=0)) | RSIDiv=0(RSI div error: index 30 i) | FNG=47(+0)  →  TOTAL=82/100",
+      "strategy": "",
+      "track": "Swing",
+      "slippage_pct": 0.0,
+      "close_reason": "BE",
+      "pnl_usd": 0.0,
+      "opened_at": "2026-05-03T22:22:20+03:00",
+      "closed_at": "2026-05-03T23:36:28+03:00",
+      "fng_at_entry": 47,
+      "atr": 0.382265,
+      "duration_min": 74.1,
+      "sniper": false,
+      "scalp": false,
+      "hunter_mode": true,
+      "lesson": "🔒 Capital Preserved — עסקה יצאה ב-Break Even. תזה לא המשיכה אך הון לא אבד. עסקה הבשילה לאט — שוק לא שיתף פעולה.",
       "prebreakout_signals": "None"
     }
   ]

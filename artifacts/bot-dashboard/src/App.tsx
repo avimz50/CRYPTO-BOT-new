@@ -1,5 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
+import {
+  PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
+  AreaChart, Area, ReferenceLine, YAxis, ComposedChart,
+} from "recharts";
 
 /* ══════════════════════════════════════════════
    TERMINAL COLOUR PALETTE
@@ -199,6 +202,48 @@ function useJson<T>(primaryUrl: string, fallbackUrl: string, interval = 30_000) 
     return () => clearInterval(id);
   }, [primaryUrl, fallbackUrl, interval, refreshKey]);
   return { data, refetch };
+}
+
+interface PricePoint { ts: number; price: number; }
+
+/** Fetches real close-price series for a symbol from /api/price_history/:symbol */
+function usePriceHistory(botApi: string, symbol: string, interval = 15_000) {
+  const [series, setSeries] = useState<PricePoint[]>([]);
+  useEffect(() => {
+    const sym = encodeURIComponent(symbol);
+    const load = () =>
+      fetch(`${botApi}/api/price_history/${sym}?t=${Date.now()}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d?.series?.length) setSeries(d.series); })
+        .catch(() => {});
+    load();
+    const id = setInterval(load, interval);
+    return () => clearInterval(id);
+  }, [botApi, symbol, interval]);
+  return series;
+}
+
+/** Animate a numeric value from its previous to its current value (count-up/down) */
+function useCountUp(target: number, duration = 500) {
+  const [display, setDisplay] = useState(target);
+  const prevRef = useRef(target);
+  const rafRef  = useRef<number>(0);
+  useEffect(() => {
+    const from  = prevRef.current;
+    const delta = target - from;
+    if (Math.abs(delta) < 0.001) { prevRef.current = target; return; }
+    const start = performance.now();
+    const step  = (now: number) => {
+      const t = Math.min((now - start) / duration, 1);
+      const ease = 1 - Math.pow(1 - t, 3); // cubic ease-out
+      setDisplay(from + delta * ease);
+      if (t < 1) rafRef.current = requestAnimationFrame(step);
+      else { setDisplay(target); prevRef.current = target; }
+    };
+    rafRef.current = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [target, duration]);
+  return display;
 }
 
 function fmt(n: number) {
@@ -584,58 +629,59 @@ function SlTpBar({ trade }: { trade: Trade }) {
 }
 
 /* ══════════════════════════════════════════════
-   MINI PRICE CHART (SVG sparkline per trade)
+   MINI PRICE CHART — recharts AreaChart
+   Uses real accumulated close-price series from /api/price_history/:symbol.
+   Falls back to a 2-point line (entry → current) when no history yet.
 ══════════════════════════════════════════════ */
 function MiniPriceChart({ trade }: { trade: Trade }) {
   const cp     = trade.current_price ?? trade.entry;
   const isLong = trade.direction === 'LONG';
-  const lo     = Math.min(trade.sl, cp, trade.entry) * 0.998;
-  const hi     = Math.max(trade.tp, cp, trade.entry) * 1.002;
-  const range  = hi - lo || 1;
-  const W = 120, H = 40;
-
-  const py = (v: number) => H - ((v - lo) / range) * H;
-  const entryY = py(trade.entry);
-  const cpY    = py(cp);
-
   const pnlPct = isLong ? ((cp - trade.entry) / trade.entry * 100) : ((trade.entry - cp) / trade.entry * 100);
   const color  = pnlPct >= 0 ? T.green : T.red;
 
-  // Close-price line: entry (left) → peak_price (mid) → current (right)
-  // All three values are real API data — no synthetic noise
-  const peakY = py(trade.peak_price && trade.peak_price !== trade.entry ? trade.peak_price : Math.max(trade.entry, cp));
-  const polyline = `0,${entryY.toFixed(1)} ${(W/2).toFixed(1)},${peakY.toFixed(1)} ${W},${cpY.toFixed(1)}`;
-  const lastPt   = [String(W), cpY.toFixed(1)];
+  // Accumulated real close-price series from API
+  const history = usePriceHistory(BOT_API, trade.symbol, 15_000);
+
+  // Build chart data: use real series if available, else fallback 2-point line
+  const chartData: { price: number }[] = history.length >= 2
+    ? history.map(p => ({ price: p.price }))
+    : [{ price: trade.entry }, { price: cp }];
+
+  const prices = chartData.map(d => d.price);
+  const lo = Math.min(...prices, trade.sl)  * 0.998;
+  const hi = Math.max(...prices, trade.tp)  * 1.002;
+
+  const gradId = `mg-${trade.symbol.replace('/', '')}`;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H}
-      style={{ display: 'block', flexShrink: 0, opacity: 0.9 }}>
-      <defs>
-        <linearGradient id={`mg-${trade.symbol}`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.25" />
-          <stop offset="100%" stopColor={color} stopOpacity="0.02" />
-        </linearGradient>
-      </defs>
-      {/* SL line */}
-      <line x1={0} y1={py(trade.sl)} x2={W} y2={py(trade.sl)}
-        stroke={T.red} strokeWidth={0.7} strokeDasharray="2 2" opacity={0.5} />
-      {/* TP line */}
-      <line x1={0} y1={py(trade.tp)} x2={W} y2={py(trade.tp)}
-        stroke={T.green} strokeWidth={0.7} strokeDasharray="2 2" opacity={0.5} />
-      {/* Entry line */}
-      <line x1={0} y1={entryY} x2={W} y2={entryY}
-        stroke={T.amber} strokeWidth={0.7} strokeDasharray="3 2" opacity={0.7} />
-      {/* Area fill */}
-      <polygon
-        points={`0,${entryY} ${polyline} ${W},${entryY}`}
-        fill={`url(#mg-${trade.symbol})`}
-      />
-      {/* Price line */}
-      <polyline points={polyline} fill="none" stroke={color} strokeWidth={1.5} strokeLinejoin="round" />
-      {/* Current dot */}
-      <circle cx={parseFloat(lastPt[0])} cy={parseFloat(lastPt[1])} r={3}
-        fill={color} style={{ filter: `drop-shadow(0 0 4px ${color})` }} />
-    </svg>
+    <div style={{ width: 120, height: 48, flexShrink: 0 }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={chartData} margin={{ top: 2, right: 2, bottom: 2, left: 0 }}>
+          <defs>
+            <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%"   stopColor={color} stopOpacity={0.3} />
+              <stop offset="100%" stopColor={color} stopOpacity={0.02} />
+            </linearGradient>
+          </defs>
+          <YAxis domain={[lo, hi]} hide />
+          {/* SL dashed reference */}
+          <ReferenceLine y={trade.sl}    stroke={T.red}   strokeDasharray="2 2" strokeWidth={0.7} />
+          {/* TP dashed reference */}
+          <ReferenceLine y={trade.tp}    stroke={T.green} strokeDasharray="2 2" strokeWidth={0.7} />
+          {/* Entry reference */}
+          <ReferenceLine y={trade.entry} stroke={T.amber} strokeDasharray="3 2" strokeWidth={0.7} />
+          <Area
+            type="monotone"
+            dataKey="price"
+            stroke={color}
+            strokeWidth={1.5}
+            fill={`url(#${gradId})`}
+            dot={false}
+            isAnimationActive={false}
+          />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
 
@@ -741,20 +787,8 @@ function TerminalTradeCard({ trade }: { trade: Trade }) {
             <DataRow label="TRAIL SL" value={fmt(trade.trailing_sl!)} color={T.purple} />
           )}
           <DataRow label="ATR" value={fmt(trade.atr)} color={T.dimmer} />
-          {/* P&L */}
-          <div style={{
-            marginTop: 4, display: 'flex', justifyContent: 'space-between',
-            alignItems: 'baseline', borderTop: `1px solid ${T.border}`, paddingTop: 6,
-          }}>
-            <span style={{ color: T.dimmer, fontSize: 10 }}>P&L</span>
-            <span style={{
-              color: pnlColor, fontSize: 14, fontWeight: 700,
-              textShadow: isProfit ? `0 0 8px ${T.green}55` : undefined,
-            }}>
-              {pnlUsd >= 0 ? '+' : ''}{pnlUsd.toFixed(2)}$
-              <span style={{ fontSize: 10, marginLeft: 4 }}>({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%)</span>
-            </span>
-          </div>
+          {/* P&L — count-up animation on change */}
+          <PnlDisplay pnlUsd={pnlUsd} pnlPct={pnlPct} pnlColor={pnlColor} isProfit={isProfit} />
         </div>
 
         {/* Mini chart */}
@@ -780,31 +814,102 @@ function DataRow({ label, value, color }: { label: string; value: string; color:
   );
 }
 
+/** P&L row with count-up animation whenever pnlUsd changes */
+function PnlDisplay({
+  pnlUsd, pnlPct, pnlColor, isProfit,
+}: { pnlUsd: number; pnlPct: number; pnlColor: string; isProfit: boolean }) {
+  const animUsd = useCountUp(pnlUsd, 450);
+  const animPct = useCountUp(pnlPct, 450);
+  return (
+    <div style={{
+      marginTop: 4, display: 'flex', justifyContent: 'space-between',
+      alignItems: 'baseline', borderTop: `1px solid ${T.border}`, paddingTop: 6,
+    }}>
+      <span style={{ color: T.dimmer, fontSize: 10 }}>P&L</span>
+      <span style={{
+        color: pnlColor, fontSize: 14, fontWeight: 700,
+        textShadow: isProfit ? `0 0 8px ${T.green}55` : undefined,
+      }}>
+        {animUsd >= 0 ? '+' : ''}{animUsd.toFixed(2)}$
+        <span style={{ fontSize: 10, marginLeft: 4 }}>
+          ({animPct >= 0 ? '+' : ''}{animPct.toFixed(2)}%)
+        </span>
+      </span>
+    </div>
+  );
+}
+
 /* ══════════════════════════════════════════════
    REASONING LOG (terminal feed)
-   Format: HH:MM:SS | SYMBOL | message (from reasoning/lesson field)
-   Mobile: 8 lines (~144px); Desktop: 15 lines (~270px)
+   Format: HH:MM:SS | SYMBOL | message
+   Sources: trade_audit (closed trades) + last_scan (near-misses, scan events)
+   Mobile: 8 lines; Desktop: 15 lines
 ══════════════════════════════════════════════ */
-function ReasoningLog({ audit, isMobile }: { audit: AuditData | null; isMobile: boolean }) {
+interface LogEntry { ts: number; tsStr: string; sym: string; message: string; color: string; }
+
+function ReasoningLog({
+  audit, scan, isMobile,
+}: { audit: AuditData | null; scan: ScanData | null; isMobile: boolean }) {
   const logRef = useRef<HTMLDivElement>(null);
-  const allTrades = audit?.trades ?? [];
 
-  useEffect(() => {
-    if (logRef.current) {
-      logRef.current.scrollTop = logRef.current.scrollHeight;
+  // Build merged entries from both sources
+  const entries: LogEntry[] = [];
+
+  // 1. Closed-trade audit entries
+  for (const t of (audit?.trades ?? [])) {
+    const ts = t.closed_at ? new Date(t.closed_at).getTime() : 0;
+    const tsStr = t.closed_at
+      ? new Date(t.closed_at).toLocaleTimeString('he-IL',
+          { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      : '--:--:--';
+    const sym = t.symbol.replace('/USDT', '');
+    const msg = [
+      t.track && t.track !== sym ? t.track : null,
+      `${t.close_reason} ${t.pnl_usd >= 0 ? '+' : ''}${t.pnl_usd.toFixed(2)}$`,
+      t.lesson,
+    ].filter(Boolean).join(' · ');
+    const color =
+      t.close_reason === 'TP' ? T.green :
+      t.close_reason === 'SL' ? T.red :
+      t.close_reason === 'BE' ? T.amber : T.blue;
+    entries.push({ ts, tsStr, sym, message: msg, color });
+  }
+
+  // 2. Scan near-miss entries from last_scan.rejected_coins
+  if (scan?.scan_time && scan.rejected_coins?.length) {
+    const scanTs  = new Date(scan.scan_time).getTime();
+    const tsStr   = new Date(scan.scan_time).toLocaleTimeString('he-IL',
+        { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    for (const r of scan.rejected_coins.slice(0, 5)) {
+      const sym = r.symbol.replace('/USDT', '');
+      const msg = `[SCAN] score=${r.best_score} · ${r.reason ?? 'near-miss'}`;
+      entries.push({ ts: scanTs, tsStr, sym, message: msg, color: T.dimmer });
     }
-  }, [allTrades.length]);
+    // Also add the scan summary line
+    entries.push({
+      ts: scanTs, tsStr, sym: 'BOT',
+      message: `scan done: ${scan.signals_found} signals · BTC ${scan.btc_regime} · FNG ${scan.fng_value}`,
+      color: T.cyan,
+    });
+  }
 
-  // Last 20 entries (newest first), each formatted as a terminal reasoning line
-  const entries = [...allTrades].reverse().slice(0, 20);
-  const LINE_H = 18;
+  // Sort by timestamp desc, take newest 20
+  entries.sort((a, b) => b.ts - a.ts);
+  const visible = entries.slice(0, 20);
+
+  const totalCount = entries.length;
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = 0; // newest is at top
+  }, [totalCount]);
+
+  const LINE_H   = 18;
   const logHeight = isMobile ? LINE_H * 8 : LINE_H * 15;
 
   return (
     <div style={panel}>
       <PanelHeader
         label="BOT REASONING LOG"
-        right={`${allTrades.length} entries · auto-scroll`}
+        right={`${totalCount} entries · newest first`}
       />
       <div
         ref={logRef}
@@ -814,38 +919,20 @@ function ReasoningLog({ audit, isMobile }: { audit: AuditData | null; isMobile: 
           display: 'flex', flexDirection: 'column', gap: 0,
         }}
       >
-        {entries.length === 0 ? (
+        {visible.length === 0 ? (
           <span style={{ color: T.green, lineHeight: `${LINE_H}px` }}>
-            {'> '}<span style={{ color: T.dimmer }}>waiting for closed trades...</span>
+            {'> '}<span style={{ color: T.dimmer }}>waiting for trade or scan data...</span>
           </span>
         ) : (
-          entries.map((t, i) => {
-            const ts = t.closed_at
-              ? new Date(t.closed_at).toLocaleTimeString('he-IL',
-                  { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-              : '--:--:--';
-            const sym    = t.symbol.replace('/USDT', '');
-            // "reasoning" = track + close_reason + lesson (the bot's decision narrative)
-            const reasoning = [
-              t.track && t.track !== sym ? t.track : null,
-              `${t.close_reason} ${t.pnl_usd >= 0 ? '+' : ''}${t.pnl_usd.toFixed(2)}$`,
-              t.lesson,
-            ].filter(Boolean).join(' · ');
-            const lineColor =
-              t.close_reason === 'TP' ? T.green :
-              t.close_reason === 'SL' ? T.red :
-              t.close_reason === 'BE' ? T.amber : T.blue;
-
-            return (
-              <div key={i} style={{ lineHeight: `${LINE_H}px`, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                <span style={{ color: T.dimmer }}>{ts}</span>
-                <span style={{ color: T.border }}> | </span>
-                <span style={{ color: T.amber, fontWeight: 600 }}>{sym}</span>
-                <span style={{ color: T.border }}> | </span>
-                <span style={{ color: lineColor }}>{reasoning}</span>
-              </div>
-            );
-          })
+          visible.map((e, i) => (
+            <div key={i} style={{ lineHeight: `${LINE_H}px`, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <span style={{ color: T.dimmer }}>{e.tsStr}</span>
+              <span style={{ color: T.border }}> | </span>
+              <span style={{ color: T.amber, fontWeight: 600 }}>{e.sym}</span>
+              <span style={{ color: T.border }}> | </span>
+              <span style={{ color: e.color }}>{e.message}</span>
+            </div>
+          ))
         )}
       </div>
     </div>
@@ -1397,7 +1484,7 @@ export default function App() {
           <LastScanPanel scan={scanData ?? null} />
 
           {/* Reasoning log */}
-          <ReasoningLog audit={auditData ?? null} isMobile={isMobile} />
+          <ReasoningLog audit={auditData ?? null} scan={scanData ?? null} isMobile={isMobile} />
 
           {/* Footer + actions */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0' }}>
