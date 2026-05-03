@@ -224,6 +224,22 @@ function usePriceHistory(botApi: string, symbol: string, interval = 15_000) {
   return series;
 }
 
+/** Returns true for ~700ms whenever `value` changes — used to trigger a pulse animation */
+function usePulse(value: number) {
+  const [pulsing, setPulsing] = useState(false);
+  const prev = useRef(value);
+  useEffect(() => {
+    if (Math.abs(value - prev.current) > 0.001) {
+      prev.current = value;
+      setPulsing(true);
+      const t = setTimeout(() => setPulsing(false), 700);
+      return () => clearTimeout(t);
+    }
+    prev.current = value;
+  }, [value]);
+  return pulsing;
+}
+
 /** Animate a numeric value from its previous to its current value (count-up/down) */
 function useCountUp(target: number, duration = 500) {
   const [display, setDisplay] = useState(target);
@@ -822,22 +838,29 @@ function DataRow({ label, value, color }: { label: string; value: string; color:
   );
 }
 
-/** P&L row with count-up animation whenever pnlUsd changes */
+/** P&L row with count-up animation and pulse/glow whenever pnlUsd changes */
 function PnlDisplay({
   pnlUsd, pnlPct, pnlColor, isProfit,
 }: { pnlUsd: number; pnlPct: number; pnlColor: string; isProfit: boolean }) {
   const animUsd = useCountUp(pnlUsd, 450);
   const animPct = useCountUp(pnlPct, 450);
+  const pulsing = usePulse(pnlUsd);
   return (
     <div style={{
       marginTop: 4, display: 'flex', justifyContent: 'space-between',
       alignItems: 'baseline', borderTop: `1px solid ${T.border}`, paddingTop: 6,
     }}>
       <span style={{ color: T.dimmer, fontSize: 10 }}>P&L</span>
-      <span style={{
-        color: pnlColor, fontSize: 14, fontWeight: 700,
-        textShadow: isProfit ? `0 0 8px ${T.green}55` : undefined,
-      }}>
+      <span
+        className={pulsing ? 'pnl-pulse' : undefined}
+        style={{
+          color: pnlColor, fontSize: 14, fontWeight: 700,
+          textShadow: isProfit ? `0 0 8px ${T.green}55` : undefined,
+          borderRadius: 4, padding: '1px 4px',
+          transition: 'box-shadow 0.15s ease',
+          ['--pulse-color' as string]: pnlColor,
+        }}
+      >
         {animUsd >= 0 ? '+' : ''}{animUsd.toFixed(2)}$
         <span style={{ fontSize: 10, marginLeft: 4 }}>
           ({animPct >= 0 ? '+' : ''}{animPct.toFixed(2)}%)
@@ -1315,7 +1338,7 @@ export default function App() {
   const clock = useClock();
 
   const { data: hotData,    refetch: refetchHot    } = useJson<HotData>(`${BOT_API}/api/hot`,             '/hot_candidates.json',     60_000);
-  const { data: tradesData, refetch: refetchTrades  } = useJson<TradesData>(`${BOT_API}/api/active_trades`, '/active_trades.json',      30_000);
+  const { data: tradesData, refetch: refetchTrades  } = useJson<TradesData>(`${BOT_API}/api/active_trades`, '/active_trades.json',       4_000);
   const { data: walletData, refetch: refetchWallet  } = useJson<WalletData>(`${BOT_API}/api/wallet`,        '/wallet.json',             30_000);
   const { data: fngData,    refetch: refetchFng     } = useJson<FngData>(`${BOT_API}/api/fng`,              '/fng.json',               120_000);
   const { data: scanData,   refetch: refetchScan    } = useJson<ScanData>(`${BOT_API}/api/last_scan`,       '/last_scan_results.json', 120_000);
@@ -1375,6 +1398,14 @@ export default function App() {
 
   return (
     <div style={{ background: T.bg, minHeight: '100vh', fontFamily: T.font, color: T.text }}>
+      <style>{`
+        @keyframes pnl-pulse {
+          0%   { box-shadow: 0 0 0px transparent; background: transparent; }
+          25%  { box-shadow: 0 0 10px var(--pulse-color, #39ff14); background: color-mix(in srgb, var(--pulse-color, #39ff14) 18%, transparent); }
+          100% { box-shadow: 0 0 0px transparent; background: transparent; }
+        }
+        .pnl-pulse { animation: pnl-pulse 0.7s ease-out forwards; }
+      `}</style>
       {/* Fixed status bar */}
       <StatusBar
         status={statusData ?? null}
