@@ -1,6 +1,6 @@
 {
-  "updated": "2026-05-03T23:36:28+03:00",
-  "count": 18,
+  "updated": "2026-05-04T07:46:33+03:00",
+  "count": 19,
   "trades": [
     {
       "symbol": "TRX/USDT",
@@ -573,6 +573,38 @@
       "scalp": false,
       "hunter_mode": true,
       "lesson": "🔒 Capital Preserved — עסקה יצאה ב-Break Even. תזה לא המשיכה אך הון לא אבד. עסקה הבשילה לאט — שוק לא שיתף פעולה.",
+      "prebreakout_signals": "None"
+    },
+    {
+      "symbol": "BTC/USDT",
+      "direction": "LONG",
+      "timeframe": "1H",
+      "entry_price": 76179.99,
+      "close_price": 80346.53,
+      "sl_at_open": 76256.16999,
+      "tp_at_open": 80179.439475,
+      "dist_sl_pct": 0.1,
+      "dist_tp_pct": 5.25,
+      "rr_ratio": 52.5,
+      "rr_achieved": 54.69,
+      "score": 88,
+      "rsi": null,
+      "ema200": null,
+      "score_breakdown": "Major Watch Breakout — 1H > 4H High ($75785)",
+      "strategy": "",
+      "track": "Swing",
+      "slippage_pct": 0.0,
+      "close_reason": "TP",
+      "pnl_usd": 2.64,
+      "opened_at": "2026-04-20T21:21:39+03:00",
+      "closed_at": "2026-05-04T07:46:33+03:00",
+      "fng_at_entry": 29,
+      "atr": 914.15988,
+      "duration_min": 19344.9,
+      "sniper": false,
+      "scalp": false,
+      "hunter_mode": false,
+      "lesson": "✅ Setup Confirmed — תזה טכנית הצליחה לאחר 19345 דקות. סבלנות הוכיחה את עצמה. Score=88 היה נכון.",
       "prebreakout_signals": "None"
     }
   ]

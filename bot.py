@@ -814,6 +814,33 @@ def api_trade_audit():
     except Exception:
         return flask_jsonify({'updated': None, 'count': 0, 'trades': []})
 
+@flask_app.route('/api/active_trades')
+def api_active_trades():
+    """Alias for /api/trades — used by the dashboard in production."""
+    return api_trades()
+
+@flask_app.route('/api/status')
+def api_status():
+    """Aggregate status snapshot — combines wallet + FNG + active-trade count.
+    /api/fng and /api/last_scan are already defined in keep_alive.py (same Flask app).
+    """
+    eq      = _get_equity()
+    # re-use keep_alive's fng cache via the shared app context
+    from keep_alive import _fng_ka
+    fng_v   = _fng_ka.get('value') or 50
+    fng_lbl = _fng_ka.get('label') or 'Neutral'
+    return flask_jsonify({
+        'connected':     True,
+        'exchange':      'Bitget VIRTUAL',
+        'equity':        round(eq, 2),
+        'starting':      STARTING_BALANCE,
+        'fng_value':     fng_v,
+        'fng_label':     fng_lbl,
+        'active_trades': len(active_trades),
+        'max_trades':    MAX_TRADES,
+        'updated':       now_il().strftime('%H:%M:%S'),
+    })
+
 @flask_app.route('/api/fng_settings', methods=['GET'])
 def api_fng_settings_get():
     return flask_jsonify({
