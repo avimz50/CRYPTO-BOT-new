@@ -113,6 +113,10 @@ interface Trade {
   trailing_sl: number | null;
   timeframe?: string;
   track?: string;
+  ob_found?: boolean;
+  ob_high?: number | null;
+  ob_low?: number | null;
+  ob_type?: string | null;
 }
 interface TradesData { updated: string; count: number; trades: Trade[]; }
 
@@ -568,8 +572,13 @@ function StatBox({
 function SlTpBar({ trade }: { trade: Trade }) {
   const cp    = trade.current_price ?? trade.entry;
   const isLong = trade.direction === 'LONG';
-  const lo    = Math.min(trade.sl, trade.tp, cp) * 0.999;
-  const hi    = Math.max(trade.sl, trade.tp, cp) * 1.001;
+
+  const hasOb = !!(trade.ob_found && trade.ob_high && trade.ob_low);
+  const obH   = hasOb ? trade.ob_high! : 0;
+  const obL   = hasOb ? trade.ob_low!  : 0;
+
+  const lo    = Math.min(trade.sl, trade.tp, cp, hasOb ? obL : Infinity) * 0.999;
+  const hi    = Math.max(trade.sl, trade.tp, cp, hasOb ? obH : -Infinity) * 1.001;
   const range = hi - lo || 1;
 
   const pct = (val: number) => ((val - lo) / range) * 100;
@@ -580,10 +589,14 @@ function SlTpBar({ trade }: { trade: Trade }) {
   const tpPct    = pct(trade.tp);
   const tp1Pct   = trade.tp1 ? pct(trade.tp1) : null;
   const bePct    = trade.be_lvl ? pct(trade.be_lvl) : null;
+  const obLPct   = hasOb ? pct(obL) : null;
+  const obHPct   = hasOb ? pct(obH) : null;
 
   const rawPct = (cp - trade.entry) / trade.entry * 100;
   const pnlPct = isLong ? rawPct : -rawPct;
   const fillColor = pnlPct >= 0 ? T.green : T.red;
+
+  const OB_COLOR = '#bc8cff';
 
   return (
     <div style={{ marginTop: 8 }}>
@@ -600,6 +613,19 @@ function SlTpBar({ trade }: { trade: Trade }) {
           width: `${Math.abs(tpPct - entryPct)}%`, top: 0, bottom: 0,
           background: `${T.green}22`, borderRadius: 2,
         }} />
+        {/* OB zone shading */}
+        {hasOb && obLPct !== null && obHPct !== null && (
+          <div style={{
+            position: 'absolute',
+            left: `${Math.max(0, Math.min(obLPct, obHPct))}%`,
+            width: `${Math.abs(obHPct - obLPct)}%`,
+            top: 2, bottom: 2,
+            background: `${OB_COLOR}28`,
+            border: `1px solid ${OB_COLOR}55`,
+            borderRadius: 2,
+            pointerEvents: 'none',
+          }} />
+        )}
         {/* SL marker */}
         <div style={{
           position: 'absolute', left: `${slPct}%`, top: 0, bottom: 0, width: 2,
@@ -624,6 +650,19 @@ function SlTpBar({ trade }: { trade: Trade }) {
             background: T.blue, transform: 'translateX(-50%)', opacity: 0.7,
           }} />
         )}
+        {/* OB high/low tick markers */}
+        {hasOb && obLPct !== null && (
+          <div style={{
+            position: 'absolute', left: `${obLPct}%`, top: 0, bottom: 0, width: 1,
+            background: OB_COLOR, transform: 'translateX(-50%)', opacity: 0.7,
+          }} />
+        )}
+        {hasOb && obHPct !== null && (
+          <div style={{
+            position: 'absolute', left: `${obHPct}%`, top: 0, bottom: 0, width: 1,
+            background: OB_COLOR, transform: 'translateX(-50%)', opacity: 0.7,
+          }} />
+        )}
         {/* Entry marker */}
         <div style={{
           position: 'absolute', left: `${entryPct}%`, top: 0, bottom: 0, width: 1.5,
@@ -641,6 +680,11 @@ function SlTpBar({ trade }: { trade: Trade }) {
       {/* Labels */}
       <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3, fontSize: 9, color: T.dimmer }}>
         <span style={{ color: T.red }}>SL {fmt(trade.sl)}</span>
+        {hasOb && (
+          <span style={{ color: OB_COLOR }}>
+            OB {fmt(obL)}–{fmt(obH)}
+          </span>
+        )}
         <span style={{ color: T.amber }}>ENTRY {fmt(trade.entry)}</span>
         <span style={{ color: T.green }}>TP {fmt(trade.tp)}</span>
       </div>
@@ -667,9 +711,11 @@ function MiniPriceChart({ trade }: { trade: Trade }) {
     ? history.map(p => ({ price: p.price }))
     : [{ price: trade.entry }, { price: cp }];
 
+  const hasOb = !!(trade.ob_found && trade.ob_high && trade.ob_low);
+
   const prices = chartData.map(d => d.price);
-  const lo = Math.min(...prices, trade.sl)  * 0.998;
-  const hi = Math.max(...prices, trade.tp)  * 1.002;
+  const lo = Math.min(...prices, trade.sl, hasOb ? trade.ob_low! : Infinity)  * 0.998;
+  const hi = Math.max(...prices, trade.tp, hasOb ? trade.ob_high! : -Infinity) * 1.002;
 
   const gradId = `mg-${trade.symbol.replace('/', '')}`;
 
@@ -690,6 +736,13 @@ function MiniPriceChart({ trade }: { trade: Trade }) {
           <ReferenceLine y={trade.tp}    stroke={T.green} strokeDasharray="2 2" strokeWidth={0.7} />
           {/* Entry reference */}
           <ReferenceLine y={trade.entry} stroke={T.amber} strokeDasharray="3 2" strokeWidth={0.7} />
+          {/* OB zone references */}
+          {hasOb && (
+            <ReferenceLine y={trade.ob_high!} stroke={T.purple} strokeDasharray="2 2" strokeWidth={0.8} strokeOpacity={0.7} />
+          )}
+          {hasOb && (
+            <ReferenceLine y={trade.ob_low!}  stroke={T.purple} strokeDasharray="2 2" strokeWidth={0.8} strokeOpacity={0.7} />
+          )}
           <Area
             type="monotone"
             dataKey="price"
@@ -724,11 +777,14 @@ function TerminalTradeCard({ trade }: { trade: Trade }) {
   const tf       = trade.timeframe ?? '4H';
   const bgSymbol = trade.symbol.replace('/', '');
 
+  const hasOb  = !!(trade.ob_found && trade.ob_high && trade.ob_low);
+
   const badges = [
     trade.be_triggered       && { label: 'BE',  color: T.blue  },
     trade.tp1_triggered      && { label: 'TP1', color: T.green },
     trade.partial_25_triggered && { label: '25%', color: T.amber },
     trade.phase === 'trailing' && { label: 'TRAIL', color: T.purple },
+    hasOb                    && { label: trade.ob_type ? `${trade.ob_type} OB` : 'OB', color: T.purple },
   ].filter(Boolean) as { label: string; color: string }[];
 
   const scoreColor = trade.score >= 95 ? T.green : trade.score >= 90 ? T.amber : T.red;
@@ -812,6 +868,13 @@ function TerminalTradeCard({ trade }: { trade: Trade }) {
           <DataRow label="TP" value={fmt(trade.tp)} color={`${T.green}cc`} />
           {trade.trailing_sl !== null && (
             <DataRow label="TRAIL SL" value={fmt(trade.trailing_sl!)} color={T.purple} />
+          )}
+          {hasOb && trade.ob_high && trade.ob_low && (
+            <DataRow
+              label="OB ZONE"
+              value={`${fmt(trade.ob_low)}–${fmt(trade.ob_high)}`}
+              color={T.purple}
+            />
           )}
           <DataRow label="ATR" value={fmt(trade.atr)} color={T.dimmer} />
           {/* P&L — count-up animation on change */}

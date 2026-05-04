@@ -2032,7 +2032,8 @@ def track_badge(track: str) -> str:
 
 def open_demo_trade(symbol, price, reason, df_3h=None,
                     direction='LONG', score=0, atr=0, timeframe='4H', tf_reason='',
-                    rsi=None, ema200=None, fng_v=None, sniper_mode=False):
+                    rsi=None, ema200=None, fng_v=None, sniper_mode=False,
+                    ob_found=None, ob_high=None, ob_low=None, df_ob=None):
     """
     פותח עסקת דמו — 🌊 מסלול Swing.
     SL=6% | TP1=6% | TP=12% (RR 1:2) | BE=+4% (אחרי מבנה שוק ברור)
@@ -2040,6 +2041,8 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     timeframe: '4H' / '1H' — גרף הכניסה שנבחר אדפטיבית
     fng_v: ערך FNG שכבר חושב ב-scan (כדי לא לשאול שוב)
     sniper_mode: True → Half-Size Entry (50% מגודל הפוזיציה הרגיל)
+    ob_found/ob_high/ob_low: pre-computed OB zone (pass from scan to align with scoring df)
+    df_ob: fallback df for OB detection if ob_found not pre-supplied (uses df_3h if None)
     """
     track = 'Swing'
 
@@ -2159,6 +2162,25 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     # Hunter Mode: TP1 hit → auto-BE (flag stored in trade)
     hunter_be_on_tp1 = hunter   # בעסקות Hunter, TP1 מפעיל BE אוטומטית
 
+    # ── Order Block — use pre-supplied values if available, else detect ───────
+    # Pre-supplied values (ob_found not None) come from the scan site using df_1h,
+    # matching the same dataframe that score_symbol used — so the zone shown on
+    # the dashboard is exactly the one that contributed +3 to the score.
+    if ob_found is None:
+        ob_found = False
+        _ob_df = df_ob if df_ob is not None else df_3h
+        if _ob_df is not None:
+            try:
+                _ob_f, _ob_h, _ob_l, _ob_desc = detect_order_blocks(_ob_df, direction, lookback=50)
+                if _ob_f and _ob_h > 0 and _ob_l > 0:
+                    ob_found, ob_high, ob_low = True, round(_ob_h, 8), round(_ob_l, 8)
+                    print(f"  [OB] {symbol} {direction}: zone [{_ob_l:.4g}–{_ob_h:.4g}] — {_ob_desc}")
+            except Exception as _ob_e:
+                print(f"  [OB] detection error: {_ob_e}")
+    else:
+        if ob_high is not None: ob_high = round(ob_high, 8)
+        if ob_low  is not None: ob_low  = round(ob_low,  8)
+
     trade = {
         'symbol':          symbol,
         'entry':           price,
@@ -2194,6 +2216,10 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         'slippage_pct':    0.0,
         'hunter_mode':     hunter,           # 🎯 Precision Hunter
         'hunter_be_on_tp1': hunter_be_on_tp1,
+        'ob_found':        ob_found,
+        'ob_high':         ob_high,
+        'ob_low':          ob_low,
+        'ob_type':         ('Bullish' if direction == 'LONG' else 'Bearish') if ob_found else None,
     }
     place_order(trade, effective_margin)
 
@@ -5139,12 +5165,20 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                         f"💰 _Half\\-Size Entry: מרג'ין \\${MARGIN * SNIPER_MARGIN_MULT:.0f} במקום \\${MARGIN:.0f}_"
                     )
                     send_msg(_sniper_notif)
+                    _s_ob_f, _s_ob_h, _s_ob_l = False, None, None
+                    try:
+                        _s_ob_f, _s_ob_h, _s_ob_l, _ = detect_order_blocks(df_1h, direction, lookback=50)
+                        if not (_s_ob_f and _s_ob_h and _s_ob_h > 0 and _s_ob_l > 0):
+                            _s_ob_f, _s_ob_h, _s_ob_l = False, None, None
+                    except Exception:
+                        pass
                     open_demo_trade(
                         symbol, price, f"Sniper Exception: {sniper_reason}",
                         df_4h, direction=direction,
                         score=score_4h, atr=atr,
                         timeframe='4H', tf_reason='Sniper Kill-Switch Override',
                         fng_v=fng_v_scan, sniper_mode=True,
+                        ob_found=_s_ob_f, ob_high=_s_ob_h, ob_low=_s_ob_l,
                     )
                     found += 1
                 else:
@@ -5274,6 +5308,15 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                     })
                     continue
 
+                # ── OB zone from df_1h — same df used in score_symbol OB check ──
+                _ob_f, _ob_h, _ob_l = False, None, None
+                try:
+                    _ob_f, _ob_h, _ob_l, _ = detect_order_blocks(df_1h, direction, lookback=50)
+                    if not (_ob_f and _ob_h and _ob_h > 0 and _ob_l > 0):
+                        _ob_f, _ob_h, _ob_l = False, None, None
+                except Exception:
+                    pass
+
                 # ── פתיחת עסקה ──────────────────────────────────────────────────
                 open_demo_trade(
                     symbol, price, breakdown,
@@ -5281,7 +5324,8 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                     score=score, atr=atr,
                     timeframe=chosen_tf, tf_reason=tf_reason,
                     rsi=_last_rsi, ema200=_last_ema,
-                    fng_v=fng_v_scan
+                    fng_v=fng_v_scan,
+                    ob_found=_ob_f, ob_high=_ob_h, ob_low=_ob_l,
                 )
                 found += 1
             else:
