@@ -146,12 +146,6 @@ export interface BotLogData {
   crash: string | null;
 }
 
-/** Dashboard-level config (amount_per_trade, default_leverage) — persisted in Express layer */
-export interface LocalSettings {
-  amount_per_trade: number;
-  default_leverage: number;
-}
-
 // ── Poll result with stale detection ──────────────────────────
 export interface PollResult<T> {
   data: T | null;
@@ -211,9 +205,9 @@ export function useBotLog(enabled: boolean) { return usePoll<BotLogData>("/api/b
 // ── Actions ────────────────────────────────────────────────────
 
 /**
- * Trigger a Telegram sync notification.
- * Posts {action:"sync_telegram"} to /api/make — the Express proxy intercepts this
- * action and calls Telegram Bot API directly (no Flask sync_telegram command exists).
+ * POST /api/make {action:"sync_telegram"} — proxied to Flask bot.
+ * Flask will reject unknown actions with 400; the header sync button
+ * reflects success/failure from the HTTP response.
  */
 export async function syncTelegram(): Promise<boolean> {
   try {
@@ -222,32 +216,7 @@ export async function syncTelegram(): Promise<boolean> {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "sync_telegram" }),
     });
-    if (!r.ok) return false;
-    const j = await r.json() as { ok: boolean };
-    return j.ok === true;
-  } catch { return false; }
-}
-
-/** Read amount_per_trade and default_leverage from the Express-layer config store */
-export async function fetchLocalSettings(): Promise<LocalSettings | null> {
-  try {
-    const r = await fetch("/api/local_settings");
-    if (!r.ok) return null;
-    return await r.json() as LocalSettings;
-  } catch { return null; }
-}
-
-/** Persist amount_per_trade and/or default_leverage to the Express-layer config store */
-export async function saveLocalSettings(payload: Partial<LocalSettings>): Promise<boolean> {
-  try {
-    const r = await fetch("/api/local_settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!r.ok) return false;
-    const j = await r.json() as { ok: boolean };
-    return j.ok === true;
+    return r.ok;
   } catch { return false; }
 }
 

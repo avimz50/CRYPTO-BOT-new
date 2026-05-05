@@ -159,47 +159,9 @@ router.get("/last_scan", async (_req, res) => {
   res.json(data);
 });
 
-/** Proxy POST to Flask bot — used by Make.com incoming webhook.
- *  Special case: {action:"sync_telegram"} is intercepted here and handled by
- *  calling Telegram Bot API directly (no Flask sync_telegram command exists).
- */
-router.post("/make", async (req, res) => {
-  const payload = req.body as Record<string, unknown>;
-
-  // ── Intercept sync_telegram — not a Flask command, handled in the proxy layer ──
-  if (payload?.action === "sync_telegram") {
-    const token  = process.env.TELEGRAM_TOKEN;
-    const chatId = process.env.CHAT_ID;
-    if (!token || !chatId) {
-      res.status(503).json({ ok: false, error: "TELEGRAM_TOKEN or CHAT_ID not configured" });
-      return;
-    }
-    const text = encodeURIComponent("📊 *Dashboard sync requested*\nBot is running — check status on the dashboard.");
-    const tgUrl = `https://api.telegram.org/bot${token}/sendMessage?chat_id=${chatId}&text=${text}&parse_mode=Markdown`;
-    try {
-      const tgBody = await new Promise<string>((resolve, reject) => {
-        const tgReq = https.get(tgUrl, { timeout: 8000 }, (r) => {
-          let d = "";
-          r.on("data", (c) => (d += c));
-          r.on("end", () => resolve(d));
-        });
-        tgReq.on("error", reject);
-        tgReq.on("timeout", () => { tgReq.destroy(); reject(new Error("timeout")); });
-      });
-      const tgJson = JSON.parse(tgBody) as { ok: boolean; result?: { message_id: number }; description?: string };
-      if (tgJson.ok) {
-        res.json({ ok: true, action: "telegram_sent", message_id: tgJson.result?.message_id });
-      } else {
-        res.status(400).json({ ok: false, error: tgJson.description ?? "Telegram error" });
-      }
-    } catch (e) {
-      res.status(502).json({ ok: false, error: String(e) });
-    }
-    return;
-  }
-
-  // ── All other actions — forward to Flask bot ──────────────────────────────────
-  const body = JSON.stringify(payload ?? {});
+/** Proxy POST to Flask bot — used by Make.com incoming webhook */
+router.post("/make", (req, res) => {
+  const body = JSON.stringify(req.body ?? {});
   const options = {
     hostname: BOT_FLASK_HOST,
     port: BOT_FLASK_PNUM,
@@ -251,45 +213,6 @@ router.get("/audit", (_req, res) => {
     res.json(data);
   } catch {
     res.status(404).json({ error: "Audit report not yet generated. Runs at 08:00 and 20:00." });
-  }
-});
-
-// ── Local settings — Express-layer config for amount_per_trade & default_leverage ──
-// Flask /api/fng_settings only exposes extreme_fear/fear/greed thresholds.
-// Amount per trade and default leverage are dashboard-level config persisted here.
-const LOCAL_SETTINGS_PATH = "/tmp/bot_dashboard_config.json";
-interface DashboardConfig { amount_per_trade: number; default_leverage: number }
-const CONFIG_DEFAULTS: DashboardConfig = { amount_per_trade: 50, default_leverage: 10 };
-
-function readDashboardConfig(): DashboardConfig {
-  try {
-    const raw    = fs.readFileSync(LOCAL_SETTINGS_PATH, "utf-8");
-    const parsed = JSON.parse(raw) as Partial<DashboardConfig>;
-    return {
-      amount_per_trade: typeof parsed.amount_per_trade === "number" ? parsed.amount_per_trade : CONFIG_DEFAULTS.amount_per_trade,
-      default_leverage: typeof parsed.default_leverage === "number" ? parsed.default_leverage : CONFIG_DEFAULTS.default_leverage,
-    };
-  } catch {
-    return { ...CONFIG_DEFAULTS };
-  }
-}
-
-router.get("/local_settings", (_req, res) => {
-  res.json(readDashboardConfig());
-});
-
-router.post("/local_settings", (req, res) => {
-  const body    = req.body as Partial<DashboardConfig>;
-  const current = readDashboardConfig();
-  const next: DashboardConfig = {
-    amount_per_trade: typeof body.amount_per_trade === "number" ? body.amount_per_trade : current.amount_per_trade,
-    default_leverage: typeof body.default_leverage === "number" ? body.default_leverage : current.default_leverage,
-  };
-  try {
-    fs.writeFileSync(LOCAL_SETTINGS_PATH, JSON.stringify(next, null, 2), "utf-8");
-    res.json({ ok: true, settings: next });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e) });
   }
 });
 
