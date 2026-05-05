@@ -159,89 +159,9 @@ router.get("/last_scan", async (_req, res) => {
   res.json(data);
 });
 
-// ── Bot config — server-side storage for dashboard settings not exposed by Flask ──
-// Flask /api/fng_settings only stores extreme_fear/fear/greed thresholds.
-// amount_per_trade and default_leverage have no Flask endpoint, so we persist them
-// here in a durable workspace file (not /tmp which is ephemeral).
-const BOT_CONFIG_PATH = path.join(ROOT, ".local", "bot_dashboard_config.json");
-interface BotConfig { amount_per_trade: number; default_leverage: number }
-const BOT_CONFIG_DEFAULTS: BotConfig = { amount_per_trade: 50, default_leverage: 10 };
-
-function readBotConfig(): BotConfig {
-  try {
-    const raw    = fs.readFileSync(BOT_CONFIG_PATH, "utf-8");
-    const parsed = JSON.parse(raw) as Partial<BotConfig>;
-    return {
-      amount_per_trade: typeof parsed.amount_per_trade === "number" ? parsed.amount_per_trade : BOT_CONFIG_DEFAULTS.amount_per_trade,
-      default_leverage: typeof parsed.default_leverage === "number" ? parsed.default_leverage : BOT_CONFIG_DEFAULTS.default_leverage,
-    };
-  } catch {
-    return { ...BOT_CONFIG_DEFAULTS };
-  }
-}
-
-router.get("/bot_config", (_req, res) => {
-  res.json(readBotConfig());
-});
-
-router.post("/bot_config", (req, res) => {
-  const body    = req.body as Partial<BotConfig>;
-  const current = readBotConfig();
-  const next: BotConfig = {
-    amount_per_trade: typeof body.amount_per_trade === "number" ? body.amount_per_trade : current.amount_per_trade,
-    default_leverage: typeof body.default_leverage === "number" ? body.default_leverage : current.default_leverage,
-  };
-  try {
-    fs.mkdirSync(path.dirname(BOT_CONFIG_PATH), { recursive: true });
-    fs.writeFileSync(BOT_CONFIG_PATH, JSON.stringify(next, null, 2), "utf-8");
-    res.json({ ok: true, config: next });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e) });
-  }
-});
-
-/** Proxy POST to Flask bot — used by Make.com incoming webhook.
- *  Adapter: {action:"sync_telegram"} is intercepted here and handled directly
- *  via Telegram Bot API (no matching Flask command exists for this action).
- *  All other payloads are forwarded to Flask unchanged.
- */
-router.post("/make", async (req, res) => {
-  const payload = req.body as Record<string, unknown>;
-
-  // Adapter: handle sync_telegram action without touching Flask
-  if (payload?.action === "sync_telegram") {
-    const token  = process.env.TELEGRAM_TOKEN;
-    const chatId = process.env.CHAT_ID;
-    if (!token || !chatId) {
-      res.status(503).json({ ok: false, error: "TELEGRAM_TOKEN or CHAT_ID not configured" });
-      return;
-    }
-    const text = encodeURIComponent("📊 *Dashboard sync requested*\nBot is running — check status on the dashboard.");
-    const tgUrl = `https://api.telegram.org/bot${token}/sendMessage?chat_id=${chatId}&text=${text}&parse_mode=Markdown`;
-    try {
-      const raw = await new Promise<string>((resolve, reject) => {
-        const r = https.get(tgUrl, { timeout: 8000 }, (res) => {
-          let d = "";
-          res.on("data", (c) => (d += c));
-          res.on("end", () => resolve(d));
-        });
-        r.on("error", reject);
-        r.on("timeout", () => { r.destroy(); reject(new Error("timeout")); });
-      });
-      const tg = JSON.parse(raw) as { ok: boolean; result?: { message_id: number }; description?: string };
-      if (tg.ok) {
-        res.json({ ok: true, action: "telegram_sent", message_id: tg.result?.message_id });
-      } else {
-        res.status(400).json({ ok: false, error: tg.description ?? "Telegram error" });
-      }
-    } catch (e) {
-      res.status(502).json({ ok: false, error: String(e) });
-    }
-    return;
-  }
-
-  // All other payloads forwarded to Flask unchanged
-  const body = JSON.stringify(payload ?? {});
+/** Proxy POST to Flask bot — used by Make.com incoming webhook */
+router.post("/make", (req, res) => {
+  const body = JSON.stringify(req.body ?? {});
   const options = {
     hostname: BOT_FLASK_HOST,
     port: BOT_FLASK_PNUM,

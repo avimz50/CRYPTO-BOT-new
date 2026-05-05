@@ -35,7 +35,8 @@ export function FinancialOverview({
   const rl  = safe(realized);
   const unr = safe(unrealized);
 
-  const totalPnl = eq != null && st != null ? eq - st : null;
+  // Total P&L = realized closed-trade P&L (not equity delta which includes unrealized)
+  const totalPnl = rl !== 0 ? rl : (eq != null && st != null ? eq - st : null);
   const totalPct = totalPnl != null && st != null && st > 0 ? (totalPnl / st) * 100 : null;
 
   const isProfit     = (totalPnl ?? 0) >= 0;

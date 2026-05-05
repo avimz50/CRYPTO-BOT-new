@@ -132,16 +132,11 @@ export interface WalletData {
   equity?: number;
 }
 
+/** Flask /api/fng_settings only exposes these three threshold fields */
 export interface FngSettings {
   extreme_fear: number;
   fear: number;
   greed: number;
-}
-
-/** Dashboard config persisted server-side via /api/bot_config */
-export interface BotConfig {
-  amount_per_trade: number;
-  default_leverage: number;
 }
 
 export interface BotLogData {
@@ -150,11 +145,36 @@ export interface BotLogData {
   crash: string | null;
 }
 
+// ── localStorage — client-side persistence for settings Flask doesn't expose ─
+const LS_SETTINGS_KEY = "botDashboard_settings_v1";
+export interface LocalSettingsCache {
+  amount_per_trade: number;
+  default_leverage: number;
+}
+const LS_DEFAULTS: LocalSettingsCache = { amount_per_trade: 50, default_leverage: 10 };
+
+export function lsReadSettings(): LocalSettingsCache {
+  try {
+    const raw = localStorage.getItem(LS_SETTINGS_KEY);
+    if (!raw) return { ...LS_DEFAULTS };
+    const p = JSON.parse(raw) as Partial<LocalSettingsCache>;
+    return {
+      amount_per_trade: typeof p.amount_per_trade === "number" ? p.amount_per_trade : LS_DEFAULTS.amount_per_trade,
+      default_leverage: typeof p.default_leverage === "number" ? p.default_leverage : LS_DEFAULTS.default_leverage,
+    };
+  } catch { return { ...LS_DEFAULTS }; }
+}
+
+export function lsWriteSettings(v: LocalSettingsCache): void {
+  try { localStorage.setItem(LS_SETTINGS_KEY, JSON.stringify(v)); } catch { /* ignore */ }
+}
+
 // ── Poll result ────────────────────────────────────────────────
 export interface PollResult<T> {
   data: T | null;
   loading: boolean;
   error: boolean;
+  /** true when data exists but last successful fetch was > 2× the poll interval ago */
   stale: boolean;
   refetch: () => void;
 }
@@ -205,31 +225,15 @@ export function useBotLog(enabled: boolean) { return usePoll<BotLogData>("/api/b
 
 // ── Actions ────────────────────────────────────────────────────
 
-/**
- * Read amount_per_trade and default_leverage from the Express-layer config store.
- * This endpoint is backed by a durable workspace file (not /tmp).
- */
-export async function fetchBotConfig(): Promise<BotConfig | null> {
+/** POST /api/make {action:"sync_telegram"} — forwarded to Flask bot */
+export async function syncTelegram(): Promise<boolean> {
   try {
-    const r = await fetch("/api/bot_config");
-    if (!r.ok) return null;
-    return await r.json() as BotConfig;
-  } catch { return null; }
-}
-
-/**
- * Persist amount_per_trade and/or default_leverage to the Express-layer config store.
- */
-export async function saveBotConfig(payload: Partial<BotConfig>): Promise<boolean> {
-  try {
-    const r = await fetch("/api/bot_config", {
+    const r = await fetch("/api/make", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ action: "sync_telegram" }),
     });
-    if (!r.ok) return false;
-    const j = await r.json() as { ok: boolean };
-    return j.ok === true;
+    return r.ok;
   } catch { return false; }
 }
 
@@ -245,32 +249,32 @@ export async function saveSlots(max_trades: number): Promise<boolean> {
   } catch { return false; }
 }
 
-/** POST /api/fng_settings — update FNG thresholds (extreme_fear / fear / greed) */
-export async function saveFngSettings(payload: Partial<FngSettings>): Promise<boolean> {
+/**
+ * POST /api/fng_settings — sends all settings including amount/leverage.
+ * Flask currently only reads extreme_fear/fear/greed and returns 200 for any valid JSON.
+ * amount_per_trade and default_leverage are also saved to localStorage as a client-side
+ * cache so they can be restored on next load (since GET /api/fng_settings won't return them).
+ */
+export async function saveSettings(payload: {
+  fng: Partial<FngSettings>;
+  amount_per_trade: number;
+  default_leverage: number;
+}): Promise<{ fngOk: boolean }> {
+  // Always persist amount/leverage in localStorage (client cache)
+  lsWriteSettings({ amount_per_trade: payload.amount_per_trade, default_leverage: payload.default_leverage });
+
   try {
     const r = await fetch("/api/fng_settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        ...payload.fng,
+        amount_per_trade: payload.amount_per_trade,
+        default_leverage: payload.default_leverage,
+      }),
     });
-    return r.ok;
-  } catch { return false; }
-}
-
-/**
- * POST /api/make {action:"sync_telegram"}.
- * The Express proxy intercepts this action and calls Telegram Bot API directly
- * (no matching Flask command exists — adapter is in the Express layer).
- */
-export async function syncTelegram(): Promise<boolean> {
-  try {
-    const r = await fetch("/api/make", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "sync_telegram" }),
-    });
-    if (!r.ok) return false;
-    const j = await r.json() as { ok: boolean };
-    return j.ok === true;
-  } catch { return false; }
+    return { fngOk: r.ok };
+  } catch {
+    return { fngOk: false };
+  }
 }
