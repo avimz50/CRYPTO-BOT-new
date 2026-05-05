@@ -7,10 +7,17 @@ import { fileURLToPath } from "url";
 
 const router = Router();
 
-// Flask bot server (keep_alive.py) always runs on BOT_PORT (default 8091)
-// Express api-server runs on PORT (8080 in prod) — no conflict
+// Flask bot base URL — defaults to local keep_alive.py on BOT_PORT.
+// Set BOT_URL env var (e.g. https://python-script-bymzrkhy.replit.app) to
+// proxy the dashboard to the production bot instead of a local instance.
 const BOT_FLASK_PORT = parseInt(process.env.BOT_PORT ?? "8091", 10);
-const BOT_FLASK_BASE = `http://localhost:${BOT_FLASK_PORT}`;
+const BOT_BASE_URL   = new URL(process.env.BOT_URL ?? `http://localhost:${BOT_FLASK_PORT}`);
+const BOT_FLASK_BASE = BOT_BASE_URL.href.replace(/\/$/, "");
+const BOT_FLASK_HOST = BOT_BASE_URL.hostname;
+const BOT_FLASK_PNUM = BOT_BASE_URL.port
+  ? parseInt(BOT_BASE_URL.port, 10)
+  : BOT_BASE_URL.protocol === "https:" ? 443 : 80;
+const _botHttp = BOT_BASE_URL.protocol === "https:" ? https : (http as typeof https);
 
 // Use import.meta.url so ROOT is always correct regardless of process.cwd().
 // Compiled bundle lives at: <workspace>/artifacts/api-server/dist/index.mjs
@@ -31,7 +38,7 @@ function readJson(filePath: string): unknown {
 /** Fetch JSON from internal Flask bot server, fallback to reading disk file */
 function fetchFromFlask(endpoint: string, fallbackFile: string, fallback: unknown): Promise<unknown> {
   return new Promise((resolve) => {
-    const req = http.get(`${BOT_FLASK_BASE}${endpoint}`, { timeout: 5000 }, (r) => {
+    const req = _botHttp.get(`${BOT_FLASK_BASE}${endpoint}`, { timeout: 5000 }, (r) => {
       let body = "";
       r.on("data", (c) => (body += c));
       r.on("end", () => {
@@ -156,8 +163,8 @@ router.get("/last_scan", async (_req, res) => {
 router.post("/make", (req, res) => {
   const body = JSON.stringify(req.body ?? {});
   const options = {
-    hostname: "localhost",
-    port: BOT_FLASK_PORT,
+    hostname: BOT_FLASK_HOST,
+    port: BOT_FLASK_PNUM,
     path: "/api/make",
     method: "POST",
     headers: {
@@ -166,7 +173,7 @@ router.post("/make", (req, res) => {
     },
     timeout: 8000,
   };
-  const flaskReq = http.request(options, (flaskRes) => {
+  const flaskReq = _botHttp.request(options, (flaskRes) => {
     let data = "";
     flaskRes.on("data", (chunk) => (data += chunk));
     flaskRes.on("end", () => {
@@ -218,13 +225,13 @@ router.get("/slots", async (_req, res) => {
 router.post("/slots", (req, res) => {
   const body = JSON.stringify(req.body ?? {});
   const options = {
-    hostname: "localhost",
-    port: BOT_FLASK_PORT,
+    hostname: BOT_FLASK_HOST,
+    port: BOT_FLASK_PNUM,
     path: "/api/slots",
     method: "POST",
     headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
   };
-  const proxyReq = http.request(options, (r) => {
+  const proxyReq = _botHttp.request(options, (r) => {
     let data = "";
     r.on("data", (c) => (data += c));
     r.on("end", () => {
@@ -253,13 +260,13 @@ router.get("/fng_settings", async (_req, res) => {
 router.post("/fng_settings", (req, res) => {
   const body = JSON.stringify(req.body);
   const options = {
-    hostname: "localhost",
-    port: BOT_FLASK_PORT,
+    hostname: BOT_FLASK_HOST,
+    port: BOT_FLASK_PNUM,
     path: "/api/fng_settings",
     method: "POST",
     headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
   };
-  const proxyReq = http.request(options, (r) => {
+  const proxyReq = _botHttp.request(options, (r) => {
     let data = "";
     r.on("data", (c) => (data += c));
     r.on("end", () => {
