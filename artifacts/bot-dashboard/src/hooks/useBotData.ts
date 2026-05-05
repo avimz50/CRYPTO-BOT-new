@@ -150,12 +150,22 @@ export interface BotLogData {
   crash: string | null;
 }
 
+// ── Poll result with stale detection ──────────────────────────
+export interface PollResult<T> {
+  data: T | null;
+  loading: boolean;
+  error: boolean;
+  /** true when data exists but last successful fetch was more than 2× the poll interval ago */
+  stale: boolean;
+  refetch: () => void;
+}
+
 // ── Generic polling hook ────────────────────────────────────────
-function usePoll<T>(url: string, interval: number, enabled = true) {
-  const [data, setData] = useState<T | null>(null);
+function usePoll<T>(url: string, interval: number, enabled = true): PollResult<T> {
+  const [data, setData]       = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
-  const lastFetch = useRef(0);
+  const [error, setError]     = useState(false);
+  const [lastOk, setLastOk]   = useState<number | null>(null);
 
   const fetch_ = useCallback(async () => {
     try {
@@ -164,12 +174,12 @@ function usePoll<T>(url: string, interval: number, enabled = true) {
       const json = (await r.json()) as T;
       setData(json);
       setError(false);
+      setLastOk(Date.now());
     } catch {
       setError(true);
     } finally {
       setLoading(false);
     }
-    lastFetch.current = Date.now();
   }, [url]);
 
   const refetch = useCallback(() => { fetch_(); }, [fetch_]);
@@ -181,18 +191,20 @@ function usePoll<T>(url: string, interval: number, enabled = true) {
     return () => clearInterval(id);
   }, [fetch_, interval, enabled]);
 
-  return { data, loading, error, refetch };
+  const stale = data != null && lastOk != null && (Date.now() - lastOk) > interval * 2;
+
+  return { data, loading, error, stale, refetch };
 }
 
 // ── Public hooks ───────────────────────────────────────────────
-export function useStatus() { return usePoll<StatusData>("/api/status", 10_000); }
-export function useTrades() { return usePoll<TradesData>("/api/trades", 10_000); }
-export function useScan()   { return usePoll<ScanData>("/api/last_scan", 30_000); }
-export function useSlots()  { return usePoll<SlotsData>("/api/slots", 30_000); }
-export function useWallet() { return usePoll<WalletData>("/api/wallet", 30_000); }
+export function useStatus()    { return usePoll<StatusData>("/api/status",      10_000); }
+export function useTrades()    { return usePoll<TradesData>("/api/trades",      10_000); }
+export function useScan()      { return usePoll<ScanData>("/api/last_scan",     30_000); }
+export function useSlots()     { return usePoll<SlotsData>("/api/slots",        30_000); }
+export function useWallet()    { return usePoll<WalletData>("/api/wallet",      30_000); }
 export function useFngSettings() { return usePoll<FngSettings>("/api/fng_settings", 60_000); }
 export function useAudit(enabled: boolean) { return usePoll<AuditData>("/api/trade_audit", 60_000, enabled); }
-export function useBotLog(enabled: boolean) { return usePoll<BotLogData>("/api/bot_log", 5_000, enabled); }
+export function useBotLog(enabled: boolean) { return usePoll<BotLogData>("/api/bot_log",     5_000,  enabled); }
 
 // ── Actions ────────────────────────────────────────────────────
 export async function syncTelegram(): Promise<boolean> {

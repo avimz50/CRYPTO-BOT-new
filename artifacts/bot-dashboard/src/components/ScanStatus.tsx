@@ -1,12 +1,12 @@
 import { useState } from "react";
-import { ScanData, RejectedCoin } from "@/hooks/useBotData";
+import { ScanData, RejectedCoin, BubbleWatch } from "@/hooks/useBotData";
 
 interface ScanStatusProps {
   scan: ScanData | null;
   loading: boolean;
 }
 
-type Filter = "ALL" | "BUY" | "SELL";
+type Filter = "ALL" | "BUY" | "SELL" | "HOLD";
 
 function scoreToConfidence(score: number): { label: string; color: string } {
   if (score >= 85) return { label: "High",   color: "#4ade80" };
@@ -29,28 +29,54 @@ function relTime(raw: string | null): string {
   } catch { return raw; }
 }
 
+// Bubble-watch entries become HOLD rows in the table
+function bubbleToRow(b: BubbleWatch): { symbol: string; signal: "HOLD"; confidence: string; confColor: string; reason: string } {
+  const pct = b.change_pct != null ? `${b.change_pct > 0 ? "+" : ""}${b.change_pct.toFixed(1)}%` : "";
+  const vol  = b.volume_usd != null
+    ? `Vol $${(b.volume_usd / 1_000).toFixed(0)}k`
+    : "";
+  const reason = [pct && `Price ${pct}`, vol].filter(Boolean).join(" · ");
+  return { symbol: b.symbol, signal: "HOLD", confidence: "Watch", confColor: "#a78bfa", reason };
+}
+
 export function ScanStatus({ scan, loading }: ScanStatusProps) {
   const [filter, setFilter] = useState<Filter>("ALL");
 
-  const coins: RejectedCoin[] = scan?.rejected_coins ?? [];
-  // Map LONG → BUY signal, SHORT → SELL signal
-  const filtered = filter === "ALL"  ? coins
-    : filter === "BUY"  ? coins.filter(c => c.direction === "LONG")
-    : coins.filter(c => c.direction === "SHORT");
+  const rejected: RejectedCoin[]  = scan?.rejected_coins ?? [];
+  const bubbles:  BubbleWatch[]   = scan?.bubble_watch   ?? [];
+  const scanTime = scan?.scan_time ?? null;
 
   const FILTERS: { id: Filter; label: string; color: string; border: string; active: string }[] = [
     { id: "ALL",  label: "ALL",  color: "#93c5fd", border: "#3b82f6", active: "rgba(59,130,246,0.2)"  },
     { id: "BUY",  label: "BUY",  color: "#4ade80", border: "#22c55e", active: "rgba(34,197,94,0.2)"   },
     { id: "SELL", label: "SELL", color: "#f87171", border: "#ef4444", active: "rgba(239,68,68,0.2)"   },
+    { id: "HOLD", label: "HOLD", color: "#a78bfa", border: "#7c3aed", active: "rgba(124,58,237,0.2)"  },
   ];
 
-  const scanTime = scan?.scan_time ?? null;
+  type Row =
+    | { type: "candidate"; coin: RejectedCoin }
+    | { type: "bubble";    item: BubbleWatch };
+
+  const allRows: Row[] = [
+    ...rejected.map(c => ({ type: "candidate" as const, coin: c })),
+    ...bubbles.map(b  => ({ type: "bubble"    as const, item: b })),
+  ];
+
+  const filtered: Row[] = filter === "ALL"
+    ? allRows
+    : filter === "BUY"
+    ? rejected.filter(c => c.direction === "LONG").map(c  => ({ type: "candidate" as const, coin: c }))
+    : filter === "SELL"
+    ? rejected.filter(c => c.direction === "SHORT").map(c => ({ type: "candidate" as const, coin: c }))
+    : bubbles.map(b => ({ type: "bubble" as const, item: b }));
+
+  const isEmpty = filtered.length === 0;
 
   return (
     <div className="rounded-xl overflow-hidden"
       style={{ background: "#0a1628", border: "1px solid #1e3a5f" }}>
 
-      {/* Header row */}
+      {/* Header */}
       <div className="px-4 py-3 flex items-center justify-between"
         style={{ borderBottom: "1px solid #1e3a5f" }}>
         <div className="flex items-center gap-2">
@@ -69,10 +95,15 @@ export function ScanStatus({ scan, loading }: ScanStatusProps) {
               className="px-2.5 py-1 rounded text-xs font-semibold transition-all"
               style={{
                 background: filter === f.id ? f.active : "rgba(30,58,95,0.5)",
-                color: filter === f.id ? f.color : "#64748b",
-                border: `1px solid ${filter === f.id ? f.border : "#1e3a5f"}`,
+                color:      filter === f.id ? f.color  : "#64748b",
+                border:     `1px solid ${filter === f.id ? f.border : "#1e3a5f"}`,
               }}>
               {f.label}
+              {f.id === "HOLD" && bubbles.length > 0 && (
+                <span className="ml-1 px-1 rounded" style={{ background: "rgba(124,58,237,0.25)", color: "#a78bfa", fontSize: 9 }}>
+                  {bubbles.length}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -104,7 +135,7 @@ export function ScanStatus({ scan, loading }: ScanStatusProps) {
         </div>
       )}
 
-      {/* Candidates table */}
+      {/* Table */}
       <div className="overflow-x-auto" style={{ maxHeight: 260, overflowY: "auto" }}>
         <table className="w-full text-xs">
           <thead className="sticky top-0" style={{ background: "#0d1f3c" }}>
@@ -118,7 +149,7 @@ export function ScanStatus({ scan, loading }: ScanStatusProps) {
             </tr>
           </thead>
           <tbody>
-            {loading && coins.length === 0 ? (
+            {loading && allRows.length === 0 ? (
               [...Array(4)].map((_, i) => (
                 <tr key={i} style={{ borderBottom: "1px solid #0d1f3c" }}>
                   {[...Array(5)].map((_, j) => (
@@ -129,29 +160,59 @@ export function ScanStatus({ scan, loading }: ScanStatusProps) {
                   ))}
                 </tr>
               ))
-            ) : filtered.length === 0 ? (
+            ) : isEmpty ? (
               <tr>
                 <td colSpan={5} className="px-4 py-6 text-center text-xs"
                   style={{ color: "#475569" }}>
-                  {coins.length === 0
-                    ? "No scan data yet"
+                  {allRows.length === 0 ? "No scan data yet"
+                    : filter === "HOLD" ? "No bubble-watch coins this scan"
                     : `No ${filter === "BUY" ? "long" : "short"} candidates`}
                 </td>
               </tr>
             ) : (
-              filtered.map((c, i) => {
-                // Map LONG direction → BUY signal, SHORT → SELL
-                const signal   = c.direction === "LONG" ? "BUY" : "SELL";
-                const isBuy    = signal === "BUY";
-                const conf     = scoreToConfidence(c.best_score);
+              filtered.map((row, i) => {
+                if (row.type === "bubble") {
+                  const b    = row.item;
+                  const bRow = bubbleToRow(b);
+                  return (
+                    <tr key={`b${i}`}
+                      style={{ borderBottom: "1px solid #0d1f3c", transition: "background 0.1s" }}
+                      onMouseEnter={e => (e.currentTarget.style.background = "#0d1f3c")}
+                      onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
+                      <td className="px-3 py-2.5 font-mono font-semibold" style={{ color: "#cbd5e1" }}>
+                        {bRow.symbol}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <span className="text-xs font-bold px-1.5 py-0.5 rounded"
+                          style={{ color: "#a78bfa", background: "rgba(124,58,237,0.12)" }}>
+                          ◈ HOLD
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <span className="font-mono font-bold text-xs" style={{ color: bRow.confColor }}>
+                          {bRow.confidence}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5 font-mono whitespace-nowrap" style={{ color: "#64748b" }}>
+                        {relTime(scanTime)}
+                      </td>
+                      <td className="px-3 py-2.5 text-xs" style={{ color: "#475569", maxWidth: 260 }}>
+                        {bRow.reason}
+                      </td>
+                    </tr>
+                  );
+                }
+
+                const c    = row.coin;
+                const isBuy = c.direction === "LONG";
+                const conf  = scoreToConfidence(c.best_score);
 
                 return (
-                  <tr key={i}
+                  <tr key={`c${i}`}
                     style={{ borderBottom: "1px solid #0d1f3c", transition: "background 0.1s" }}
                     onMouseEnter={e => (e.currentTarget.style.background = "#0d1f3c")}
                     onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
-                    <td className="px-3 py-2.5 font-mono font-semibold"
-                      style={{ color: "#cbd5e1" }}>
+                    <td className="px-3 py-2.5 font-mono font-semibold" style={{ color: "#cbd5e1" }}>
                       {c.symbol}
                     </td>
                     <td className="px-3 py-2.5">
@@ -171,12 +232,10 @@ export function ScanStatus({ scan, loading }: ScanStatusProps) {
                         {conf.label}
                       </span>
                     </td>
-                    <td className="px-3 py-2.5 font-mono whitespace-nowrap"
-                      style={{ color: "#64748b" }}>
+                    <td className="px-3 py-2.5 font-mono whitespace-nowrap" style={{ color: "#64748b" }}>
                       {relTime(scanTime)}
                     </td>
-                    <td className="px-3 py-2.5 text-xs"
-                      style={{ color: "#475569", maxWidth: 260 }}>
+                    <td className="px-3 py-2.5 text-xs" style={{ color: "#475569", maxWidth: 260 }}>
                       {c.reason ?? "—"}
                     </td>
                   </tr>

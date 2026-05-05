@@ -46,8 +46,7 @@ function fmtDuration(minutes: number | undefined) {
   const m = Math.round(minutes % 60);
   if (h === 0) return `${m}m`;
   if (h < 24)  return `${h}h ${m}m`;
-  const d = Math.floor(h / 24);
-  return `${d}d ${h % 24}h`;
+  return `${Math.floor(h / 24)}d ${h % 24}h`;
 }
 
 function calcPnlPct(t: AuditTrade): number | null {
@@ -56,11 +55,22 @@ function calcPnlPct(t: AuditTrade): number | null {
   return t.direction === "LONG" ? raw : -raw;
 }
 
+// Volume (position size in USD) = not in closed-trade API — show "—"
+// If the field ever becomes available via API, replace this function.
+function fmtVolume(_t: AuditTrade): string {
+  return "—";
+}
+
 export function TradeHistoryModal({ trades, loading, onClose }: TradeHistoryModalProps) {
   const totalPnl = trades.reduce((s, t) => s + (isFinite(t.pnl_usd) ? t.pnl_usd : 0), 0);
   const wins     = trades.filter(t => t.pnl_usd > 0).length;
   const losses   = trades.filter(t => t.pnl_usd < 0).length;
   const winRate  = trades.length > 0 ? (wins / trades.length * 100).toFixed(0) : "—";
+
+  const COLS = [
+    "#", "PAIR", "DIR", "OPEN TIME", "ENTRY",
+    "CLOSE TIME", "EXIT", "LEVERAGE", "VOLUME", "DURATION", "P&L $", "P&L %", "REASON",
+  ];
 
   return (
     <div
@@ -87,7 +97,6 @@ export function TradeHistoryModal({ trades, loading, onClose }: TradeHistoryModa
               {trades.length} trades
             </span>
           </div>
-
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-4 text-xs">
               {[
@@ -102,7 +111,6 @@ export function TradeHistoryModal({ trades, loading, onClose }: TradeHistoryModa
                 </div>
               ))}
             </div>
-
             <button onClick={onClose}
               className="w-7 h-7 rounded-full flex items-center justify-center text-sm transition-colors"
               style={{ background: "#0d1f3c", color: "#94a3b8" }}
@@ -118,9 +126,12 @@ export function TradeHistoryModal({ trades, loading, onClose }: TradeHistoryModa
           <table className="w-full text-xs">
             <thead className="sticky top-0" style={{ background: "#0d1f3c" }}>
               <tr style={{ borderBottom: "1px solid #1e3a5f" }}>
-                {["#", "PAIR", "DIR", "OPEN TIME", "ENTRY", "CLOSE TIME", "EXIT", "LEVERAGE", "DURATION", "P&L $", "P&L %", "REASON"].map(h => (
-                  <th key={h} className="px-3 py-2.5 text-left font-semibold uppercase tracking-wide whitespace-nowrap"
-                    style={{ color: "#64748b" }}>{h}</th>
+                {COLS.map(h => (
+                  <th key={h}
+                    className="px-3 py-2.5 text-left font-semibold uppercase tracking-wide whitespace-nowrap"
+                    style={{ color: "#64748b" }}>
+                    {h}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -128,7 +139,7 @@ export function TradeHistoryModal({ trades, loading, onClose }: TradeHistoryModa
               {loading && trades.length === 0 ? (
                 [...Array(5)].map((_, i) => (
                   <tr key={i} style={{ borderBottom: "1px solid #0d1f3c" }}>
-                    {[...Array(12)].map((_, j) => (
+                    {COLS.map((_, j) => (
                       <td key={j} className="px-3 py-3">
                         <div className="h-3 rounded animate-pulse"
                           style={{ background: "#0d1f3c", width: "65%" }} />
@@ -138,7 +149,7 @@ export function TradeHistoryModal({ trades, loading, onClose }: TradeHistoryModa
                 ))
               ) : trades.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="px-4 py-10 text-center"
+                  <td colSpan={COLS.length} className="px-4 py-10 text-center"
                     style={{ color: "#475569" }}>
                     No closed trades yet
                   </td>
@@ -180,9 +191,11 @@ export function TradeHistoryModal({ trades, loading, onClose }: TradeHistoryModa
                       <td className="px-3 py-2.5 font-mono" style={{ color: "#cbd5e1" }}>
                         {fmtPrice(t.close_price)}
                       </td>
-                      <td className="px-3 py-2.5 font-mono" style={{ color: "#94a3b8" }}>
-                        {/* Leverage not in closed-trade API payload */}
-                        —
+                      {/* Leverage: not present in /api/trade_audit payload */}
+                      <td className="px-3 py-2.5 font-mono" style={{ color: "#475569" }}>—</td>
+                      {/* Volume: position size in USD — not in closed-trade API payload */}
+                      <td className="px-3 py-2.5 font-mono" style={{ color: "#475569" }}>
+                        {fmtVolume(t)}
                       </td>
                       <td className="px-3 py-2.5 font-mono whitespace-nowrap" style={{ color: "#94a3b8" }}>
                         {fmtDuration(t.duration_min)}
