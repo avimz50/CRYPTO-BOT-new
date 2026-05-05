@@ -46,16 +46,30 @@ export default function App() {
   const isOnline = status != null;
   const equityHistory = wallet?.equity_history?.map(p => p.eq) ?? [];
 
-  const equity     = status?.equity    ?? wallet?.equity   ?? wallet?.balance   ?? null;
-  const starting   = status?.starting  ?? wallet?.starting                      ?? null;
-  const realized   = status?.realized  ?? wallet?.total_pnl                     ?? 0;
-  const unrealized = status?.unrealized ?? wallet?.unrealized_pnl               ?? 0;
+  const equity   = status?.equity   ?? wallet?.equity   ?? wallet?.balance ?? null;
+  const starting = status?.starting ?? wallet?.starting                     ?? null;
+  const realized = status?.realized ?? wallet?.total_pnl                    ?? 0;
+
+  // Flask /api/status always returns unrealized: 0 — compute from trades instead.
+  // Uses the same formula as ActiveTradesTable so the two panels always agree.
+  const activeTrades = trades?.trades ?? [];
+  const unrealized = activeTrades.length > 0
+    ? activeTrades.reduce((sum, t) => {
+        const cp      = t.current_price ?? t.entry;
+        const rawPct  = t.entry > 0 ? (cp - t.entry) / t.entry * 100 : 0;
+        const pnlPct  = t.direction === "LONG" ? rawPct : -rawPct;
+        const posSize = t.pos_size ?? 500;
+        const pnlUsd  = t.tp1_triggered
+          ? (t.tp1_pnl ?? 0) + posSize * pnlPct / 100
+          : posSize * pnlPct / 100;
+        return sum + pnlUsd;
+      }, 0)
+    : (status?.unrealized ?? wallet?.unrealized_pnl ?? 0);
 
   const fngValue = status?.fng_value ?? null;
   const fngLabel = status?.fng_label ?? null;
 
-  const activeTrades = trades?.trades ?? [];
-  const maxTrades    = slots?.max_trades ?? 3;
+  const maxTrades = slots?.max_trades ?? 3;
 
   const auditTrades = audit?.trades ?? [];
 
