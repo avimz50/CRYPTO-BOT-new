@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 
 // ── API types ──────────────────────────────────────────────────
 export interface StatusData {
@@ -197,51 +197,30 @@ function usePoll<T>(url: string, interval: number, enabled = true): PollResult<T
 }
 
 // ── Public hooks ───────────────────────────────────────────────
-export function useStatus()    { return usePoll<StatusData>("/api/status",      10_000); }
-export function useTrades()    { return usePoll<TradesData>("/api/trades",      10_000); }
-export function useScan()      { return usePoll<ScanData>("/api/last_scan",     30_000); }
-export function useSlots()     { return usePoll<SlotsData>("/api/slots",        30_000); }
-export function useWallet()    { return usePoll<WalletData>("/api/wallet",      30_000); }
+export function useStatus()      { return usePoll<StatusData>("/api/status",       10_000); }
+export function useTrades()      { return usePoll<TradesData>("/api/trades",       10_000); }
+export function useScan()        { return usePoll<ScanData>("/api/last_scan",      30_000); }
+export function useSlots()       { return usePoll<SlotsData>("/api/slots",         30_000); }
+export function useWallet()      { return usePoll<WalletData>("/api/wallet",       30_000); }
 export function useFngSettings() { return usePoll<FngSettings>("/api/fng_settings", 60_000); }
-export function useAudit(enabled: boolean) { return usePoll<AuditData>("/api/trade_audit", 60_000, enabled); }
-export function useBotLog(enabled: boolean) { return usePoll<BotLogData>("/api/bot_log",     5_000,  enabled); }
+export function useAudit(enabled: boolean)  { return usePoll<AuditData>("/api/trade_audit", 60_000, enabled); }
+export function useBotLog(enabled: boolean) { return usePoll<BotLogData>("/api/bot_log",      5_000, enabled); }
 
 // ── Actions ────────────────────────────────────────────────────
-export interface LocalSettings {
-  amount_per_trade: number;
-  default_leverage: number;
-}
 
+/** POST /api/make with {action:"sync_telegram"} — proxied to Flask bot */
 export async function syncTelegram(): Promise<boolean> {
   try {
-    const r = await fetch("/api/telegram_sync", { method: "POST" });
-    if (!r.ok) return false;
-    const j = await r.json() as { ok: boolean };
-    return j.ok === true;
-  } catch { return false; }
-}
-
-export async function fetchLocalSettings(): Promise<LocalSettings | null> {
-  try {
-    const r = await fetch("/api/local_settings");
-    if (!r.ok) return null;
-    return await r.json() as LocalSettings;
-  } catch { return null; }
-}
-
-export async function saveLocalSettings(payload: Partial<LocalSettings>): Promise<boolean> {
-  try {
-    const r = await fetch("/api/local_settings", {
+    const r = await fetch("/api/make", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ action: "sync_telegram" }),
     });
-    if (!r.ok) return false;
-    const j = await r.json() as { ok: boolean };
-    return j.ok === true;
+    return r.ok;
   } catch { return false; }
 }
 
+/** POST /api/slots — update max_trades in the Flask bot */
 export async function saveSlots(max_trades: number): Promise<boolean> {
   try {
     const r = await fetch("/api/slots", {
@@ -253,6 +232,7 @@ export async function saveSlots(max_trades: number): Promise<boolean> {
   } catch { return false; }
 }
 
+/** POST /api/fng_settings — update trading thresholds + amount/leverage */
 export async function saveFngSettings(payload: Partial<FngSettings>): Promise<boolean> {
   try {
     const r = await fetch("/api/fng_settings", {
