@@ -142,7 +142,7 @@ interface StatusData {
   equity: number; available: number; starting: number;
   unrealized: number; realized: number; locked: number;
   fng_value: number; fng_label: string;
-  active_trades: number; ts: number;
+  active_trades: number; btc_price?: number; ts: number;
 }
 
 interface Candidate { symbol: string; change_pct: number; volume_usd: number; price: number; }
@@ -306,6 +306,20 @@ function StatusBar({
   const pnlPct   = starting > 0 ? ((equity - starting) / starting * 100) : 0;
   const eqColor  = equity >= starting ? T.green : T.red;
 
+  // BTC price ticker — track previous value for direction arrow
+  const btcPrice    = status?.btc_price ?? 0;
+  const prevBtcRef  = useRef(btcPrice);
+  const [btcDir, setBtcDir] = useState<'up' | 'down' | 'flat'>('flat');
+  useEffect(() => {
+    if (btcPrice <= 0) return;
+    if (prevBtcRef.current > 0 && btcPrice !== prevBtcRef.current) {
+      setBtcDir(btcPrice > prevBtcRef.current ? 'up' : 'down');
+    }
+    prevBtcRef.current = btcPrice;
+  }, [btcPrice]);
+  const btcColor  = btcDir === 'up' ? T.green : btcDir === 'down' ? T.red : T.dim;
+  const btcArrow  = btcDir === 'up' ? '▲' : btcDir === 'down' ? '▼' : '●';
+
   return (
     <div style={{
       position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100,
@@ -325,6 +339,23 @@ function StatusBar({
         <StatusChip color={T.green} label="CONNECTED" sub="Bitget VIRTUAL" />
         <Divider />
       </div>
+
+      {/* BTC Price ticker */}
+      {btcPrice > 0 && (
+        <>
+          <div className="sb-item" style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '0 12px' }}>
+            <span style={{ color: T.dimmer }}>BTC</span>
+            <span style={{ color: T.text, fontWeight: 700 }}>
+              ${btcPrice.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+            </span>
+            <span style={{ color: btcColor, fontSize: 10, fontWeight: 700,
+              textShadow: btcDir !== 'flat' ? `0 0 6px ${btcColor}` : undefined }}>
+              {btcArrow}
+            </span>
+          </div>
+          <Divider />
+        </>
+      )}
 
       {/* FNG */}
       <div className="sb-item" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px' }}>

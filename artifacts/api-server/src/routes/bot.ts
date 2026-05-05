@@ -90,10 +90,11 @@ router.get("/price_history/:symbol", (req, res) => {
 
 /** /status — combined connection/equity/FNG snapshot for the top status bar */
 router.get("/status", async (_req, res) => {
-  const [walletRaw, fngRaw, tradesRaw] = await Promise.all([
+  const [walletRaw, fngRaw, tradesRaw, btcPrice] = await Promise.all([
     fetchFromFlask("/api/wallet",  path.join(PUBLIC, "wallet.json"),       { balance: 200, starting: 200, total_pnl: 0, equity: 200, available_balance: 200, locked_balance: 0, unrealized_pnl: 0 }),
     fetchFromFlask("/api/fng",     "",                                      { value: 50, label: "Neutral" }),
     fetchFromFlask("/api/trades",  path.join(PUBLIC, "active_trades.json"), { count: 0, trades: [] }),
+    fetchBtcPrice(),
   ]);
   const w = walletRaw as Record<string, number>;
   const f = fngRaw    as Record<string, string | number>;
@@ -111,6 +112,7 @@ router.get("/status", async (_req, res) => {
     fng_value:    Number(f.value ?? 50),
     fng_label:    String(f.label ?? "Neutral"),
     active_trades: Number(t.count ?? 0),
+    btc_price:    btcPrice,
     ts: Date.now(),
   });
 });
@@ -269,6 +271,45 @@ router.post("/fng_settings", (req, res) => {
   proxyReq.write(body);
   proxyReq.end();
 });
+
+// BTC spot price — cached 15 s (CoinGecko primary, Kraken fallback)
+let _btcCache: { price: number; ts: number } = { price: 0, ts: 0 };
+
+function _httpsGet(url: string, timeoutMs: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { timeout: timeoutMs }, (r) => {
+      let body = "";
+      r.on("data", (c: string) => (body += c));
+      r.on("end", () => resolve(body));
+    });
+    req.on("error", reject);
+    req.on("timeout", () => { req.destroy(); reject(new Error("timeout")); });
+  });
+}
+
+async function fetchBtcPrice(): Promise<number> {
+  const now = Date.now();
+  if (_btcCache.price > 0 && now - _btcCache.ts < 15_000) return _btcCache.price;
+  // Try CoinGecko first, fall back to Kraken
+  const sources: Array<{ url: string; parse: (body: string) => number }> = [
+    {
+      url: "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
+      parse: (b) => JSON.parse(b).bitcoin.usd,
+    },
+    {
+      url: "https://api.kraken.com/0/public/Ticker?pair=XBTUSD",
+      parse: (b) => parseFloat(JSON.parse(b).result.XXBTZUSD.c[0]),
+    },
+  ];
+  for (const src of sources) {
+    try {
+      const body = await _httpsGet(src.url, 4000);
+      const p = src.parse(body);
+      if (p > 0) { _btcCache = { price: p, ts: now }; return p; }
+    } catch { /* try next source */ }
+  }
+  return _btcCache.price; // return stale cache or 0
+}
 
 // FNG — cached 15 min
 let _fngCache: { value: number; label: string; ts: number; updated_at: number; time_until_update: number } = {
