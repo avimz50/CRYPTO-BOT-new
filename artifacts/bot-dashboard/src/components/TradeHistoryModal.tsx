@@ -55,10 +55,8 @@ function calcPnlPct(t: AuditTrade): number | null {
   return t.direction === "LONG" ? raw : -raw;
 }
 
-// Volume (position size in USD) = not in closed-trade API — show "—"
-// If the field ever becomes available via API, replace this function.
-function fmtVolume(_t: AuditTrade): string {
-  return "—";
+function fmtLeverage(t: AuditTrade): string {
+  return t.leverage != null && isFinite(t.leverage) ? `${t.leverage}x` : "—";
 }
 
 export function TradeHistoryModal({ trades, loading, onClose }: TradeHistoryModalProps) {
@@ -67,9 +65,11 @@ export function TradeHistoryModal({ trades, loading, onClose }: TradeHistoryModa
   const losses   = trades.filter(t => t.pnl_usd < 0).length;
   const winRate  = trades.length > 0 ? (wins / trades.length * 100).toFixed(0) : "—";
 
+  // VOLUME (position size) is not present in /api/trade_audit payload — column omitted.
+  // LEVERAGE is available as an optional field from the bot's audit log.
   const COLS = [
     "#", "PAIR", "DIR", "OPEN TIME", "ENTRY",
-    "CLOSE TIME", "EXIT", "LEVERAGE", "VOLUME", "DURATION", "P&L $", "P&L %", "REASON",
+    "CLOSE TIME", "EXIT", "LEVERAGE", "DURATION", "P&L $", "P&L %", "REASON",
   ];
 
   return (
@@ -191,11 +191,8 @@ export function TradeHistoryModal({ trades, loading, onClose }: TradeHistoryModa
                       <td className="px-3 py-2.5 font-mono" style={{ color: "#cbd5e1" }}>
                         {fmtPrice(t.close_price)}
                       </td>
-                      {/* Leverage: not present in /api/trade_audit payload */}
-                      <td className="px-3 py-2.5 font-mono" style={{ color: "#475569" }}>—</td>
-                      {/* Volume: position size in USD — not in closed-trade API payload */}
-                      <td className="px-3 py-2.5 font-mono" style={{ color: "#475569" }}>
-                        {fmtVolume(t)}
+                      <td className="px-3 py-2.5 font-mono" style={{ color: "#94a3b8" }}>
+                        {fmtLeverage(t)}
                       </td>
                       <td className="px-3 py-2.5 font-mono whitespace-nowrap" style={{ color: "#94a3b8" }}>
                         {fmtDuration(t.duration_min)}

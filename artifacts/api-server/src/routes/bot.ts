@@ -245,31 +245,8 @@ router.post("/slots", (req, res) => {
 });
 
 // FNG Settings — proxy to Flask bot
-// ── Dashboard trade settings persisted alongside fng_settings ──────────────
-// Flask /api/fng_settings only stores threshold keys (extreme_fear/fear/greed).
-// amount_per_trade and default_leverage are stored in a local config file so
-// GET /api/fng_settings can return them and sliders hydrate from the real API.
-const TRADE_CFG_PATH = path.join(ROOT, ".local", "trade_settings.json");
-interface TradeCfg { amount_per_trade: number; default_leverage: number }
-const TRADE_CFG_DEF: TradeCfg = { amount_per_trade: 50, default_leverage: 10 };
-
-function readTradeCfg(): TradeCfg {
-  try {
-    const p = JSON.parse(fs.readFileSync(TRADE_CFG_PATH, "utf-8")) as Partial<TradeCfg>;
-    return {
-      amount_per_trade: typeof p.amount_per_trade === "number" ? p.amount_per_trade : TRADE_CFG_DEF.amount_per_trade,
-      default_leverage: typeof p.default_leverage === "number" ? p.default_leverage : TRADE_CFG_DEF.default_leverage,
-    };
-  } catch { return { ...TRADE_CFG_DEF }; }
-}
-
-function writeTradeCfg(v: TradeCfg): void {
-  fs.mkdirSync(path.dirname(TRADE_CFG_PATH), { recursive: true });
-  fs.writeFileSync(TRADE_CFG_PATH, JSON.stringify(v, null, 2), "utf-8");
-}
-
 router.get("/fng_settings", async (_req, res) => {
-  const flask = await fetchFromFlask("/api/fng_settings", "", {
+  const data = await fetchFromFlask("/api/fng_settings", "", {
     extreme_fear: 13, fear: 30, greed: 70,
     ranges: {
       extreme_fear: { min: 5,  max: 25, desc: 'Kill-Switch — אין עסקאות חדשות' },
@@ -277,54 +254,28 @@ router.get("/fng_settings", async (_req, res) => {
       greed:        { min: 55, max: 85, desc: 'Greed — פוזיציה 60% + BE מוקדם' },
     }
   });
-  // Merge config-backed trade settings into the response so the dashboard
-  // can hydrate amount/leverage sliders directly from this endpoint.
-  const cfg = readTradeCfg();
-  res.json({ ...(flask as object), ...cfg });
+  res.json(data);
 });
 
 router.post("/fng_settings", (req, res) => {
-  const incoming = req.body as Record<string, unknown>;
-
-  // Persist amount/leverage to local config so GET returns them on next load.
-  const next: TradeCfg = {
-    amount_per_trade: typeof incoming.amount_per_trade === "number"
-      ? incoming.amount_per_trade : readTradeCfg().amount_per_trade,
-    default_leverage: typeof incoming.default_leverage === "number"
-      ? incoming.default_leverage : readTradeCfg().default_leverage,
-  };
-  try { writeTradeCfg(next); } catch { /* non-fatal */ }
-
-  // Forward only threshold keys to Flask (it ignores unknown fields but keep payload clean).
-  const flaskPayload = JSON.stringify({
-    extreme_fear: incoming.extreme_fear,
-    fear: incoming.fear,
-    greed: incoming.greed,
-  });
+  const body = JSON.stringify(req.body);
   const options = {
     hostname: BOT_FLASK_HOST,
     port: BOT_FLASK_PNUM,
     path: "/api/fng_settings",
     method: "POST",
-    headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(flaskPayload) },
+    headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
   };
   const proxyReq = _botHttp.request(options, (r) => {
     let data = "";
     r.on("data", (c) => (data += c));
     r.on("end", () => {
-      // Config was already persisted above — return success merged with saved values.
-      // Flask may return non-JSON (HTML error page) but that does not affect persistence.
-      let flaskJson: object = {};
-      try { flaskJson = JSON.parse(data) as object; } catch { /* non-JSON Flask response is ok */ }
-      const httpStatus = r.statusCode ?? 200;
-      res.status(httpStatus < 500 ? httpStatus : 200).json({ ok: true, ...flaskJson, ...next });
+      try { res.status(r.statusCode ?? 200).json(JSON.parse(data)); }
+      catch { res.status(500).json({ error: "invalid response from bot" }); }
     });
   });
-  proxyReq.on("error", () => {
-    // Flask unreachable — config was still saved locally, return success with saved values.
-    res.json({ ok: true, ...next });
-  });
-  proxyReq.write(flaskPayload);
+  proxyReq.on("error", (e) => res.status(503).json({ error: String(e) }));
+  proxyReq.write(body);
   proxyReq.end();
 });
 

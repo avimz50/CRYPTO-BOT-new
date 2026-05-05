@@ -95,6 +95,7 @@ export interface AuditTrade {
   symbol: string;
   direction: "LONG" | "SHORT";
   timeframe?: string;
+  leverage?: number;
   entry_price: number;
   close_price: number;
   sl_at_open?: number;
@@ -132,17 +133,11 @@ export interface WalletData {
   equity?: number;
 }
 
-/**
- * /api/fng_settings — threshold fields from Flask, plus trade settings
- * (amount_per_trade + default_leverage) persisted server-side by the Express
- * proxy and merged into every GET response.
- */
+/** Flask /api/fng_settings threshold fields */
 export interface FngSettings {
   extreme_fear: number;
   fear: number;
   greed: number;
-  amount_per_trade: number;
-  default_leverage: number;
   ranges?: {
     extreme_fear?: { min: number; max: number; desc: string };
     fear?:         { min: number; max: number; desc: string };
@@ -261,24 +256,32 @@ export async function saveSlots(max_trades: number): Promise<boolean> {
 }
 
 /**
- * POST /api/fng_settings — sends thresholds to Flask + amount/leverage to the
- * Express proxy which persists them server-side and merges them into GET responses.
+ * POST /api/fng_settings — sends threshold fields to Flask bot.
+ * Amount/leverage are NOT sent here; they are stored in localStorage only
+ * (Flask does not expose an endpoint for these fields and bot.ts is unchanged).
  */
-export async function saveSettings(payload: {
-  extreme_fear?: number;
-  fear?: number;
-  greed?: number;
-  amount_per_trade: number;
-  default_leverage: number;
-}): Promise<{ fngOk: boolean }> {
+export async function saveFngThresholds(payload: Partial<FngSettings>): Promise<boolean> {
   try {
     const r = await fetch("/api/fng_settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        extreme_fear: payload.extreme_fear,
+        fear: payload.fear,
+        greed: payload.greed,
+      }),
     });
-    return { fngOk: r.ok };
+    return r.ok;
   } catch {
-    return { fngOk: false };
+    return false;
   }
+}
+
+/**
+ * Persist amount_per_trade and default_leverage to localStorage.
+ * These fields have no server endpoint — localStorage is the intentional
+ * client-side store for dashboard-only settings not exposed by the Flask bot.
+ */
+export function saveTradeSettings(v: LocalSettingsCache): void {
+  lsWriteSettings(v);
 }

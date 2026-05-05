@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { saveSlots, saveSettings, SlotsData, FngSettings } from "@/hooks/useBotData";
+import { saveSlots, saveFngThresholds, saveTradeSettings, lsReadSettings, SlotsData, FngSettings } from "@/hooks/useBotData";
 
 interface BotSettingsProps {
   slots: SlotsData | null;
@@ -43,8 +43,8 @@ function SliderRow({
 
 interface SaveStatus {
   phase: "idle" | "saving" | "done";
-  slotsOk: boolean | null;
-  fngOk:   boolean | null;
+  slotsOk:   boolean | null;
+  fngOk:     boolean | null;
 }
 
 const BTN_META = {
@@ -56,39 +56,29 @@ const BTN_META = {
 };
 
 export function BotSettings({ slots, fngSettings, onSaved }: BotSettingsProps) {
+  // amount/leverage: localStorage is the intentional store — Flask has no endpoint for these
+  const cached = lsReadSettings();
   const [maxTrades, setMaxTrades] = useState(slots?.max_trades ?? 3);
-  const [amount,    setAmount]    = useState(fngSettings?.amount_per_trade ?? 50);
-  const [leverage,  setLeverage]  = useState(fngSettings?.default_leverage ?? 10);
+  const [amount,    setAmount]    = useState(cached.amount_per_trade);
+  const [leverage,  setLeverage]  = useState(cached.default_leverage);
   const [status,    setStatus]    = useState<SaveStatus>({ phase: "idle", slotsOk: null, fngOk: null });
-  const [hydrated,  setHydrated]  = useState(false);
 
-  // Hydrate sliders from API data once it arrives (source of truth = server)
+  // Sync max_trades from live /api/slots
   useEffect(() => {
-    if (!hydrated && slots?.max_trades) {
-      setMaxTrades(slots.max_trades);
-    }
-  }, [slots, hydrated]);
-
-  useEffect(() => {
-    if (!hydrated && fngSettings) {
-      setAmount(fngSettings.amount_per_trade ?? 50);
-      setLeverage(fngSettings.default_leverage ?? 10);
-      setHydrated(true);
-    }
-  }, [fngSettings, hydrated]);
+    if (slots?.max_trades) setMaxTrades(slots.max_trades);
+  }, [slots]);
 
   const handleSave = async () => {
     setStatus({ phase: "saving", slotsOk: null, fngOk: null });
 
-    const [slotsOk, { fngOk }] = await Promise.all([
+    // 1. Save amount/leverage to localStorage (Flask has no endpoint for these)
+    saveTradeSettings({ amount_per_trade: amount, default_leverage: leverage });
+
+    // 2. POST max_trades to Flask via /api/slots
+    // 3. POST fng thresholds to Flask via /api/fng_settings
+    const [slotsOk, fngOk] = await Promise.all([
       saveSlots(maxTrades),
-      saveSettings({
-        extreme_fear: fngSettings?.extreme_fear,
-        fear:         fngSettings?.fear,
-        greed:        fngSettings?.greed,
-        amount_per_trade: amount,
-        default_leverage: leverage,
-      }),
+      saveFngThresholds(fngSettings ?? {}),
     ]);
 
     setStatus({ phase: "done", slotsOk, fngOk });
@@ -109,51 +99,37 @@ export function BotSettings({ slots, fngSettings, onSaved }: BotSettingsProps) {
   const slotMin = slots?.min ?? 1;
   const slotMax = slots?.max ?? 5;
 
-  // Show loading state until we have API data to hydrate from
-  const isLoading = !fngSettings;
-
   return (
     <div className="rounded-xl p-4" style={{ background: "#0a1628", border: "1px solid #1e3a5f" }}>
       <h2 className="text-xs font-bold uppercase tracking-widest mb-4" style={{ color: "#94a3b8" }}>
         Bot Settings
       </h2>
 
-      {isLoading ? (
-        <div className="animate-pulse space-y-4">
-          {[...Array(3)].map((_, i) => (
-            <div key={i} className="h-8 rounded-lg" style={{ background: "#0d1f3c" }} />
-          ))}
-        </div>
-      ) : (
-        <>
-          <SliderRow
-            label="Max Concurrent Trades"
-            value={maxTrades} min={slotMin} max={slotMax} unit=""
-            onChange={setMaxTrades}
-          />
-          <SliderRow
-            label="Amount per Trade ($)"
-            value={amount} min={10} max={200} unit="$"
-            onChange={setAmount}
-          />
-          <SliderRow
-            label="Default Leverage (x)"
-            value={leverage} min={1} max={20} unit="x"
-            onChange={setLeverage}
-          />
-        </>
-      )}
+      <SliderRow
+        label="Max Concurrent Trades"
+        value={maxTrades} min={slotMin} max={slotMax} unit=""
+        onChange={setMaxTrades}
+      />
+      <SliderRow
+        label="Amount per Trade ($)"
+        value={amount} min={10} max={200} unit="$"
+        onChange={setAmount}
+      />
+      <SliderRow
+        label="Default Leverage (x)"
+        value={leverage} min={1} max={20} unit="x"
+        onChange={setLeverage}
+      />
 
       <button
         onClick={handleSave}
-        disabled={status.phase === "saving" || isLoading}
-        className="w-full py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all mt-1"
+        disabled={status.phase === "saving"}
+        className="w-full py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all"
         style={{
           background: meta.bg,
           border: `1px solid ${meta.border}`,
           color: meta.color,
-          cursor: status.phase === "saving" || isLoading ? "not-allowed" : "pointer",
-          opacity: isLoading ? 0.5 : 1,
+          cursor: status.phase === "saving" ? "not-allowed" : "pointer",
         }}>
         {meta.label}
       </button>
@@ -167,10 +143,14 @@ export function BotSettings({ slots, fngSettings, onSaved }: BotSettingsProps) {
             </span>
           </div>
           <div className="flex justify-between text-xs" style={{ color: "#475569" }}>
-            <span>Amount / leverage</span>
+            <span>F&G thresholds</span>
             <span style={{ color: status.fngOk ? "#4ade80" : "#f87171" }}>
-              {status.fngOk ? "✓ Saved to server" : "✗ Server unreachable"}
+              {status.fngOk ? "✓ Sent to bot" : "✗ Bot unreachable"}
             </span>
+          </div>
+          <div className="flex justify-between text-xs" style={{ color: "#475569" }}>
+            <span>Amount / leverage</span>
+            <span style={{ color: "#4ade80" }}>✓ Saved in browser</span>
           </div>
         </div>
       )}
