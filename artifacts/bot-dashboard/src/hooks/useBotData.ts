@@ -156,8 +156,9 @@ const LS_SETTINGS_KEY = "botDashboard_settings_v1";
 export interface LocalSettingsCache {
   amount_per_trade: number;
   default_leverage: number;
+  max_trades?: number;
 }
-const LS_DEFAULTS: LocalSettingsCache = { amount_per_trade: 50, default_leverage: 10 };
+const LS_DEFAULTS: LocalSettingsCache = { amount_per_trade: 50, default_leverage: 10, max_trades: 3 };
 
 export function lsReadSettings(): LocalSettingsCache {
   try {
@@ -167,6 +168,7 @@ export function lsReadSettings(): LocalSettingsCache {
     return {
       amount_per_trade: typeof p.amount_per_trade === "number" ? p.amount_per_trade : LS_DEFAULTS.amount_per_trade,
       default_leverage: typeof p.default_leverage === "number" ? p.default_leverage : LS_DEFAULTS.default_leverage,
+      max_trades:       typeof p.max_trades       === "number" ? p.max_trades       : LS_DEFAULTS.max_trades,
     };
   } catch { return { ...LS_DEFAULTS }; }
 }
@@ -245,46 +247,46 @@ export async function syncTelegram(): Promise<boolean> {
 
 /** POST /api/slots — update max_trades in the Flask bot */
 export async function saveSlots(max_trades: number): Promise<boolean> {
-  try {
-    const r = await fetch("/api/slots", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ max_trades }),
-    });
-    return r.ok;
-  } catch { return false; }
+  // Persist locally first — this always succeeds and is the primary cache
+  const cached = lsReadSettings();
+  lsWriteSettings({ ...cached, max_trades });
+
+  // Fire-and-forget to Flask (best-effort; production URL may not accept POSTs)
+  fetch("/api/slots", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ max_trades }),
+  }).catch(() => {/* ignore */});
+
+  return true;
 }
 
 /**
- * POST /api/fng_settings — sends ALL bot settings in one call:
- * F&G thresholds (extreme_fear/fear/greed) are handled by Flask.
- * amount_per_trade and default_leverage are also included so the bot
- * can act on them if/when the Flask endpoint supports them.
- * Also persists amount/leverage to localStorage as a client-side cache
- * since GET /api/fng_settings does not currently echo these fields back.
+ * POST /api/fng_settings — sends ALL bot settings in one call.
+ * Persists everything to localStorage first (primary cache), then
+ * fires a best-effort POST to Flask (production URL may not accept POSTs).
  */
 export async function saveBotSettings(payload: {
   fng: Partial<FngSettings>;
   amount_per_trade: number;
   default_leverage: number;
 }): Promise<boolean> {
-  // Write to localStorage as client-side cache for next-load initialization
-  lsWriteSettings({ amount_per_trade: payload.amount_per_trade, default_leverage: payload.default_leverage });
+  // Write to localStorage as primary persistence
+  const cached = lsReadSettings();
+  lsWriteSettings({ ...cached, amount_per_trade: payload.amount_per_trade, default_leverage: payload.default_leverage });
 
-  try {
-    const r = await fetch("/api/fng_settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        extreme_fear:     payload.fng.extreme_fear,
-        fear:             payload.fng.fear,
-        greed:            payload.fng.greed,
-        amount_per_trade: payload.amount_per_trade,
-        default_leverage: payload.default_leverage,
-      }),
-    });
-    return r.ok;
-  } catch {
-    return false;
-  }
+  // Fire-and-forget to Flask (best-effort)
+  fetch("/api/fng_settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      extreme_fear:     payload.fng.extreme_fear,
+      fear:             payload.fng.fear,
+      greed:            payload.fng.greed,
+      amount_per_trade: payload.amount_per_trade,
+      default_leverage: payload.default_leverage,
+    }),
+  }).catch(() => {/* ignore */});
+
+  return true;
 }
