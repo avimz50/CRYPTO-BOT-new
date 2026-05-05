@@ -56,8 +56,8 @@ audit_report.json              ← closed trade history
 
 - **Vite proxy**: `/api/*` → `http://localhost:8080` (Express) → `$BOT_URL` (Flask bot)
 - **Polling not WebSocket**: dashboard polls every 10s (status/trades), 30s (scan/slots/wallet), 5s (logs when on Logs tab), 60s (audit when modal open)
-- **No per-trade leverage in bot data**: dashboard calculates from `(pos_size / leverage_default) || 10`; real leverage comes from BotSettings sliders
-- **FNG settings double-duty**: `/api/fng_settings` POST body includes `amount_per_trade` + `default_leverage` for round-trip persistence alongside `/api/slots` for `max_trades`
+- **No per-trade leverage in bot data**: leverage column in Trade History renders `audit.leverage` if present, otherwise "—"
+- **Bot Settings persistence**: `max_trades` → POST `/api/slots`; F&G thresholds + `amount_per_trade` + `default_leverage` → POST `/api/fng_settings` (Flask handles thresholds; amount/leverage fields forwarded but not yet stored server-side by Flask); `amount_per_trade`/`default_leverage` also written to `localStorage` as client-side cache so sliders restore on next load
 - **Tailwind + inline styles**: panel/card backgrounds use inline CSS vars for the `#070d1a → #0a1628 → #0d1f3c` dark blue palette; Tailwind handles spacing/layout
 
 ## Product

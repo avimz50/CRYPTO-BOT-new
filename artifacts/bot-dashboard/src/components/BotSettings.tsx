@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { saveSlots, saveFngThresholds, saveTradeSettings, lsReadSettings, SlotsData, FngSettings } from "@/hooks/useBotData";
+import { saveSlots, saveBotSettings, lsReadSettings, SlotsData, FngSettings } from "@/hooks/useBotData";
 
 interface BotSettingsProps {
   slots: SlotsData | null;
@@ -43,8 +43,8 @@ function SliderRow({
 
 interface SaveStatus {
   phase: "idle" | "saving" | "done";
-  slotsOk:   boolean | null;
-  fngOk:     boolean | null;
+  slotsOk: boolean | null;
+  fngOk:   boolean | null;
 }
 
 const BTN_META = {
@@ -56,7 +56,7 @@ const BTN_META = {
 };
 
 export function BotSettings({ slots, fngSettings, onSaved }: BotSettingsProps) {
-  // amount/leverage: localStorage is the intentional store — Flask has no endpoint for these
+  // Initialize from localStorage cache (GET /api/fng_settings doesn't return these fields)
   const cached = lsReadSettings();
   const [maxTrades, setMaxTrades] = useState(slots?.max_trades ?? 3);
   const [amount,    setAmount]    = useState(cached.amount_per_trade);
@@ -71,14 +71,16 @@ export function BotSettings({ slots, fngSettings, onSaved }: BotSettingsProps) {
   const handleSave = async () => {
     setStatus({ phase: "saving", slotsOk: null, fngOk: null });
 
-    // 1. Save amount/leverage to localStorage (Flask has no endpoint for these)
-    saveTradeSettings({ amount_per_trade: amount, default_leverage: leverage });
-
-    // 2. POST max_trades to Flask via /api/slots
-    // 3. POST fng thresholds to Flask via /api/fng_settings
+    // POST max_trades via /api/slots
+    // POST all settings (thresholds + amount/leverage) via /api/fng_settings
+    // localStorage is also updated as a client-side cache inside saveBotSettings
     const [slotsOk, fngOk] = await Promise.all([
       saveSlots(maxTrades),
-      saveFngThresholds(fngSettings ?? {}),
+      saveBotSettings({
+        fng: fngSettings ?? {},
+        amount_per_trade: amount,
+        default_leverage: leverage,
+      }),
     ]);
 
     setStatus({ phase: "done", slotsOk, fngOk });
@@ -143,14 +145,10 @@ export function BotSettings({ slots, fngSettings, onSaved }: BotSettingsProps) {
             </span>
           </div>
           <div className="flex justify-between text-xs" style={{ color: "#475569" }}>
-            <span>F&G thresholds</span>
+            <span>Settings</span>
             <span style={{ color: status.fngOk ? "#4ade80" : "#f87171" }}>
               {status.fngOk ? "✓ Sent to bot" : "✗ Bot unreachable"}
             </span>
-          </div>
-          <div className="flex justify-between text-xs" style={{ color: "#475569" }}>
-            <span>Amount / leverage</span>
-            <span style={{ color: "#4ade80" }}>✓ Saved in browser</span>
           </div>
         </div>
       )}

@@ -65,11 +65,9 @@ export function TradeHistoryModal({ trades, loading, onClose }: TradeHistoryModa
   const losses   = trades.filter(t => t.pnl_usd < 0).length;
   const winRate  = trades.length > 0 ? (wins / trades.length * 100).toFixed(0) : "—";
 
-  // VOLUME (position size) is not present in /api/trade_audit payload — column omitted.
-  // LEVERAGE is available as an optional field from the bot's audit log.
   const COLS = [
     "#", "PAIR", "DIR", "OPEN TIME", "ENTRY",
-    "CLOSE TIME", "EXIT", "LEVERAGE", "DURATION", "P&L $", "P&L %", "REASON",
+    "CLOSE TIME", "EXIT", "LEVERAGE", "VOLUME", "DURATION", "P&L $", "P&L %", "REASON",
   ];
 
   return (
@@ -194,6 +192,8 @@ export function TradeHistoryModal({ trades, loading, onClose }: TradeHistoryModa
                       <td className="px-3 py-2.5 font-mono" style={{ color: "#94a3b8" }}>
                         {fmtLeverage(t)}
                       </td>
+                      {/* Volume = position size in USD; not in current /api/trade_audit payload */}
+                      <td className="px-3 py-2.5 font-mono" style={{ color: "#475569" }}>—</td>
                       <td className="px-3 py-2.5 font-mono whitespace-nowrap" style={{ color: "#94a3b8" }}>
                         {fmtDuration(t.duration_min)}
                       </td>

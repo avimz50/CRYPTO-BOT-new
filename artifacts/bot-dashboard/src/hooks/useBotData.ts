@@ -256,32 +256,35 @@ export async function saveSlots(max_trades: number): Promise<boolean> {
 }
 
 /**
- * POST /api/fng_settings — sends threshold fields to Flask bot.
- * Amount/leverage are NOT sent here; they are stored in localStorage only
- * (Flask does not expose an endpoint for these fields and bot.ts is unchanged).
+ * POST /api/fng_settings — sends ALL bot settings in one call:
+ * F&G thresholds (extreme_fear/fear/greed) are handled by Flask.
+ * amount_per_trade and default_leverage are also included so the bot
+ * can act on them if/when the Flask endpoint supports them.
+ * Also persists amount/leverage to localStorage as a client-side cache
+ * since GET /api/fng_settings does not currently echo these fields back.
  */
-export async function saveFngThresholds(payload: Partial<FngSettings>): Promise<boolean> {
+export async function saveBotSettings(payload: {
+  fng: Partial<FngSettings>;
+  amount_per_trade: number;
+  default_leverage: number;
+}): Promise<boolean> {
+  // Write to localStorage as client-side cache for next-load initialization
+  lsWriteSettings({ amount_per_trade: payload.amount_per_trade, default_leverage: payload.default_leverage });
+
   try {
     const r = await fetch("/api/fng_settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        extreme_fear: payload.extreme_fear,
-        fear: payload.fear,
-        greed: payload.greed,
+        extreme_fear:     payload.fng.extreme_fear,
+        fear:             payload.fng.fear,
+        greed:            payload.fng.greed,
+        amount_per_trade: payload.amount_per_trade,
+        default_leverage: payload.default_leverage,
       }),
     });
     return r.ok;
   } catch {
     return false;
   }
-}
-
-/**
- * Persist amount_per_trade and default_leverage to localStorage.
- * These fields have no server endpoint — localStorage is the intentional
- * client-side store for dashboard-only settings not exposed by the Flask bot.
- */
-export function saveTradeSettings(v: LocalSettingsCache): void {
-  lsWriteSettings(v);
 }
