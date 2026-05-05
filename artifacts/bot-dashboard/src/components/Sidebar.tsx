@@ -1,6 +1,7 @@
 interface SidebarProps {
   activeNav: string;
   onNav: (tab: string) => void;
+  overlay?: boolean;
 }
 
 const NAV_ITEMS = [
@@ -10,10 +11,23 @@ const NAV_ITEMS = [
   { icon: "⚙️", label: "Settings" },
 ];
 
-export function Sidebar({ activeNav, onNav }: SidebarProps) {
+export function Sidebar({ activeNav, onNav, overlay }: SidebarProps) {
   return (
-    <aside className="flex-shrink-0 flex flex-col"
-      style={{ width: 180, background: "#0a1628", borderRight: "1px solid #1e3a5f" }}>
+    <aside
+      className="flex-shrink-0 flex flex-col"
+      style={{
+        width: 180,
+        background: "#0a1628",
+        borderRight: "1px solid #1e3a5f",
+        ...(overlay ? {
+          position: "fixed" as const,
+          top: 0,
+          left: 0,
+          height: "100vh",
+          zIndex: 40,
+        } : {}),
+      }}>
+      {/* Logo */}
       <div className="flex items-center gap-2 px-4 py-5 border-b"
         style={{ borderColor: "#1e3a5f" }}>
         <div className="w-8 h-8 rounded-lg flex items-center justify-center text-base font-bold text-white"
@@ -21,6 +35,7 @@ export function Sidebar({ activeNav, onNav }: SidebarProps) {
         <span className="text-sm font-bold text-blue-300">CryptoBot</span>
       </div>
 
+      {/* Nav */}
       <nav className="flex-1 py-3">
         {NAV_ITEMS.map(({ icon, label }) => (
           <button key={label} onClick={() => onNav(label)}
