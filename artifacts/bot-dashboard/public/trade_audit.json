@@ -1,6 +1,6 @@
 {
-  "updated": "2026-05-04T07:46:33+03:00",
-  "count": 19,
+  "updated": "2026-05-05T14:28:32+03:00",
+  "count": 20,
   "trades": [
     {
       "symbol": "TRX/USDT",
@@ -605,6 +605,38 @@
       "scalp": false,
       "hunter_mode": false,
       "lesson": "✅ Setup Confirmed — תזה טכנית הצליחה לאחר 19345 דקות. סבלנות הוכיחה את עצמה. Score=88 היה נכון.",
+      "prebreakout_signals": "None"
+    },
+    {
+      "symbol": "APT/USDT",
+      "direction": "LONG",
+      "timeframe": "Breakout",
+      "entry_price": 0.946,
+      "close_price": 0.99,
+      "sl_at_open": 0.946946,
+      "tp_at_open": 1.0879,
+      "dist_sl_pct": 0.1,
+      "dist_tp_pct": 15.0,
+      "rr_ratio": 150.0,
+      "rr_achieved": 46.51,
+      "score": 95,
+      "rsi": 56.9,
+      "ema200": null,
+      "score_breakdown": "Breakout Strategy LONG: 1H $0.946 > 4H High `$0.945` | FNG=29 | RSI=56.9 | Vol×1.5",
+      "strategy": "",
+      "track": "Swing",
+      "slippage_pct": 0.0,
+      "close_reason": "TP1+Trail",
+      "pnl_usd": 4.69,
+      "opened_at": "2026-04-20T21:47:09+03:00",
+      "closed_at": "2026-05-05T14:28:32+03:00",
+      "fng_at_entry": 29,
+      "atr": 0.00970442,
+      "duration_min": 21161.4,
+      "sniper": false,
+      "scalp": false,
+      "hunter_mode": false,
+      "lesson": "✅ TP1+Trail — עסקה רווחית $+4.69 · 21161 דקות · Score=95.",
       "prebreakout_signals": "None"
     }
   ]
