@@ -90,8 +90,6 @@ export interface SlotsData {
   open_slots: number;
   min: number;
   max: number;
-  amount_per_trade?: number;
-  default_leverage?: number;
 }
 
 // ── Audit data — actual shape from /api/trade_audit ──────────
@@ -140,14 +138,18 @@ export interface FngSettings {
   extreme_fear: number;
   fear: number;
   greed: number;
-  amount_per_trade?: number;
-  default_leverage?: number;
 }
 
 export interface BotLogData {
   stdout: string;
   stderr: string;
   crash: string | null;
+}
+
+/** Dashboard-level config (amount_per_trade, default_leverage) — persisted in Express layer */
+export interface LocalSettings {
+  amount_per_trade: number;
+  default_leverage: number;
 }
 
 // ── Poll result with stale detection ──────────────────────────
@@ -197,18 +199,22 @@ function usePoll<T>(url: string, interval: number, enabled = true): PollResult<T
 }
 
 // ── Public hooks ───────────────────────────────────────────────
-export function useStatus()      { return usePoll<StatusData>("/api/status",       10_000); }
-export function useTrades()      { return usePoll<TradesData>("/api/trades",       10_000); }
-export function useScan()        { return usePoll<ScanData>("/api/last_scan",      30_000); }
-export function useSlots()       { return usePoll<SlotsData>("/api/slots",         30_000); }
-export function useWallet()      { return usePoll<WalletData>("/api/wallet",       30_000); }
+export function useStatus()      { return usePoll<StatusData>("/api/status",        10_000); }
+export function useTrades()      { return usePoll<TradesData>("/api/trades",        10_000); }
+export function useScan()        { return usePoll<ScanData>("/api/last_scan",       30_000); }
+export function useSlots()       { return usePoll<SlotsData>("/api/slots",          30_000); }
+export function useWallet()      { return usePoll<WalletData>("/api/wallet",        30_000); }
 export function useFngSettings() { return usePoll<FngSettings>("/api/fng_settings", 60_000); }
 export function useAudit(enabled: boolean)  { return usePoll<AuditData>("/api/trade_audit", 60_000, enabled); }
 export function useBotLog(enabled: boolean) { return usePoll<BotLogData>("/api/bot_log",      5_000, enabled); }
 
 // ── Actions ────────────────────────────────────────────────────
 
-/** POST /api/make with {action:"sync_telegram"} — proxied to Flask bot */
+/**
+ * Trigger a Telegram sync notification.
+ * Posts {action:"sync_telegram"} to /api/make — the Express proxy intercepts this
+ * action and calls Telegram Bot API directly (no Flask sync_telegram command exists).
+ */
 export async function syncTelegram(): Promise<boolean> {
   try {
     const r = await fetch("/api/make", {
@@ -216,7 +222,32 @@ export async function syncTelegram(): Promise<boolean> {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "sync_telegram" }),
     });
-    return r.ok;
+    if (!r.ok) return false;
+    const j = await r.json() as { ok: boolean };
+    return j.ok === true;
+  } catch { return false; }
+}
+
+/** Read amount_per_trade and default_leverage from the Express-layer config store */
+export async function fetchLocalSettings(): Promise<LocalSettings | null> {
+  try {
+    const r = await fetch("/api/local_settings");
+    if (!r.ok) return null;
+    return await r.json() as LocalSettings;
+  } catch { return null; }
+}
+
+/** Persist amount_per_trade and/or default_leverage to the Express-layer config store */
+export async function saveLocalSettings(payload: Partial<LocalSettings>): Promise<boolean> {
+  try {
+    const r = await fetch("/api/local_settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) return false;
+    const j = await r.json() as { ok: boolean };
+    return j.ok === true;
   } catch { return false; }
 }
 
@@ -232,7 +263,7 @@ export async function saveSlots(max_trades: number): Promise<boolean> {
   } catch { return false; }
 }
 
-/** POST /api/fng_settings — update trading thresholds + amount/leverage */
+/** POST /api/fng_settings — update FNG thresholds (extreme_fear / fear / greed only) */
 export async function saveFngSettings(payload: Partial<FngSettings>): Promise<boolean> {
   try {
     const r = await fetch("/api/fng_settings", {
