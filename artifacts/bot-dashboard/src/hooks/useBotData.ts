@@ -49,19 +49,39 @@ export interface TradesData {
   trades: BotTrade[];
 }
 
-export interface ScanResult {
+// ── Scan data — actual shape from /api/last_scan ──────────────
+export interface RejectedCoin {
   symbol: string;
-  signal: "BUY" | "SELL" | "HOLD";
-  score?: number;
-  confidence?: string;
-  last_checked?: string;
-  timeframe?: string;
+  direction: "LONG" | "SHORT";
+  best_score: number;
+  reason: string;
+  scores: { "4H"?: number; "1H"?: number; "15m"?: number };
+}
+
+export interface BubbleWatch {
+  symbol: string;
+  change_pct: number;
+  direction: string;
+  price: number;
+  volume_usd: number;
 }
 
 export interface ScanData {
-  updated: string | null;
-  count: number;
-  results: ScanResult[];
+  scan_time: string | null;
+  total_scanned: number;
+  signals_found: number;
+  active_trades_count: number;
+  max_trades: number;
+  min_score: number;
+  btc_regime: string;
+  fng_value: number;
+  fng_label: string;
+  market_sentiment_factor: string;
+  rejected_coins: RejectedCoin[];
+  system_message: string;
+  scan_duration_s: number;
+  bubble_watch: BubbleWatch[];
+  sandbox_analysis: unknown[];
 }
 
 export interface SlotsData {
@@ -74,19 +94,29 @@ export interface SlotsData {
   default_leverage?: number;
 }
 
+// ── Audit data — actual shape from /api/trade_audit ──────────
 export interface AuditTrade {
-  id?: string;
   symbol: string;
   direction: "LONG" | "SHORT";
-  open_time?: string;
-  entry_price?: number;
-  close_time?: string;
-  close_price?: number;
-  leverage?: number;
-  pos_size?: number;
-  pnl?: number;
-  pnl_pct?: number;
-  close_reason?: string;
+  timeframe?: string;
+  entry_price: number;
+  close_price: number;
+  sl_at_open?: number;
+  tp_at_open?: number;
+  dist_sl_pct?: number;
+  dist_tp_pct?: number;
+  rr_ratio?: number;
+  rr_achieved?: number;
+  score?: number;
+  close_reason: string;
+  pnl_usd: number;
+  opened_at: string;
+  closed_at: string;
+  fng_at_entry?: number;
+  duration_min?: number;
+  strategy?: string;
+  track?: string;
+  lesson?: string;
 }
 
 export interface AuditData {
@@ -131,7 +161,7 @@ function usePoll<T>(url: string, interval: number, enabled = true) {
     try {
       const r = await fetch(`${url}?_t=${Date.now()}`);
       if (!r.ok) throw new Error(`${r.status}`);
-      const json = await r.json();
+      const json = (await r.json()) as T;
       setData(json);
       setError(false);
     } catch {
@@ -155,39 +185,16 @@ function usePoll<T>(url: string, interval: number, enabled = true) {
 }
 
 // ── Public hooks ───────────────────────────────────────────────
-export function useStatus() {
-  return usePoll<StatusData>("/api/status", 10_000);
-}
+export function useStatus() { return usePoll<StatusData>("/api/status", 10_000); }
+export function useTrades() { return usePoll<TradesData>("/api/trades", 10_000); }
+export function useScan()   { return usePoll<ScanData>("/api/last_scan", 30_000); }
+export function useSlots()  { return usePoll<SlotsData>("/api/slots", 30_000); }
+export function useWallet() { return usePoll<WalletData>("/api/wallet", 30_000); }
+export function useFngSettings() { return usePoll<FngSettings>("/api/fng_settings", 60_000); }
+export function useAudit(enabled: boolean) { return usePoll<AuditData>("/api/trade_audit", 60_000, enabled); }
+export function useBotLog(enabled: boolean) { return usePoll<BotLogData>("/api/bot_log", 5_000, enabled); }
 
-export function useTrades() {
-  return usePoll<TradesData>("/api/trades", 10_000);
-}
-
-export function useScan() {
-  return usePoll<ScanData>("/api/last_scan", 30_000);
-}
-
-export function useSlots() {
-  return usePoll<SlotsData>("/api/slots", 30_000);
-}
-
-export function useWallet() {
-  return usePoll<WalletData>("/api/wallet", 30_000);
-}
-
-export function useFngSettings() {
-  return usePoll<FngSettings>("/api/fng_settings", 60_000);
-}
-
-export function useAudit(enabled: boolean) {
-  return usePoll<AuditData>("/api/trade_audit", 60_000, enabled);
-}
-
-export function useBotLog(enabled: boolean) {
-  return usePoll<BotLogData>("/api/bot_log", 5_000, enabled);
-}
-
-// ── Sync with Telegram ─────────────────────────────────────────
+// ── Actions ────────────────────────────────────────────────────
 export async function syncTelegram(): Promise<boolean> {
   try {
     const r = await fetch("/api/make", {
@@ -196,12 +203,9 @@ export async function syncTelegram(): Promise<boolean> {
       body: JSON.stringify({ action: "sync_telegram" }),
     });
     return r.ok;
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }
 
-// ── Save slots ─────────────────────────────────────────────────
 export async function saveSlots(max_trades: number): Promise<boolean> {
   try {
     const r = await fetch("/api/slots", {
@@ -210,12 +214,9 @@ export async function saveSlots(max_trades: number): Promise<boolean> {
       body: JSON.stringify({ max_trades }),
     });
     return r.ok;
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }
 
-// ── Save FNG settings (+ extra fields for amount/leverage) ─────
 export async function saveFngSettings(payload: Partial<FngSettings>): Promise<boolean> {
   try {
     const r = await fetch("/api/fng_settings", {
@@ -224,7 +225,5 @@ export async function saveFngSettings(payload: Partial<FngSettings>): Promise<bo
       body: JSON.stringify(payload),
     });
     return r.ok;
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }

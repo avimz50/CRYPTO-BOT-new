@@ -6,7 +6,7 @@ const LS_KEY = "botSettings";
 function loadLocal(): { maxTrades?: number; amount?: number; leverage?: number } {
   try { return JSON.parse(localStorage.getItem(LS_KEY) ?? "{}"); } catch { return {}; }
 }
-function saveLocal(v: { maxTrades: number; amount: number; leverage: number }) {
+function persistLocal(v: { maxTrades: number; amount: number; leverage: number }) {
   try { localStorage.setItem(LS_KEY, JSON.stringify(v)); } catch { /* ignore */ }
 }
 
@@ -48,16 +48,34 @@ function SliderRow({
   );
 }
 
+type SaveState = "idle" | "saving" | "ok" | "localOnly" | "err";
+
+const SAVE_LABEL: Record<SaveState, string> = {
+  idle:      "SAVE SETTINGS",
+  saving:    "Saving...",
+  ok:        "✅ Saved!",
+  localOnly: "💾 Saved locally",
+  err:       "❌ Error",
+};
+
+const SAVE_STYLE: Record<SaveState, { bg: string; border: string; color: string }> = {
+  idle:      { bg: "linear-gradient(135deg,#1d4ed8,#2563eb)", border: "1px solid transparent", color: "#fff" },
+  saving:    { bg: "rgba(59,130,246,0.15)", border: "1px solid #3b82f6", color: "#93c5fd" },
+  ok:        { bg: "rgba(34,197,94,0.18)",  border: "1px solid #22c55e", color: "#4ade80" },
+  localOnly: { bg: "rgba(250,204,21,0.12)", border: "1px solid #facc15", color: "#facc15" },
+  err:       { bg: "rgba(239,68,68,0.15)",  border: "1px solid #ef4444", color: "#f87171" },
+};
+
 export function BotSettings({ slots, fngSettings, onSaved }: BotSettingsProps) {
   const local = loadLocal();
   const [maxTrades, setMaxTrades] = useState(local.maxTrades ?? 3);
   const [amount, setAmount]       = useState(local.amount   ?? 50);
   const [leverage, setLeverage]   = useState(local.leverage ?? 10);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "ok" | "local" | "err">("idle");
+  const [saveState, setSaveState] = useState<SaveState>("idle");
 
-  // Sync from API once loaded (API wins over localStorage on fresh load)
+  // API values override localStorage on first successful load
   useEffect(() => {
-    if (slots?.max_trades) setMaxTrades(slots.max_trades);
+    if (slots?.max_trades)       setMaxTrades(slots.max_trades);
     if (slots?.amount_per_trade) setAmount(slots.amount_per_trade);
     else if (fngSettings?.amount_per_trade) setAmount(fngSettings.amount_per_trade);
     if (slots?.default_leverage) setLeverage(slots.default_leverage);
@@ -66,33 +84,29 @@ export function BotSettings({ slots, fngSettings, onSaved }: BotSettingsProps) {
 
   const handleSave = async () => {
     setSaveState("saving");
-    saveLocal({ maxTrades, amount, leverage });
+    persistLocal({ maxTrades, amount, leverage });
 
     const [slotsOk, fngOk] = await Promise.all([
       saveSlots(maxTrades),
       saveFngSettings({ ...(fngSettings ?? {}), amount_per_trade: amount, default_leverage: leverage }),
     ]);
 
-    if (slotsOk || fngOk) {
+    if (slotsOk && fngOk) {
+      // Both succeeded
       setSaveState("ok");
       onSaved();
+    } else if (!slotsOk && !fngOk) {
+      // Both failed — settings only in localStorage
+      setSaveState("localOnly");
     } else {
-      // API failed but local settings were saved — still usable
-      setSaveState("local");
+      // Partial: one succeeded — still call refetch and show partial OK
+      setSaveState("ok");
+      onSaved();
     }
     setTimeout(() => setSaveState("idle"), 3000);
   };
 
-  type SaveState = "idle" | "saving" | "ok" | "local" | "err";
-  const SAVE_STYLE: Record<SaveState, { bg: string; border: string; color: string; label: string }> = {
-    idle:   { bg: "linear-gradient(135deg,#1d4ed8,#2563eb)", border: "1px solid transparent", color: "#fff",     label: "SAVE SETTINGS" },
-    saving: { bg: "rgba(59,130,246,0.15)",                   border: "1px solid #3b82f6",      color: "#93c5fd",  label: "Saving..." },
-    ok:     { bg: "rgba(34,197,94,0.18)",                    border: "1px solid #22c55e",      color: "#4ade80",  label: "✅ Saved!" },
-    local:  { bg: "rgba(250,204,21,0.12)",                   border: "1px solid #facc15",      color: "#facc15",  label: "💾 Saved locally" },
-    err:    { bg: "rgba(239,68,68,0.15)",                    border: "1px solid #ef4444",      color: "#f87171",  label: "❌ Error" },
-  };
-
-  const s = SAVE_STYLE[saveState];
+  const st = SAVE_STYLE[saveState];
   const min = slots?.min ?? 1;
   const max = slots?.max ?? 5;
 
@@ -102,7 +116,7 @@ export function BotSettings({ slots, fngSettings, onSaved }: BotSettingsProps) {
         Bot Settings
       </h2>
 
-      <SliderRow label="Max Concurrent Trades" value={maxTrades} min={min} max={max} unit="" onChange={setMaxTrades} />
+      <SliderRow label="Max Concurrent Trades" value={maxTrades} min={min} max={max} unit=""  onChange={setMaxTrades} />
       <SliderRow label="Amount per Trade ($)"   value={amount}    min={10}  max={200} unit="$" onChange={setAmount} />
       <SliderRow label="Default Leverage (x)"   value={leverage}  min={1}   max={20}  unit="x" onChange={setLeverage} />
 
@@ -111,17 +125,17 @@ export function BotSettings({ slots, fngSettings, onSaved }: BotSettingsProps) {
         disabled={saveState === "saving"}
         className="w-full py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all"
         style={{
-          background: s.bg,
-          border: s.border,
-          color: s.color,
+          background: st.bg,
+          border: st.border,
+          color: st.color,
           cursor: saveState === "saving" ? "not-allowed" : "pointer",
         }}>
-        {s.label}
+        {SAVE_LABEL[saveState]}
       </button>
 
-      {saveState === "local" && (
-        <p className="text-xs mt-2 text-center" style={{ color: "#64748b" }}>
-          Bot offline — settings saved in browser
+      {saveState === "localOnly" && (
+        <p className="text-xs mt-1.5 text-center" style={{ color: "#64748b" }}>
+          Bot offline — settings saved in browser until reconnected
         </p>
       )}
     </div>

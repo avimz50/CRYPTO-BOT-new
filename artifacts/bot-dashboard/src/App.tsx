@@ -57,10 +57,7 @@ export default function App() {
   const activeTrades = trades?.trades ?? [];
   const maxTrades    = slots?.max_trades ?? 3;
 
-  const scanResults   = (scan as any)?.results ?? (scan as any)?.last_scan ?? [];
-  const scanUpdatedAt = scan?.updated ?? null;
-
-  const auditTrades = (audit as any)?.trades ?? [];
+  const auditTrades = audit?.trades ?? [];
 
   const handleNav = (tab: string) => {
     setActiveNav(tab);
@@ -158,9 +155,8 @@ export default function App() {
                 )}
 
                 <ScanStatus
-                  results={scanResults}
-                  updatedAt={scanUpdatedAt}
-                  loading={scanResults.length === 0}
+                  scan={scan}
+                  loading={scan == null}
                 />
               </div>
 
