@@ -1492,7 +1492,7 @@ async def _prefetch_ohlcv(candidates: list, timeframes: list = None):
     """
     global _ohlcv_cache, _async_exchange_instance
     if timeframes is None:
-        timeframes = ['4h', '1h']
+        timeframes = ['4h', '1h', '15m']
 
     tasks = []
     keys  = []
@@ -5085,11 +5085,11 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                 })
             return 0
 
-    # ── Async OHLCV Pre-fetch — parallel fetch 4H+1H for all candidates ─────
+    # ── Async OHLCV Pre-fetch — parallel fetch 4H+1H+15m for all candidates ─────
     global _ohlcv_cache
     _ohlcv_cache = {}   # clear any stale cache from previous scan
     try:
-        asyncio.run(_prefetch_ohlcv(candidates, timeframes=['4h', '1h']))
+        asyncio.run(_prefetch_ohlcv(candidates, timeframes=['4h', '1h', '15m']))
     except RuntimeError:
         # Already in an event loop (shouldn't happen in scan thread, but safe fallback)
         pass
@@ -5192,7 +5192,7 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
 
             # ── שלב 2: אם 4H לא מספיק — נסה 1H ──
             if score < MIN_SCORE:
-                df_15m = get_data(symbol, timeframe='15m', limit=250)
+                df_15m = get_data_cached(symbol, timeframe='15m', limit=250)
                 score_1h, breakdown_1h, atr_1h = score_symbol(df_1h, df_15m, symbol, direction, fng_v=fng_v_scan)
                 print(f"  4H={score_4h} < {MIN_SCORE} → try 1H: {score_1h}")
                 if score_1h > best_score:
