@@ -132,11 +132,22 @@ export interface WalletData {
   equity?: number;
 }
 
-/** Flask /api/fng_settings only exposes these three threshold fields */
+/**
+ * /api/fng_settings — threshold fields from Flask, plus trade settings
+ * (amount_per_trade + default_leverage) persisted server-side by the Express
+ * proxy and merged into every GET response.
+ */
 export interface FngSettings {
   extreme_fear: number;
   fear: number;
   greed: number;
+  amount_per_trade: number;
+  default_leverage: number;
+  ranges?: {
+    extreme_fear?: { min: number; max: number; desc: string };
+    fear?:         { min: number; max: number; desc: string };
+    greed?:        { min: number; max: number; desc: string };
+  };
 }
 
 export interface BotLogData {
@@ -250,28 +261,21 @@ export async function saveSlots(max_trades: number): Promise<boolean> {
 }
 
 /**
- * POST /api/fng_settings — sends all settings including amount/leverage.
- * Flask currently only reads extreme_fear/fear/greed and returns 200 for any valid JSON.
- * amount_per_trade and default_leverage are also saved to localStorage as a client-side
- * cache so they can be restored on next load (since GET /api/fng_settings won't return them).
+ * POST /api/fng_settings — sends thresholds to Flask + amount/leverage to the
+ * Express proxy which persists them server-side and merges them into GET responses.
  */
 export async function saveSettings(payload: {
-  fng: Partial<FngSettings>;
+  extreme_fear?: number;
+  fear?: number;
+  greed?: number;
   amount_per_trade: number;
   default_leverage: number;
 }): Promise<{ fngOk: boolean }> {
-  // Always persist amount/leverage in localStorage (client cache)
-  lsWriteSettings({ amount_per_trade: payload.amount_per_trade, default_leverage: payload.default_leverage });
-
   try {
     const r = await fetch("/api/fng_settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...payload.fng,
-        amount_per_trade: payload.amount_per_trade,
-        default_leverage: payload.default_leverage,
-      }),
+      body: JSON.stringify(payload),
     });
     return { fngOk: r.ok };
   } catch {
