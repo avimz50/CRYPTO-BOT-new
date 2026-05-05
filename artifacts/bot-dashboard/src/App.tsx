@@ -192,12 +192,13 @@ function useClock() {
 function useJson<T>(primaryUrl: string, fallbackUrl: string, interval = 30_000) {
   const [data, setData] = useState<T | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [lastSuccessAt, setLastSuccessAt] = useState<number | null>(null);
   const refetch = useCallback(() => setRefreshKey(k => k + 1), []);
   useEffect(() => {
     const fetch_ = () =>
       fetch(primaryUrl + "?t=" + Date.now())
         .then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); })
-        .then(setData)
+        .then(d => { setData(d); setLastSuccessAt(Date.now()); })
         .catch(() =>
           fetch(fallbackUrl + "?t=" + Date.now())
             .then(r => r.json()).then(setData).catch(() => {})
@@ -206,7 +207,7 @@ function useJson<T>(primaryUrl: string, fallbackUrl: string, interval = 30_000) 
     const id = setInterval(fetch_, interval);
     return () => clearInterval(id);
   }, [primaryUrl, fallbackUrl, interval, refreshKey]);
-  return { data, refetch };
+  return { data, refetch, lastSuccessAt };
 }
 
 interface PricePoint { ts: number; price: number; }
@@ -1456,7 +1457,7 @@ export default function App() {
   const clock = useClock();
 
   const { data: hotData,    refetch: refetchHot    } = useJson<HotData>(`${BOT_API}/api/hot`,             '/hot_candidates.json',     60_000);
-  const { data: tradesData, refetch: refetchTrades  } = useJson<TradesData>(`${BOT_API}/api/active_trades`, '/active_trades.json',       4_000);
+  const { data: tradesData, refetch: refetchTrades, lastSuccessAt: tradesLastSuccessAt } = useJson<TradesData>(`${BOT_API}/api/active_trades`, '/active_trades.json', 4_000);
   const { data: walletData, refetch: refetchWallet  } = useJson<WalletData>(`${BOT_API}/api/wallet`,        '/wallet.json',             30_000);
   const { data: fngData,    refetch: refetchFng     } = useJson<FngData>(`${BOT_API}/api/fng`,              '/fng.json',               120_000);
   const { data: scanData,   refetch: refetchScan    } = useJson<ScanData>(`${BOT_API}/api/last_scan`,       '/last_scan_results.json', 120_000);
@@ -1480,6 +1481,15 @@ export default function App() {
   const mm      = String(Math.floor(diff / 60)).padStart(2, '0');
   const ss      = String(diff % 60).padStart(2, '0');
   const scanPct = Math.round(((SCAN_INTERVAL - diff) / SCAN_INTERVAL) * 100);
+
+  // Staleness: seconds since last successful primary fetch for trades.
+  // If lastSuccessAt is null, the primary API has never responded this session
+  // and we are showing the static fallback snapshot.
+  const tradesStaleSeconds = tradesLastSuccessAt !== null
+    ? Math.floor((clock.getTime() - tradesLastSuccessAt) / 1000)
+    : null;
+  const tradesIsStale   = tradesStaleSeconds !== null && tradesStaleSeconds > 10;
+  const tradesIsOffline = tradesLastSuccessAt === null && tradesData !== null;
 
   // Derived values
   const trades      = tradesData?.trades ?? [];
@@ -1626,9 +1636,37 @@ export default function App() {
           <div style={panel}>
             <PanelHeader
               label={`ACTIVE POSITIONS (${trades.length})`}
-              right={trades.length > 0
-                ? `${trades.filter(t => t.direction === 'LONG').length}L · ${trades.filter(t => t.direction === 'SHORT').length}S`
-                : undefined}
+              right={
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {tradesIsOffline && (
+                    <span style={{
+                      color: T.amber,
+                      fontSize: 10,
+                      fontWeight: 600,
+                      letterSpacing: 0.5,
+                      opacity: 0.9,
+                    }}>
+                      OFFLINE · snapshot
+                    </span>
+                  )}
+                  {tradesIsStale && (
+                    <span style={{
+                      color: T.amber,
+                      fontSize: 10,
+                      fontWeight: 600,
+                      letterSpacing: 0.5,
+                      opacity: 0.9,
+                    }}>
+                      ~{tradesStaleSeconds}s ago
+                    </span>
+                  )}
+                  {trades.length > 0 && (
+                    <span>
+                      {trades.filter(t => t.direction === 'LONG').length}L · {trades.filter(t => t.direction === 'SHORT').length}S
+                    </span>
+                  )}
+                </span>
+              }
             />
             {trades.length === 0 ? (
               <div style={{ padding: '24px', textAlign: 'center', color: T.dimmer, fontSize: 12 }}>
