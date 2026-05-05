@@ -1,0 +1,52 @@
+Based on image_3.png, here is a detailed prompt for your Replit agent to build the trading bot dashboard with the requested new features and responsive design:
+
+Prompts for Replit Agent: Building a Responsive Crypto Bot Dashboard
+Project Goal: Create a responsive web application dashboard for a crypto trading bot, using image_3.png as the design foundation, and incorporating several key new features for interaction and data view.
+
+Core Requirements:
+
+Fully Responsive Design: The UI must seamlessly adapt to all screen sizes, from mobile phones to large desktop monitors. Replicate the layout and style of image_3.png but use responsive framework techniques (e.g., Tailwind CSS, Bootstrap, or custom media queries) so elements stack, resize, or hide appropriately.
+
+Dark Theme & Styling: Maintain the sophisticated dark blue/black theme with electric blue, green, and red accents as seen in image_3.png.
+
+Core Dashboard Modules (from image_3.png): Replicate the existing modules (financial overview, fear & greed index, bot settings, scan status, active trades). Ensure all data values are dynamic placeholders (e.g., starting balance, current equity).
+
+New Feature Implementations:
+
+Bitget Chart Links: In the "Active Trades" list, the text for each coin pair (e.g., "BTC/USDT") must be a clickable link. These links should open the corresponding trading pair's chart directly on Bitget (e.g., [https://www.bitget.com/spot/BTCUSDT](https://www.bitget.com/spot/BTCUSDT)).
+
+Sync with Telegram Bot Button: Place a prominent button, styled to match the blue buttons, at the top right of the screen (e.g., near the status indicators). Label it "Sync with Telegram Bot" with a small Telegram icon. This button is a trigger; clicking it should initiate an API call to the bot and show a small notification (e.g., "Syncing..." and then "Bot Synced").
+
+Full Trade History Button & View: Place a new, distinct button under the "Financial Overview" card, or near the sidebar, labeled "View Entire Trade History" with an archive icon.
+
+Clicking this button should reveal a new screen or overlay/modal (your choice) that lists every closed trade the bot has made.
+
+This history view must include comprehensive columns for all open/close details: Trade ID, Coin Pair, Buy Time, Buy Price, Leverage, Volume, Sell Time, Sell Price, Closing Price, Trade Final P&L (both $ and %).
+
+Dynamic Data Points & Interactions (Placeholders):
+
+Header: "API: Bitget", "Status: Online" (dynamic). "CRYPTO TRADING BOT | MASTER CONTROL". Notification bell.
+
+Financial Overview:
+
+Starting Balance: $200.00
+
+Current Equity: $228.15
+
+Total Profit: +$28.15 (+14.0%)
+
+Floating P&L: +$4.75
+
+Fear & Greed Index: Showing "67 - Greed".
+
+Active Trades: 2/5 running. Columns for Coin Pair (links to chart), Leverage, Amount, Entry Price (EP), Stop Loss (SL), Take Profit (TP), Est. Profit, Current P&L, Status. EnsureSL and TP are color-coded (red/green).
+
+Scan Status: List with filters (ALL, BUY, SELL, HOLD) showing Coin, Signal (color-coded), Confidence, Last Scanned.
+
+Bot Settings: Functional sliders and input fields for Max Concurrent Trades, Amount per Trade ($), Default Leverage (x), and a working "Save Settings" button.
+
+Responsive Layout Logic (Crucial for Mobile):
+
+On mobile, modules should stack vertically. Sidebar might become a collapsable burger menu. Large tables might use horizontal scrolling or be re-formatted. Settings panel should stack. Chart links must be large enough to tap easily.
+
+This detailed prompt gives your Replit agent everything it needs to replicate the design from image_3.png, build the responsive framework, and integrate all new interactive and historical data features. Copy and paste this directly to your Replit agent and let me know if you need to refine any specifics.
