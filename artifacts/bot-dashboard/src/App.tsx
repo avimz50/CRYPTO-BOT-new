@@ -14,9 +14,9 @@ import {
 } from "@/hooks/useBotData";
 
 function useIsMobile() {
-  const [mobile, setMobile] = useState(() => window.innerWidth < 900);
+  const [mobile, setMobile] = useState(() => window.innerWidth < 768);
   useEffect(() => {
-    const fn = () => setMobile(window.innerWidth < 900);
+    const fn = () => setMobile(window.innerWidth < 768);
     window.addEventListener("resize", fn);
     return () => window.removeEventListener("resize", fn);
   }, []);
@@ -25,11 +25,11 @@ function useIsMobile() {
 
 export default function App() {
   const isMobile = useIsMobile();
-  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 900);
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 768);
   const [activeNav, setActiveNav] = useState("Dashboard");
   const [showHistory, setShowHistory] = useState(false);
 
-  // Close sidebar automatically when going mobile
+  // Auto-close sidebar when viewport drops below 768px
   useEffect(() => {
     if (isMobile) setSidebarOpen(false);
   }, [isMobile]);
@@ -46,10 +46,10 @@ export default function App() {
   const isOnline = status != null;
   const equityHistory = wallet?.equity_history?.map(p => p.eq) ?? [];
 
-  const equity     = status?.equity    ?? wallet?.equity   ?? wallet?.balance ?? 200;
-  const starting   = status?.starting  ?? wallet?.starting ?? 200;
-  const realized   = status?.realized  ?? wallet?.total_pnl ?? 0;
-  const unrealized = status?.unrealized ?? wallet?.unrealized_pnl ?? 0;
+  const equity     = status?.equity    ?? wallet?.equity   ?? wallet?.balance   ?? null;
+  const starting   = status?.starting  ?? wallet?.starting                      ?? null;
+  const realized   = status?.realized  ?? wallet?.total_pnl                     ?? 0;
+  const unrealized = status?.unrealized ?? wallet?.unrealized_pnl               ?? 0;
 
   const fngValue = status?.fng_value ?? null;
   const fngLabel = status?.fng_label ?? null;

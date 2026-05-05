@@ -40,6 +40,8 @@ export function Header({ onToggleSidebar, isOnline, btcPrice, isMobile }: Header
     syncState === "error" ? { bg: "rgba(239,68,68,0.15)",  border: "#ef4444", text: "#f87171" } :
                             { bg: "rgba(59,130,246,0.15)", border: "#3b82f6", text: "#93c5fd" };
 
+  const compactTime = `${String(clock.getHours()).padStart(2, "0")}:${String(clock.getMinutes()).padStart(2, "0")}`;
+
   return (
     <header
       className="flex-shrink-0 flex items-center justify-between px-3 py-2"
@@ -110,11 +112,10 @@ export function Header({ onToggleSidebar, isOnline, btcPrice, isMobile }: Header
           )}
         </span>
 
-        {!isMobile && (
-          <span className="text-xs font-mono" style={{ color: "#475569" }}>
-            {clock.toLocaleTimeString()}
-          </span>
-        )}
+        {/* Clock — compact on mobile, full on desktop */}
+        <span className="text-xs font-mono" style={{ color: "#475569" }}>
+          {isMobile ? compactTime : clock.toLocaleTimeString()}
+        </span>
       </div>
     </header>
   );

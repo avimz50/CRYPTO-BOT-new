@@ -40,9 +40,17 @@ function fmtTime(raw: string | undefined) {
   } catch { return raw; }
 }
 
+function fmtDuration(minutes: number | undefined) {
+  if (minutes == null || !isFinite(minutes)) return "—";
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  if (h === 0) return `${m}m`;
+  if (h < 24)  return `${h}h ${m}m`;
+  const d = Math.floor(h / 24);
+  return `${d}d ${h % 24}h`;
+}
+
 function calcPnlPct(t: AuditTrade): number | null {
-  // If dist_tp_pct and rr_achieved exist, we can derive achieved % movement
-  // But most reliable is: price change / entry × 100, direction-adjusted
   if (!t.entry_price || !t.close_price) return null;
   const raw = (t.close_price - t.entry_price) / t.entry_price * 100;
   return t.direction === "LONG" ? raw : -raw;
@@ -60,7 +68,7 @@ export function TradeHistoryModal({ trades, loading, onClose }: TradeHistoryModa
       style={{ background: "rgba(7,13,26,0.92)", backdropFilter: "blur(6px)" }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
 
-      <div className="w-full max-w-5xl flex flex-col rounded-2xl overflow-hidden"
+      <div className="w-full max-w-6xl flex flex-col rounded-2xl overflow-hidden"
         style={{
           maxHeight: "90vh",
           background: "#0a1628",
@@ -110,7 +118,7 @@ export function TradeHistoryModal({ trades, loading, onClose }: TradeHistoryModa
           <table className="w-full text-xs">
             <thead className="sticky top-0" style={{ background: "#0d1f3c" }}>
               <tr style={{ borderBottom: "1px solid #1e3a5f" }}>
-                {["#", "PAIR", "DIR", "OPEN TIME", "ENTRY", "CLOSE TIME", "EXIT", "SCORE", "P&L $", "P&L %", "REASON"].map(h => (
+                {["#", "PAIR", "DIR", "OPEN TIME", "ENTRY", "CLOSE TIME", "EXIT", "LEVERAGE", "DURATION", "P&L $", "P&L %", "REASON"].map(h => (
                   <th key={h} className="px-3 py-2.5 text-left font-semibold uppercase tracking-wide whitespace-nowrap"
                     style={{ color: "#64748b" }}>{h}</th>
                 ))}
@@ -120,7 +128,7 @@ export function TradeHistoryModal({ trades, loading, onClose }: TradeHistoryModa
               {loading && trades.length === 0 ? (
                 [...Array(5)].map((_, i) => (
                   <tr key={i} style={{ borderBottom: "1px solid #0d1f3c" }}>
-                    {[...Array(11)].map((_, j) => (
+                    {[...Array(12)].map((_, j) => (
                       <td key={j} className="px-3 py-3">
                         <div className="h-3 rounded animate-pulse"
                           style={{ background: "#0d1f3c", width: "65%" }} />
@@ -130,7 +138,7 @@ export function TradeHistoryModal({ trades, loading, onClose }: TradeHistoryModa
                 ))
               ) : trades.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-4 py-10 text-center"
+                  <td colSpan={12} className="px-4 py-10 text-center"
                     style={{ color: "#475569" }}>
                     No closed trades yet
                   </td>
@@ -173,7 +181,11 @@ export function TradeHistoryModal({ trades, loading, onClose }: TradeHistoryModa
                         {fmtPrice(t.close_price)}
                       </td>
                       <td className="px-3 py-2.5 font-mono" style={{ color: "#94a3b8" }}>
-                        {t.score ?? "—"}
+                        {/* Leverage not in closed-trade API payload */}
+                        —
+                      </td>
+                      <td className="px-3 py-2.5 font-mono whitespace-nowrap" style={{ color: "#94a3b8" }}>
+                        {fmtDuration(t.duration_min)}
                       </td>
                       <td className="px-3 py-2.5 font-mono font-bold whitespace-nowrap"
                         style={{ color: win ? "#4ade80" : pnl === 0 ? "#facc15" : "#f87171" }}>

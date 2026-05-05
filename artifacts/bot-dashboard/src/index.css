@@ -110,14 +110,14 @@ input[type="range"]:focus { outline: none; }
   grid-template-columns: 1fr;
 }
 
-@media (min-width: 900px) {
+@media (min-width: 768px) {
   .dashboard-grid {
     grid-template-columns: 1fr 230px;
   }
 }
 
 /* ── Mobile bottom nav spacing ── */
-@media (max-width: 899px) {
+@media (max-width: 767px) {
   .mobile-content-pad {
     padding-bottom: calc(56px + env(safe-area-inset-bottom));
   }

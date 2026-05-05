@@ -1,8 +1,8 @@
 import { Sparkline } from "./Sparkline";
 
 interface FinancialOverviewProps {
-  starting: number;
-  equity: number;
+  starting: number | null;
+  equity: number | null;
   realized: number;
   unrealized: number;
   equityHistory: number[];
@@ -11,27 +11,35 @@ interface FinancialOverviewProps {
   isMobile?: boolean;
 }
 
-function safe(n: number) {
-  return isFinite(n) ? n : 0;
+function safe(n: number | null | undefined): number {
+  return n != null && isFinite(n) ? n : 0;
 }
 
-function fmt(n: number, prefix = true) {
-  const s = safe(n);
-  const sign = s >= 0 ? (prefix ? "+" : "") : "-";
-  return `${sign}$${Math.abs(s).toFixed(2)}`;
+function fmtUsd(n: number | null, signed = false): string {
+  if (n == null || !isFinite(n)) return "—";
+  const abs = Math.abs(n);
+  const sign = n >= 0 ? (signed ? "+" : "") : "-";
+  return `${sign}$${abs.toFixed(2)}`;
+}
+
+function fmtPct(n: number | null): string {
+  if (n == null || !isFinite(n)) return "—";
+  return `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
 }
 
 export function FinancialOverview({
   starting, equity, realized, unrealized, equityHistory, loading, onShowHistory, isMobile,
 }: FinancialOverviewProps) {
-  const eq  = safe(equity);
-  const st  = safe(starting);
+  const eq  = equity;
+  const st  = starting;
   const rl  = safe(realized);
   const unr = safe(unrealized);
-  const totalPnl = eq - st;
-  const totalPct = st > 0 ? (totalPnl / st) * 100 : 0;
-  const isProfit = totalPnl >= 0;
-  const equityColor = eq >= st ? "#4ade80" : "#f87171";
+
+  const totalPnl = eq != null && st != null ? eq - st : null;
+  const totalPct = totalPnl != null && st != null && st > 0 ? (totalPnl / st) * 100 : null;
+
+  const isProfit     = (totalPnl ?? 0) >= 0;
+  const equityColor  = eq == null ? "#94a3b8" : eq >= (st ?? eq) ? "#4ade80" : "#f87171";
 
   return (
     <div className="rounded-xl p-4" style={{ background: "#0a1628", border: "1px solid #1e3a5f" }}>
@@ -59,7 +67,9 @@ export function FinancialOverview({
           ))}
         </div>
       ) : (
-        <div className={isMobile ? "space-y-2.5" : "grid gap-3"} style={isMobile ? {} : { gridTemplateColumns: "1fr auto" }}>
+        <div className={isMobile ? "space-y-2.5" : "grid gap-3"}
+          style={isMobile ? {} : { gridTemplateColumns: "1fr auto" }}>
+
           {/* Numbers */}
           <div className="space-y-2">
             <div className="flex justify-between items-baseline">
@@ -67,7 +77,7 @@ export function FinancialOverview({
                 Starting Balance
               </span>
               <span className="font-mono font-bold" style={{ color: "#e2e8f0" }}>
-                ${st.toFixed(2)}
+                {fmtUsd(st)}
               </span>
             </div>
 
@@ -75,9 +85,10 @@ export function FinancialOverview({
               <span className="text-xs uppercase tracking-wide" style={{ color: "#64748b" }}>
                 Current Equity
               </span>
-              <span className={`font-mono font-bold ${isMobile ? "text-xl" : "text-2xl"}`}
+              <span
+                className={`font-mono font-bold ${isMobile ? "text-xl" : "text-2xl"}`}
                 style={{ color: equityColor }}>
-                ${eq.toFixed(2)}
+                {fmtUsd(eq)}
               </span>
             </div>
 
@@ -85,8 +96,10 @@ export function FinancialOverview({
               <span className="text-xs uppercase tracking-wide" style={{ color: "#64748b" }}>
                 Total P&L
               </span>
-              <span className="font-mono font-bold" style={{ color: isProfit ? "#4ade80" : "#f87171" }}>
-                {fmt(totalPnl)} ({safe(totalPct) >= 0 ? "+" : ""}{safe(totalPct).toFixed(1)}%)
+              <span className="font-mono font-bold"
+                style={{ color: isProfit ? "#4ade80" : "#f87171" }}>
+                {fmtUsd(totalPnl, true)}
+                {totalPct != null && ` (${fmtPct(totalPct)})`}
               </span>
             </div>
 
@@ -95,7 +108,7 @@ export function FinancialOverview({
                 style={{ background: "#0d1f3c", border: "1px solid #1e3a5f" }}>
                 <div className="text-sm font-bold font-mono"
                   style={{ color: unr >= 0 ? "#4ade80" : "#f87171" }}>
-                  {fmt(unr)}
+                  {fmtUsd(unr, true)}
                 </div>
                 <div className="text-xs mt-0.5" style={{ color: "#64748b" }}>Floating P&L</div>
               </div>
@@ -103,7 +116,7 @@ export function FinancialOverview({
                 style={{ background: "#0d1f3c", border: "1px solid #1e3a5f" }}>
                 <div className="text-sm font-bold font-mono"
                   style={{ color: rl >= 0 ? "#4ade80" : "#f87171" }}>
-                  {fmt(rl)}
+                  {fmtUsd(rl, true)}
                 </div>
                 <div className="text-xs mt-0.5" style={{ color: "#64748b" }}>Realized P&L</div>
               </div>
@@ -115,7 +128,7 @@ export function FinancialOverview({
             <div className="flex flex-col items-center justify-end pb-1 pl-3">
               <div className="text-xs mb-1 text-center" style={{ color: "#334155" }}>Equity Curve</div>
               <Sparkline
-                points={equityHistory.length >= 2 ? equityHistory : [st, eq]}
+                points={equityHistory.length >= 2 ? equityHistory : [safe(st), safe(eq)]}
                 color={equityColor}
                 width={130}
                 height={44}
