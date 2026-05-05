@@ -44,8 +44,8 @@
   --destructive: 0 63% 31%;
   --card: 222 47% 8%;
   --card-foreground: 213 31% 91%;
-  --app-font-sans: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
-  --app-font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  --app-font-sans: 'Inter', sans-serif;
+  --app-font-mono: Menlo, monospace;
   --radius: 0.5rem;
 }
 
