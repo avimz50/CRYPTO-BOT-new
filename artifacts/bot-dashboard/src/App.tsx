@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
-  AreaChart, Area, ReferenceLine, YAxis, ComposedChart,
+  AreaChart, Area, ReferenceLine, ReferenceArea, YAxis, ComposedChart,
 } from "recharts";
 
 /* ══════════════════════════════════════════════
@@ -566,6 +566,21 @@ function StatBox({
   );
 }
 
+/**
+ * Returns true if the OB zone should be shown for this trade.
+ * The zone clears as soon as the current price exits the [ob_low, ob_high] band.
+ */
+function isObActive(trade: Trade): boolean {
+  if (!trade.ob_found || trade.ob_high == null || trade.ob_low == null) return false;
+  const cp = trade.current_price ?? trade.entry;
+  return cp >= trade.ob_low && cp <= trade.ob_high;
+}
+
+/** Green for bullish (LONG) OB, red for bearish (SHORT) OB. */
+function obColor(trade: Trade): string {
+  return trade.direction === 'LONG' ? T.green : T.red;
+}
+
 /* ══════════════════════════════════════════════
    SL/TP PROGRESS BAR
 ══════════════════════════════════════════════ */
@@ -573,7 +588,7 @@ function SlTpBar({ trade }: { trade: Trade }) {
   const cp    = trade.current_price ?? trade.entry;
   const isLong = trade.direction === 'LONG';
 
-  const hasOb = !!(trade.ob_found && trade.ob_high && trade.ob_low);
+  const hasOb = isObActive(trade);
   const obH   = hasOb ? trade.ob_high! : 0;
   const obL   = hasOb ? trade.ob_low!  : 0;
 
@@ -596,7 +611,7 @@ function SlTpBar({ trade }: { trade: Trade }) {
   const pnlPct = isLong ? rawPct : -rawPct;
   const fillColor = pnlPct >= 0 ? T.green : T.red;
 
-  const OB_COLOR = '#bc8cff';
+  const OB_COLOR = obColor(trade);
 
   return (
     <div style={{ marginTop: 8 }}>
@@ -613,7 +628,7 @@ function SlTpBar({ trade }: { trade: Trade }) {
           width: `${Math.abs(tpPct - entryPct)}%`, top: 0, bottom: 0,
           background: `${T.green}22`, borderRadius: 2,
         }} />
-        {/* OB zone shading */}
+        {/* OB zone shading — green for bullish (LONG), red for bearish (SHORT) */}
         {hasOb && obLPct !== null && obHPct !== null && (
           <div style={{
             position: 'absolute',
@@ -711,7 +726,7 @@ function MiniPriceChart({ trade }: { trade: Trade }) {
     ? history.map(p => ({ price: p.price }))
     : [{ price: trade.entry }, { price: cp }];
 
-  const hasOb = !!(trade.ob_found && trade.ob_high && trade.ob_low);
+  const hasOb = isObActive(trade);
 
   const prices = chartData.map(d => d.price);
   const lo = Math.min(...prices, trade.sl, hasOb ? trade.ob_low! : Infinity)  * 0.998;
@@ -736,12 +751,18 @@ function MiniPriceChart({ trade }: { trade: Trade }) {
           <ReferenceLine y={trade.tp}    stroke={T.green} strokeDasharray="2 2" strokeWidth={0.7} />
           {/* Entry reference */}
           <ReferenceLine y={trade.entry} stroke={T.amber} strokeDasharray="3 2" strokeWidth={0.7} />
-          {/* OB zone references */}
+          {/* OB zone — shaded band: green for bullish (LONG), red for bearish (SHORT) */}
           {hasOb && (
-            <ReferenceLine y={trade.ob_high!} stroke={T.purple} strokeDasharray="2 2" strokeWidth={0.8} strokeOpacity={0.7} />
-          )}
-          {hasOb && (
-            <ReferenceLine y={trade.ob_low!}  stroke={T.purple} strokeDasharray="2 2" strokeWidth={0.8} strokeOpacity={0.7} />
+            <ReferenceArea
+              y1={trade.ob_low!}
+              y2={trade.ob_high!}
+              fill={obColor(trade)}
+              fillOpacity={0.12}
+              stroke={obColor(trade)}
+              strokeOpacity={0.45}
+              strokeWidth={0.8}
+              strokeDasharray="2 2"
+            />
           )}
           <Area
             type="monotone"
@@ -777,7 +798,7 @@ function TerminalTradeCard({ trade }: { trade: Trade }) {
   const tf       = trade.timeframe ?? '4H';
   const bgSymbol = trade.symbol.replace('/', '');
 
-  const hasOb  = !!(trade.ob_found && trade.ob_high && trade.ob_low);
+  const hasOb  = isObActive(trade);
 
   const badges = [
     trade.be_triggered       && { label: 'BE',  color: T.blue  },
@@ -873,7 +894,7 @@ function TerminalTradeCard({ trade }: { trade: Trade }) {
             <DataRow
               label="OB ZONE"
               value={`${fmt(trade.ob_low)}–${fmt(trade.ob_high)}`}
-              color={T.purple}
+              color={obColor(trade)}
             />
           )}
           <DataRow label="ATR" value={fmt(trade.atr)} color={T.dimmer} />
