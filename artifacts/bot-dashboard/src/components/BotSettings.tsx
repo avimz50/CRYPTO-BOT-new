@@ -1,14 +1,5 @@
 import { useState, useEffect } from "react";
-import { saveSlots, saveFngSettings, SlotsData, FngSettings } from "@/hooks/useBotData";
-
-const LS_KEY = "botSettings";
-
-function loadLocal(): { maxTrades?: number; amount?: number; leverage?: number } {
-  try { return JSON.parse(localStorage.getItem(LS_KEY) ?? "{}"); } catch { return {}; }
-}
-function persistLocal(v: { maxTrades: number; amount: number; leverage: number }) {
-  try { localStorage.setItem(LS_KEY, JSON.stringify(v)); } catch { /* ignore */ }
-}
+import { saveSlots, fetchLocalSettings, saveLocalSettings, SlotsData, FngSettings } from "@/hooks/useBotData";
 
 interface BotSettingsProps {
   slots: SlotsData | null;
@@ -67,48 +58,68 @@ const SAVE_STYLE: Record<SaveState, { bg: string; border: string; color: string 
 };
 
 export function BotSettings({ slots, fngSettings, onSaved }: BotSettingsProps) {
-  const local = loadLocal();
-  const [maxTrades, setMaxTrades] = useState(local.maxTrades ?? 3);
-  const [amount, setAmount]       = useState(local.amount   ?? 50);
-  const [leverage, setLeverage]   = useState(local.leverage ?? 10);
+  const [maxTrades, setMaxTrades] = useState(3);
+  const [amount, setAmount]       = useState(50);
+  const [leverage, setLeverage]   = useState(10);
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [loaded, setLoaded]       = useState(false);
 
-  // API values override localStorage on first successful load
+  // Load from server on mount — server is source of truth for amount/leverage
   useEffect(() => {
-    if (slots?.max_trades)       setMaxTrades(slots.max_trades);
-    if (slots?.amount_per_trade) setAmount(slots.amount_per_trade);
-    else if (fngSettings?.amount_per_trade) setAmount(fngSettings.amount_per_trade);
-    if (slots?.default_leverage) setLeverage(slots.default_leverage);
-    else if (fngSettings?.default_leverage) setLeverage(fngSettings.default_leverage);
-  }, [slots, fngSettings]);
+    fetchLocalSettings().then(ls => {
+      if (ls) {
+        setAmount(ls.amount_per_trade);
+        setLeverage(ls.default_leverage);
+      }
+      setLoaded(true);
+    });
+  }, []);
+
+  // max_trades comes from the live /api/slots response (actual bot state)
+  useEffect(() => {
+    if (slots?.max_trades) setMaxTrades(slots.max_trades);
+  }, [slots]);
 
   const handleSave = async () => {
     setSaveState("saving");
-    persistLocal({ maxTrades, amount, leverage });
 
-    const [slotsOk, fngOk] = await Promise.all([
-      saveSlots(maxTrades),
-      saveFngSettings({ ...(fngSettings ?? {}), amount_per_trade: amount, default_leverage: leverage }),
-    ]);
+    // Save amount/leverage to Express server (always reliable)
+    const localOk = await saveLocalSettings({ amount_per_trade: amount, default_leverage: leverage });
 
-    if (slotsOk && fngOk) {
-      // Both succeeded
+    // Also attempt to push max_trades to the Flask bot
+    const slotsOk = await saveSlots(maxTrades);
+
+    if (localOk) {
       setSaveState("ok");
       onSaved();
-    } else if (!slotsOk && !fngOk) {
-      // Both failed — settings only in localStorage
-      setSaveState("localOnly");
+    } else if (slotsOk) {
+      // Express server write failed but flask succeeded (unusual)
+      setSaveState("ok");
+      onSaved();
     } else {
-      // Partial: one succeeded — still call refetch and show partial OK
-      setSaveState("ok");
-      onSaved();
+      setSaveState("err");
     }
     setTimeout(() => setSaveState("idle"), 3000);
   };
 
-  const st = SAVE_STYLE[saveState];
+  const st  = SAVE_STYLE[saveState];
   const min = slots?.min ?? 1;
   const max = slots?.max ?? 5;
+
+  if (!loaded) {
+    return (
+      <div className="rounded-xl p-4" style={{ background: "#0a1628", border: "1px solid #1e3a5f" }}>
+        <h2 className="text-xs font-bold uppercase tracking-widest mb-4" style={{ color: "#94a3b8" }}>
+          Bot Settings
+        </h2>
+        <div className="space-y-3 animate-pulse">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="h-8 rounded" style={{ background: "#0d1f3c" }} />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-xl p-4" style={{ background: "#0a1628", border: "1px solid #1e3a5f" }}>
@@ -132,12 +143,6 @@ export function BotSettings({ slots, fngSettings, onSaved }: BotSettingsProps) {
         }}>
         {SAVE_LABEL[saveState]}
       </button>
-
-      {saveState === "localOnly" && (
-        <p className="text-xs mt-1.5 text-center" style={{ color: "#64748b" }}>
-          Bot offline — settings saved in browser until reconnected
-        </p>
-      )}
     </div>
   );
 }

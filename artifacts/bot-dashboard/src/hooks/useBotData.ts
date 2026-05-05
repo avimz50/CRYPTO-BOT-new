@@ -207,14 +207,38 @@ export function useAudit(enabled: boolean) { return usePoll<AuditData>("/api/tra
 export function useBotLog(enabled: boolean) { return usePoll<BotLogData>("/api/bot_log",     5_000,  enabled); }
 
 // ── Actions ────────────────────────────────────────────────────
+export interface LocalSettings {
+  amount_per_trade: number;
+  default_leverage: number;
+}
+
 export async function syncTelegram(): Promise<boolean> {
   try {
-    const r = await fetch("/api/make", {
+    const r = await fetch("/api/telegram_sync", { method: "POST" });
+    if (!r.ok) return false;
+    const j = await r.json() as { ok: boolean };
+    return j.ok === true;
+  } catch { return false; }
+}
+
+export async function fetchLocalSettings(): Promise<LocalSettings | null> {
+  try {
+    const r = await fetch("/api/local_settings");
+    if (!r.ok) return null;
+    return await r.json() as LocalSettings;
+  } catch { return null; }
+}
+
+export async function saveLocalSettings(payload: Partial<LocalSettings>): Promise<boolean> {
+  try {
+    const r = await fetch("/api/local_settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "sync_telegram" }),
+      body: JSON.stringify(payload),
     });
-    return r.ok;
+    if (!r.ok) return false;
+    const j = await r.json() as { ok: boolean };
+    return j.ok === true;
   } catch { return false; }
 }
 
