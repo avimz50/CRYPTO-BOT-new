@@ -27,14 +27,15 @@
   --radius-lg: var(--radius);
 }
 
-/* ── Master Control palette ── */
+/* ── Master Control palette (hex vars — used via inline styles) ── */
 :root {
-  --bg-base:   #070d1a;
-  --bg-panel:  #0a1628;
-  --bg-card:   #0d1f3c;
-  --border:    #1e3a5f;
-  --accent:    #3b82f6;
+  --mc-bg-base:  #070d1a;
+  --mc-bg-panel: #0a1628;
+  --mc-bg-card:  #0d1f3c;
+  --mc-border:   #1e3a5f;
+  --mc-accent:   #3b82f6;
 
+  /* Tailwind / Shadcn HSL tokens — canonical, no overrides below */
   --background: 222 47% 4%;
   --foreground: 213 31% 91%;
   --border: 216 34% 17%;

@@ -94,7 +94,7 @@ export default function App() {
 
         {/* ── Dashboard ── */}
         {activeNav === "Dashboard" && (
-          <div className="flex-1 overflow-y-auto p-3" style={{ background: "#070d1a" }}>
+          <div className="flex-1 overflow-y-auto p-3 mobile-content-pad" style={{ background: "#070d1a" }}>
 
             {/* Responsive grid: 1-col on mobile, 2-col on desktop */}
             <div className="dashboard-grid">
@@ -211,7 +211,7 @@ export default function App() {
 
         {/* ── Logs ── */}
         {activeNav === "Logs" && (
-          <div className="flex-1 overflow-y-auto p-3" style={{ background: "#070d1a" }}>
+          <div className="flex-1 overflow-y-auto p-3 mobile-content-pad" style={{ background: "#070d1a" }}>
             <div className="flex items-center justify-between mb-3">
               <h2 className="font-bold text-sm" style={{ color: "#e2e8f0" }}>Bot Logs</h2>
               <span className="text-xs" style={{ color: "#475569" }}>auto-refresh 5s</span>
@@ -233,7 +233,7 @@ export default function App() {
 
         {/* ── Settings ── */}
         {activeNav === "Settings" && (
-          <div className="flex-1 overflow-y-auto p-3" style={{ background: "#070d1a" }}>
+          <div className="flex-1 overflow-y-auto p-3 mobile-content-pad" style={{ background: "#070d1a" }}>
             <h2 className="font-bold text-sm mb-3" style={{ color: "#e2e8f0" }}>Settings</h2>
             <div style={{ maxWidth: 400 }}>
               <BotSettings
