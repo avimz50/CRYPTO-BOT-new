@@ -1,142 +1,89 @@
-# Workspace
+# Crypto Trading Bot — Master Control Dashboard
 
-## Overview
+Python "Adaptive Sniper" crypto trading bot on Bitget (virtual/demo), with a React/TypeScript dashboard and Express API proxy.
 
-pnpm workspace monorepo using TypeScript. Each package manages its own dependencies.
+## Run & Operate
+
+| Command | Purpose |
+|---------|---------|
+| `python bot.py` | Start the trading bot (port 8091) |
+| `pnpm --filter @workspace/api-server run dev` | Express API proxy (port 8080) |
+| `pnpm --filter @workspace/bot-dashboard run dev` | React dashboard (port from $PORT) |
+| `pnpm run typecheck` | Full workspace typecheck |
+| `pnpm --filter @workspace/db run push` | Apply DB migrations |
+
+**Required env vars**: `BITGET_KEY`, `BITGET_SECRET`, `BITGET_PW`, `TELEGRAM_TOKEN`, `CHAT_ID`, `GDRIVE_FOLDER_ID`, `GDRIVE_SERVICE_ACCOUNT_JSON`, `BOT_URL` (Flask URL for API proxy)
 
 ## Stack
 
-- **Monorepo tool**: pnpm workspaces
-- **Node.js version**: 24
-- **Package manager**: pnpm
-- **TypeScript version**: 5.9
-- **API framework**: Express 5
-- **Database**: PostgreSQL + Drizzle ORM
-- **Validation**: Zod (`zod/v4`), `drizzle-zod`
-- **API codegen**: Orval (from OpenAPI spec)
-- **Build**: esbuild (CJS bundle)
+- **Bot**: Python 3, ccxt (Bitget), Flask (keep_alive.py), asyncio
+- **API server**: Express 5, TypeScript, Fastify-style logging (pino)
+- **Dashboard**: React 19, Vite 7, Tailwind CSS 4, TypeScript
+- **Monorepo**: pnpm workspaces, Node 24, TypeScript 5.9
 
-## Structure
+## Where things live
 
-```text
-artifacts-monorepo/
-├── artifacts/              # Deployable applications
-│   └── api-server/         # Express API server
-├── lib/                    # Shared libraries
-│   ├── api-spec/           # OpenAPI spec + Orval codegen config
-│   ├── api-client-react/   # Generated React Query hooks
-│   ├── api-zod/            # Generated Zod schemas from OpenAPI
-│   └── db/                 # Drizzle ORM schema + DB connection
-├── scripts/                # Utility scripts (single workspace package)
-│   └── src/                # Individual .ts scripts, run via `pnpm --filter @workspace/scripts run <script>`
-├── pnpm-workspace.yaml     # pnpm workspace (artifacts/*, lib/*, lib/integrations/*, scripts)
-├── tsconfig.base.json      # Shared TS options (composite, bundler resolution, es2022)
-├── tsconfig.json           # Root TS project references
-└── package.json            # Root package with hoisted devDeps
+```
+artifacts/
+  bot-dashboard/src/
+    App.tsx                    ← main dashboard orchestrator
+    hooks/useBotData.ts        ← all polling hooks + save helpers
+    components/
+      Header.tsx               ← header + sync button
+      Sidebar.tsx              ← nav sidebar
+      FinancialOverview.tsx    ← equity/P&L panel + sparkline
+      ActiveTradesTable.tsx    ← live trades table
+      ScanStatus.tsx           ← last scan results table
+      BotSettings.tsx          ← max trades + amount + leverage sliders
+      TradeHistoryModal.tsx    ← full trade history modal
+      LogsView.tsx             ← stdout/stderr/crash log viewer
+      FngGauge.tsx             ← SVG fear & greed gauge
+      Sparkline.tsx            ← SVG equity sparkline
+  api-server/src/
+    routes/bot.ts              ← proxies all /api/* → Flask :8091
+bot.py                         ← main bot (DO NOT EDIT without task)
+config.py                      ← all constants
+market_logic.py                ← pure strategy engine
+keep_alive.py                  ← Flask API (port 8091)
+gdrive_reporter.py             ← Google Drive audit reporter
+config.json                    ← runtime config (max_trades, leverage etc.)
+active_trades.json             ← live trade state
+wallet.json                    ← wallet + equity_history
+audit_report.json              ← closed trade history
 ```
 
-## TypeScript & Composite Projects
+## Architecture decisions
 
-Every package extends `tsconfig.base.json` which sets `composite: true`. The root `tsconfig.json` lists all packages as project references. This means:
+- **Vite proxy**: `/api/*` → `http://localhost:8080` (Express) → `$BOT_URL` (Flask bot)
+- **Polling not WebSocket**: dashboard polls every 10s (status/trades), 30s (scan/slots/wallet), 5s (logs when on Logs tab), 60s (audit when modal open)
+- **No per-trade leverage in bot data**: dashboard calculates from `(pos_size / leverage_default) || 10`; real leverage comes from BotSettings sliders
+- **FNG settings double-duty**: `/api/fng_settings` POST body includes `amount_per_trade` + `default_leverage` for round-trip persistence alongside `/api/slots` for `max_trades`
+- **Tailwind + inline styles**: panel/card backgrounds use inline CSS vars for the `#070d1a → #0a1628 → #0d1f3c` dark blue palette; Tailwind handles spacing/layout
 
-- **Always typecheck from the root** — run `pnpm run typecheck` (which runs `tsc --build --emitDeclarationOnly`). This builds the full dependency graph so that cross-package imports resolve correctly. Running `tsc` inside a single package will fail if its dependencies haven't been built yet.
-- **`emitDeclarationOnly`** — we only emit `.d.ts` files during typecheck; actual JS bundling is handled by esbuild/tsx/vite...etc, not `tsc`.
-- **Project references** — when package A depends on package B, A's `tsconfig.json` must list B in its `references` array. `tsc --build` uses this to determine build order and skip up-to-date packages.
+## Product
 
-## Root Scripts
+- **Dashboard tab**: Financial overview (equity, P&L, floating/realized, equity sparkline), active trades table with live P&L, scan results table, Fear & Greed gauge, bot settings sliders, quick stats
+- **Logs tab**: Live bot stdout/stderr + crash banner, auto-scrolls, copy button, refreshes every 5s
+- **Settings tab**: Same BotSettings panel as sidebar for standalone access
+- **Trade History modal**: Full closed trade audit with win rate, total P&L, sortable table
+- **Header**: Sync with Telegram button, online/offline indicator, live BTC price, clock
 
-- `pnpm run build` — runs `typecheck` first, then recursively runs `build` in all packages that define it
-- `pnpm run typecheck` — runs `tsc --build --emitDeclarationOnly` using project references
+## User preferences
 
-## Trading Bot — Modular Architecture
+- Dark blue palette: `#070d1a` base, `#0a1628` panels, `#0d1f3c` cards, `#1e3a5f` borders, `#3b82f6` accent
+- Compact, data-dense UI with monospace numbers
+- Hebrew locale for clock (user originally requested — now using system locale)
 
-Python crypto trading bot running on Bitget demo mode. **Refactored into 3 modules** (May 2026).
+## Gotchas
 
-### Module layout
-| File | Purpose |
-|------|---------|
-| `config.py` | All static constants, file paths, env-loaded values. Import everywhere with `from config import *`. |
-| `market_logic.py` | Pure strategy engine: `score_symbol`, `detect_fvg`, `detect_order_blocks` (ICT OB, NEW), `detect_flag`, `detect_bb_squeeze`, `detect_volume_buildup`, `detect_rsi_divergence`, `get_fear_greed`, `get_fng_mode`, `calc_risk_position`, `get_dynamic_sl`. |
-| `bot.py` | Orchestration: scan loop, trade management, Telegram handlers, Flask API, async pre-fetch. |
-| `keep_alive.py` | Flask app — unchanged helper. |
-| `gdrive_reporter.py` | Google Drive audit reporter — unchanged helper. |
+- **bot.py must NOT be modified** unless explicitly in a task — it is the live trading engine
+- Bot Flask runs on port 8091; API server on 8080; dashboard on $PORT (assigned by Replit)
+- `active_trades.json` / `wallet.json` / `audit_report.json` are written by the bot and read-only from the dashboard perspective
+- `BOT_URL` env var must point to the production bot URL so the dev dashboard can proxy to it
 
-### Key Constants (now in config.py)
-- `MIN_SCORE=78`, `MAX_TRADES=3` (dynamic, loaded from config.json), `LEVERAGE=10`, `MARGIN=50`
-- `VERBOSE_LOG=False` — set to `True` for per-symbol scoring breakdown (debug only)
-- `SCALP_SCAN_INTERVAL=300` (5 min active), `SCALP_SCAN_INTERVAL_WAIT=600` (10 min WAIT mode)
+## Pointers
 
-### Async OHLCV Pre-fetch
-`_scan_batch()` now calls `asyncio.run(_prefetch_ohlcv(candidates))` before the scoring loop, fetching 4H+1H data for all candidates in parallel via `ccxt.async_support.bitget`. Results cached in `_ohlcv_cache`; `get_data_cached()` serves cache hits transparently.
-
-### Order Block Detection (ICT)
-`detect_order_blocks(df, direction)` in `market_logic.py`: finds the last bearish candle before a 3-candle bullish impulse (Bullish OB) or last bullish candle before a 3-candle bearish impulse (Bearish OB). Scores +3 points if current price is inside or within 1% of the zone.
-
-### Threads
-| Thread | Interval | Notes |
-|--------|----------|-------|
-| trade_monitor_loop | 60s | SL/TP/BE/Trailing — only runs when active_trades exist |
-| scan_loop | 60 min | Auto-scan (Production only, disabled in dev) |
-| sol_watch_loop | 15 min | SOL/USDT watch, alerts on state change only |
-| scalp_scan_loop | 5 min active / 10 min WAIT | Runs only when FNG < 13 (Extreme Fear) |
-| watch_loop | 15 min | User Watch-List |
-
-### Low-Resource Mode
-- `VERBOSE_LOG=False`: Only Entry/Exit/Error events printed. No per-symbol scoring noise.
-- FNG API cached 1h; only prints when value changes.
-- `sentiment_check()` only prints when regime changes (Kill-Switch → Neutral etc.)
-- Scalp scanner doubles sleep to 10 min when not in Extreme Fear (normal market).
-- `save_active_trades()` / `save_wallet()` only called on trade events — not on every poll.
-
-### Wallet API (`/api/wallet`)
-Returns: `balance`, `available_balance`, `locked_balance`, `unrealized_pnl`, `equity`, `active_count`, `total_pnl`, `equity_history`.
-
-### Flask Port
-`8091` (internal), proxied via API Server at port 8080.
-
-## Packages
-
-### `artifacts/api-server` (`@workspace/api-server`)
-
-Express 5 API server. Routes live in `src/routes/` and use `@workspace/api-zod` for request and response validation and `@workspace/db` for persistence.
-
-- Entry: `src/index.ts` — reads `PORT`, starts Express
-- App setup: `src/app.ts` — mounts CORS, JSON/urlencoded parsing, routes at `/api`
-- Routes: `src/routes/index.ts` mounts sub-routers; `src/routes/health.ts` exposes `GET /health` (full path: `/api/health`)
-- Depends on: `@workspace/db`, `@workspace/api-zod`
-- `pnpm --filter @workspace/api-server run dev` — run the dev server
-- `pnpm --filter @workspace/api-server run build` — production esbuild bundle (`dist/index.cjs`)
-- Build bundles an allowlist of deps (express, cors, pg, drizzle-orm, zod, etc.) and externalizes the rest
-
-### `lib/db` (`@workspace/db`)
-
-Database layer using Drizzle ORM with PostgreSQL. Exports a Drizzle client instance and schema models.
-
-- `src/index.ts` — creates a `Pool` + Drizzle instance, exports schema
-- `src/schema/index.ts` — barrel re-export of all models
-- `src/schema/<modelname>.ts` — table definitions with `drizzle-zod` insert schemas (no models definitions exist right now)
-- `drizzle.config.ts` — Drizzle Kit config (requires `DATABASE_URL`, automatically provided by Replit)
-- Exports: `.` (pool, db, schema), `./schema` (schema only)
-
-Production migrations are handled by Replit when publishing. In development, we just use `pnpm --filter @workspace/db run push`, and we fallback to `pnpm --filter @workspace/db run push-force`.
-
-### `lib/api-spec` (`@workspace/api-spec`)
-
-Owns the OpenAPI 3.1 spec (`openapi.yaml`) and the Orval config (`orval.config.ts`). Running codegen produces output into two sibling packages:
-
-1. `lib/api-client-react/src/generated/` — React Query hooks + fetch client
-2. `lib/api-zod/src/generated/` — Zod schemas
-
-Run codegen: `pnpm --filter @workspace/api-spec run codegen`
-
-### `lib/api-zod` (`@workspace/api-zod`)
-
-Generated Zod schemas from the OpenAPI spec (e.g. `HealthCheckResponse`). Used by `api-server` for response validation.
-
-### `lib/api-client-react` (`@workspace/api-client-react`)
-
-Generated React Query hooks and fetch client from the OpenAPI spec (e.g. `useHealthCheck`, `healthCheck`).
-
-### `scripts` (`@workspace/scripts`)
-
-Utility scripts package. Each script is a `.ts` file in `src/` with a corresponding npm script in `package.json`. Run scripts via `pnpm --filter @workspace/scripts run <script>`. Scripts can import any workspace package (e.g., `@workspace/db`) by adding it as a dependency in `scripts/package.json`.
+- Bot strategy: `market_logic.py` → `score_symbol()`, `detect_order_blocks()`, `detect_flag()`
+- API routes: `artifacts/api-server/src/routes/bot.ts`
+- Dashboard mockup (reference): `artifacts/mockup-sandbox/src/components/mockups/master-control/MasterControl.tsx`
+- pnpm workspace skill: `.local/skills/pnpm-workspace/SKILL.md`

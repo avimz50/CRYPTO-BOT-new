@@ -27,8 +27,15 @@
   --radius-lg: var(--radius);
 }
 
+/* ── Master Control palette ── */
 :root {
-  --background: 222 47% 5%;
+  --bg-base:   #070d1a;
+  --bg-panel:  #0a1628;
+  --bg-card:   #0d1f3c;
+  --border:    #1e3a5f;
+  --accent:    #3b82f6;
+
+  --background: 222 47% 4%;
   --foreground: 213 31% 91%;
   --border: 216 34% 17%;
   --input: 216 34% 17%;
@@ -42,18 +49,62 @@
   --accent: 216 34% 17%;
   --accent-foreground: 210 40% 98%;
   --destructive: 0 63% 31%;
-  --card: 222 47% 8%;
+  --card: 222 47% 6%;
   --card-foreground: 213 31% 91%;
-  --app-font-sans: 'Inter', sans-serif;
-  --app-font-mono: Menlo, monospace;
+  --app-font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --app-font-mono: 'Menlo', 'Consolas', monospace;
   --radius: 0.5rem;
 }
 
 @layer base {
   * {
     @apply border-border;
+    box-sizing: border-box;
+  }
+  html, body, #root {
+    height: 100%;
+    overflow: hidden;
   }
   body {
-    @apply font-sans antialiased bg-background text-foreground;
+    @apply font-sans antialiased;
+    background: var(--bg-base);
+    color: #e2e8f0;
+    margin: 0;
   }
+}
+
+/* ── Scrollbar styling ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #070d1a; }
+::-webkit-scrollbar-thumb { background: #1e3a5f; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #2d5186; }
+
+/* ── Range input styling ── */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #3b82f6;
+  border: 2px solid #0a1628;
+  box-shadow: 0 0 0 1px #3b82f6;
+  cursor: pointer;
+  margin-top: -5px;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+}
+input[type="range"]:focus { outline: none; }
+
+/* ── Pulse animation ── */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
