@@ -1,8 +1,7 @@
 import { useState, useEffect } from "react";
-import { saveSlots, SlotsData } from "@/hooks/useBotData";
+import { saveSlots, saveFngSettings, SlotsData, FngSettings } from "@/hooks/useBotData";
 
-// ── Browser localStorage — persists amount/leverage across page refreshes ──
-// Flask has no endpoint for these two settings, so localStorage is the storage layer.
+// ── localStorage — fallback only when /api/fng_settings is unavailable ────────
 const LS_KEY = "botDashboard_settings_v1";
 interface StoredSettings { amount_per_trade: number; default_leverage: number }
 const LS_DEFAULTS: StoredSettings = { amount_per_trade: 50, default_leverage: 10 };
@@ -26,10 +25,11 @@ function lsWrite(v: StoredSettings): void {
 // ── Props ──────────────────────────────────────────────────────
 interface BotSettingsProps {
   slots: SlotsData | null;
+  fngSettings: FngSettings | null;
   onSaved: () => void;
 }
 
-// ── Slider component ───────────────────────────────────────────
+// ── Slider ─────────────────────────────────────────────────────
 function SliderRow({
   label, value, min, max, unit, onChange,
 }: {
@@ -64,51 +64,70 @@ function SliderRow({
   );
 }
 
-// ── Save states ────────────────────────────────────────────────
-// Two independent axes: slots (bot API) and local (localStorage)
+// ── Save state ─────────────────────────────────────────────────
 interface SaveStatus {
-  state: "idle" | "saving" | "done";
-  slotsOk: boolean | null;   // null = not yet attempted
-  localOk: boolean | null;
+  phase: "idle" | "saving" | "done";
+  slotsOk: boolean | null;
+  fngOk:   boolean | null;
 }
 
-export function BotSettings({ slots, onSaved }: BotSettingsProps) {
+export function BotSettings({ slots, fngSettings, onSaved }: BotSettingsProps) {
   const stored = lsRead();
   const [maxTrades, setMaxTrades] = useState(slots?.max_trades ?? 3);
   const [amount,    setAmount]    = useState(stored.amount_per_trade);
   const [leverage,  setLeverage]  = useState(stored.default_leverage);
-  const [status,    setStatus]    = useState<SaveStatus>({ state: "idle", slotsOk: null, localOk: null });
+  const [status,    setStatus]    = useState<SaveStatus>({ phase: "idle", slotsOk: null, fngOk: null });
 
-  // Sync max_trades from live bot API data
+  // max_trades from live /api/slots
   useEffect(() => {
     if (slots?.max_trades) setMaxTrades(slots.max_trades);
   }, [slots]);
 
+  // amount/leverage: try to read from live fng_settings API first;
+  // fng_settings API does not currently expose these fields, so fall back to localStorage.
+  useEffect(() => {
+    if (fngSettings) {
+      const apiAmount   = (fngSettings as FngSettings & { amount_per_trade?: number }).amount_per_trade;
+      const apiLeverage = (fngSettings as FngSettings & { default_leverage?: number }).default_leverage;
+      if (typeof apiAmount   === "number") setAmount(apiAmount);
+      if (typeof apiLeverage === "number") setLeverage(apiLeverage);
+      // If API doesn't expose these fields, stored localStorage values remain
+    }
+  }, [fngSettings]);
+
   const handleSave = async () => {
-    setStatus({ state: "saving", slotsOk: null, localOk: null });
+    setStatus({ phase: "saving", slotsOk: null, fngOk: null });
 
-    // Save amount/leverage to localStorage (persistent, no server required)
+    // Primary persistence path: POST /api/fng_settings with all known fields
+    // (includes amount/leverage so the backend can persist them if supported)
+    const fngPayload: Partial<FngSettings> & { amount_per_trade: number; default_leverage: number } = {
+      ...(fngSettings ?? {}),
+      amount_per_trade: amount,
+      default_leverage: leverage,
+    };
+
+    const [slotsOk, fngOk] = await Promise.all([
+      saveSlots(maxTrades),
+      saveFngSettings(fngPayload),
+    ]);
+
+    // Write localStorage as backup regardless of API result
     lsWrite({ amount_per_trade: amount, default_leverage: leverage });
-    const localOk = lsRead().amount_per_trade === amount && lsRead().default_leverage === leverage;
 
-    // Push max_trades to Flask bot via /api/slots
-    const slotsOk = await saveSlots(maxTrades);
+    setStatus({ phase: "done", slotsOk, fngOk });
+    if (slotsOk || fngOk) onSaved();
 
-    setStatus({ state: "done", slotsOk, localOk });
-    if (slotsOk || localOk) onSaved();
-
-    // Reset to idle after 4 s
-    setTimeout(() => setStatus({ state: "idle", slotsOk: null, localOk: null }), 4000);
+    setTimeout(() => setStatus({ phase: "idle", slotsOk: null, fngOk: null }), 4000);
   };
 
   // ── Button appearance ─────────────────────────────────────────
-  const btnStyle = (() => {
-    if (status.state === "saving") {
+  const btnMeta = (() => {
+    if (status.phase === "saving") {
       return { bg: "rgba(59,130,246,0.15)", border: "#3b82f6", color: "#93c5fd", label: "Saving…" };
     }
-    if (status.state === "done") {
-      const allOk = status.slotsOk && status.localOk;
-      const anyOk = status.slotsOk || status.localOk;
+    if (status.phase === "done") {
+      const allOk = status.slotsOk && status.fngOk;
+      const anyOk = status.slotsOk || status.fngOk;
       if (allOk)  return { bg: "rgba(34,197,94,0.18)",  border: "#22c55e", color: "#4ade80", label: "✅ Saved!" };
       if (anyOk)  return { bg: "rgba(250,204,21,0.12)", border: "#facc15", color: "#facc15", label: "⚠️ Partially saved" };
       return        { bg: "rgba(239,68,68,0.15)",  border: "#ef4444", color: "#f87171", label: "❌ Save failed" };
@@ -143,30 +162,30 @@ export function BotSettings({ slots, onSaved }: BotSettingsProps) {
 
       <button
         onClick={handleSave}
-        disabled={status.state === "saving"}
+        disabled={status.phase === "saving"}
         className="w-full py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all"
         style={{
-          background: btnStyle.bg,
-          border: `1px solid ${btnStyle.border}`,
-          color: btnStyle.color,
-          cursor: status.state === "saving" ? "not-allowed" : "pointer",
+          background: btnMeta.bg,
+          border: `1px solid ${btnMeta.border}`,
+          color: btnMeta.color,
+          cursor: status.phase === "saving" ? "not-allowed" : "pointer",
         }}>
-        {btnStyle.label}
+        {btnMeta.label}
       </button>
 
-      {/* Per-axis feedback — shown only after a save attempt */}
-      {status.state === "done" && (
+      {/* Per-axis result detail — shown only after a save attempt */}
+      {status.phase === "done" && (
         <div className="mt-2 space-y-0.5">
           <div className="flex justify-between text-xs" style={{ color: "#475569" }}>
-            <span>Bot slots (max trades)</span>
+            <span>Max trades (bot API)</span>
             <span style={{ color: status.slotsOk ? "#4ade80" : "#f87171" }}>
               {status.slotsOk ? "✓ Updated" : "✗ Bot unreachable"}
             </span>
           </div>
           <div className="flex justify-between text-xs" style={{ color: "#475569" }}>
-            <span>Amount / leverage</span>
-            <span style={{ color: status.localOk ? "#4ade80" : "#f87171" }}>
-              {status.localOk ? "✓ Saved in browser" : "✗ Storage error"}
+            <span>Amount / leverage (settings API)</span>
+            <span style={{ color: status.fngOk ? "#4ade80" : "#f87171" }}>
+              {status.fngOk ? "✓ Sent to API" : "✗ API unreachable"}
             </span>
           </div>
         </div>
