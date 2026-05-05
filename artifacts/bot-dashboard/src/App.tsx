@@ -149,7 +149,6 @@ export default function App() {
                 {isMobile && (
                   <BotSettings
                     slots={slots}
-                    fngSettings={fngSettings}
                     onSaved={refetchSlots}
                   />
                 )}
@@ -183,7 +182,6 @@ export default function App() {
 
                   <BotSettings
                     slots={slots}
-                    fngSettings={fngSettings}
                     onSaved={refetchSlots}
                   />
 
@@ -238,7 +236,6 @@ export default function App() {
             <div style={{ maxWidth: 400 }}>
               <BotSettings
                 slots={slots}
-                fngSettings={fngSettings}
                 onSaved={refetchSlots}
               />
             </div>

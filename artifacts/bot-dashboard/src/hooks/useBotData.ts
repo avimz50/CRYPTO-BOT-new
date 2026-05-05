@@ -49,7 +49,6 @@ export interface TradesData {
   trades: BotTrade[];
 }
 
-// ── Scan data — actual shape from /api/last_scan ──────────────
 export interface RejectedCoin {
   symbol: string;
   direction: "LONG" | "SHORT";
@@ -92,7 +91,6 @@ export interface SlotsData {
   max: number;
 }
 
-// ── Audit data — actual shape from /api/trade_audit ──────────
 export interface AuditTrade {
   symbol: string;
   direction: "LONG" | "SHORT";
@@ -140,23 +138,27 @@ export interface FngSettings {
   greed: number;
 }
 
+/** Dashboard config persisted server-side via /api/bot_config */
+export interface BotConfig {
+  amount_per_trade: number;
+  default_leverage: number;
+}
+
 export interface BotLogData {
   stdout: string;
   stderr: string;
   crash: string | null;
 }
 
-// ── Poll result with stale detection ──────────────────────────
+// ── Poll result ────────────────────────────────────────────────
 export interface PollResult<T> {
   data: T | null;
   loading: boolean;
   error: boolean;
-  /** true when data exists but last successful fetch was more than 2× the poll interval ago */
   stale: boolean;
   refetch: () => void;
 }
 
-// ── Generic polling hook ────────────────────────────────────────
 function usePoll<T>(url: string, interval: number, enabled = true): PollResult<T> {
   const [data, setData]       = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
@@ -188,7 +190,6 @@ function usePoll<T>(url: string, interval: number, enabled = true): PollResult<T
   }, [fetch_, interval, enabled]);
 
   const stale = data != null && lastOk != null && (Date.now() - lastOk) > interval * 2;
-
   return { data, loading, error, stale, refetch };
 }
 
@@ -205,18 +206,30 @@ export function useBotLog(enabled: boolean) { return usePoll<BotLogData>("/api/b
 // ── Actions ────────────────────────────────────────────────────
 
 /**
- * POST /api/make {action:"sync_telegram"} — proxied to Flask bot.
- * Flask will reject unknown actions with 400; the header sync button
- * reflects success/failure from the HTTP response.
+ * Read amount_per_trade and default_leverage from the Express-layer config store.
+ * This endpoint is backed by a durable workspace file (not /tmp).
  */
-export async function syncTelegram(): Promise<boolean> {
+export async function fetchBotConfig(): Promise<BotConfig | null> {
   try {
-    const r = await fetch("/api/make", {
+    const r = await fetch("/api/bot_config");
+    if (!r.ok) return null;
+    return await r.json() as BotConfig;
+  } catch { return null; }
+}
+
+/**
+ * Persist amount_per_trade and/or default_leverage to the Express-layer config store.
+ */
+export async function saveBotConfig(payload: Partial<BotConfig>): Promise<boolean> {
+  try {
+    const r = await fetch("/api/bot_config", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "sync_telegram" }),
+      body: JSON.stringify(payload),
     });
-    return r.ok;
+    if (!r.ok) return false;
+    const j = await r.json() as { ok: boolean };
+    return j.ok === true;
   } catch { return false; }
 }
 
@@ -232,7 +245,7 @@ export async function saveSlots(max_trades: number): Promise<boolean> {
   } catch { return false; }
 }
 
-/** POST /api/fng_settings — update FNG thresholds (extreme_fear / fear / greed only) */
+/** POST /api/fng_settings — update FNG thresholds (extreme_fear / fear / greed) */
 export async function saveFngSettings(payload: Partial<FngSettings>): Promise<boolean> {
   try {
     const r = await fetch("/api/fng_settings", {
@@ -241,5 +254,23 @@ export async function saveFngSettings(payload: Partial<FngSettings>): Promise<bo
       body: JSON.stringify(payload),
     });
     return r.ok;
+  } catch { return false; }
+}
+
+/**
+ * POST /api/make {action:"sync_telegram"}.
+ * The Express proxy intercepts this action and calls Telegram Bot API directly
+ * (no matching Flask command exists — adapter is in the Express layer).
+ */
+export async function syncTelegram(): Promise<boolean> {
+  try {
+    const r = await fetch("/api/make", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "sync_telegram" }),
+    });
+    if (!r.ok) return false;
+    const j = await r.json() as { ok: boolean };
+    return j.ok === true;
   } catch { return false; }
 }
