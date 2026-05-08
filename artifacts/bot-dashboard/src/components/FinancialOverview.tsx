@@ -1,4 +1,5 @@
 import { Sparkline } from "./Sparkline";
+import { StaleBadge } from "./StaleBadge";
 
 interface FinancialOverviewProps {
   starting: number | null;
@@ -9,6 +10,8 @@ interface FinancialOverviewProps {
   loading: boolean;
   onShowHistory: () => void;
   isMobile?: boolean;
+  stale?: boolean;
+  lastSuccessAt?: number | null;
 }
 
 function safe(n: number | null | undefined): number {
@@ -29,6 +32,7 @@ function fmtPct(n: number | null): string {
 
 export function FinancialOverview({
   starting, equity, realized, unrealized, equityHistory, loading, onShowHistory, isMobile,
+  stale, lastSuccessAt,
 }: FinancialOverviewProps) {
   const eq  = equity;
   const st  = starting;
@@ -45,9 +49,12 @@ export function FinancialOverview({
   return (
     <div className="rounded-xl p-4" style={{ background: "#0a1628", border: "1px solid #1e3a5f" }}>
       <div className="flex items-center justify-between mb-3">
-        <h2 className="text-xs font-bold uppercase tracking-widest" style={{ color: "#94a3b8" }}>
-          Financial Overview
-        </h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-xs font-bold uppercase tracking-widest" style={{ color: "#94a3b8" }}>
+            Financial Overview
+          </h2>
+          {stale && <StaleBadge lastSuccessAt={lastSuccessAt ?? null} />}
+        </div>
         <button onClick={onShowHistory}
           className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs transition-all"
           style={{

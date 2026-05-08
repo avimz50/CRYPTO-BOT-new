@@ -1,9 +1,12 @@
 import { AuditTrade } from "@/hooks/useBotData";
+import { StaleBadge } from "./StaleBadge";
 
 interface TradeHistoryModalProps {
   trades: AuditTrade[];
   loading: boolean;
   onClose: () => void;
+  stale?: boolean;
+  lastSuccessAt?: number | null;
 }
 
 const REASON_BADGE: Record<string, { color: string; bg: string }> = {
@@ -59,7 +62,7 @@ function fmtLeverage(t: AuditTrade): string {
   return t.leverage != null && isFinite(t.leverage) ? `${t.leverage}x` : "—";
 }
 
-export function TradeHistoryModal({ trades, loading, onClose }: TradeHistoryModalProps) {
+export function TradeHistoryModal({ trades, loading, onClose, stale, lastSuccessAt }: TradeHistoryModalProps) {
   const totalPnl = trades.reduce((s, t) => s + (isFinite(t.pnl_usd) ? t.pnl_usd : 0), 0);
   const wins     = trades.filter(t => t.pnl_usd > 0).length;
   const losses   = trades.filter(t => t.pnl_usd < 0).length;
@@ -94,6 +97,7 @@ export function TradeHistoryModal({ trades, loading, onClose }: TradeHistoryModa
               style={{ background: "#0d1f3c", color: "#64748b" }}>
               {trades.length} trades
             </span>
+            {stale && <StaleBadge lastSuccessAt={lastSuccessAt ?? null} />}
           </div>
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-4 text-xs">

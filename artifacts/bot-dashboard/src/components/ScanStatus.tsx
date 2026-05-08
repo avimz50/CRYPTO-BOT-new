@@ -1,9 +1,12 @@
 import { useState } from "react";
 import { ScanData, RejectedCoin, BubbleWatch } from "@/hooks/useBotData";
+import { StaleBadge } from "./StaleBadge";
 
 interface ScanStatusProps {
   scan: ScanData | null;
   loading: boolean;
+  stale?: boolean;
+  lastSuccessAt?: number | null;
 }
 
 type Filter = "ALL" | "BUY" | "SELL" | "HOLD";
@@ -39,7 +42,7 @@ function bubbleToRow(b: BubbleWatch): { symbol: string; signal: "HOLD"; confiden
   return { symbol: b.symbol, signal: "HOLD", confidence: "Watch", confColor: "#a78bfa", reason };
 }
 
-export function ScanStatus({ scan, loading }: ScanStatusProps) {
+export function ScanStatus({ scan, loading, stale, lastSuccessAt }: ScanStatusProps) {
   const [filter, setFilter] = useState<Filter>("ALL");
 
   const rejected: RejectedCoin[]  = scan?.rejected_coins ?? [];
@@ -88,6 +91,7 @@ export function ScanStatus({ scan, loading }: ScanStatusProps) {
               · {relTime(scanTime)}
             </span>
           )}
+          {stale && <StaleBadge lastSuccessAt={lastSuccessAt ?? null} />}
         </div>
         <div className="flex gap-1">
           {FILTERS.map(f => (

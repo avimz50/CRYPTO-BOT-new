@@ -8,6 +8,7 @@ import { ScanStatus } from "@/components/ScanStatus";
 import { BotSettings } from "@/components/BotSettings";
 import { TradeHistoryModal } from "@/components/TradeHistoryModal";
 import { LogsView } from "@/components/LogsView";
+import { StaleBadge } from "@/components/StaleBadge";
 import {
   useStatus, useTrades, useScan, useSlots,
   useWallet, useFngSettings, useAudit, useBotLog,
@@ -34,13 +35,13 @@ export default function App() {
     if (isMobile) setSidebarOpen(false);
   }, [isMobile]);
 
-  const { data: status, loading: statusLoading } = useStatus();
-  const { data: trades }  = useTrades();
-  const { data: scan }    = useScan();
+  const { data: status, loading: statusLoading, stale: statusStale, lastSuccessAt: statusLastOk } = useStatus();
+  const { data: trades, stale: tradesStale, lastSuccessAt: tradesLastOk } = useTrades();
+  const { data: scan,   stale: scanStale,   lastSuccessAt: scanLastOk   } = useScan();
   const { data: slots, refetch: refetchSlots } = useSlots();
-  const { data: wallet }  = useWallet();
+  const { data: wallet, stale: walletStale, lastSuccessAt: walletLastOk } = useWallet();
   const { data: fngSettings } = useFngSettings();
-  const { data: audit, loading: auditLoading } = useAudit(showHistory);
+  const { data: audit, loading: auditLoading, stale: auditStale, lastSuccessAt: auditLastOk } = useAudit(showHistory);
   const { data: logs,  loading: logsLoading  } = useBotLog(activeNav === "Logs");
 
   const isOnline = status != null;
@@ -124,6 +125,15 @@ export default function App() {
                   loading={statusLoading}
                   onShowHistory={() => setShowHistory(true)}
                   isMobile={isMobile}
+                  stale={statusStale || walletStale}
+                  lastSuccessAt={
+                    statusStale && walletStale
+                      ? Math.min(statusLastOk ?? Infinity, walletLastOk ?? Infinity) === Infinity ? null
+                        : Math.min(statusLastOk!, walletLastOk!)
+                      : statusStale ? statusLastOk
+                      : walletStale ? walletLastOk
+                      : statusLastOk ?? walletLastOk
+                  }
                 />
 
                 {/* On mobile: FNG + Quick Stats in a compact 2-up row */}
@@ -131,14 +141,20 @@ export default function App() {
                   <div className="grid grid-cols-2 gap-3">
                     <div className="rounded-xl p-3"
                       style={{ background: "#0a1628", border: "1px solid #1e3a5f" }}>
-                      <div className="text-xs font-bold uppercase tracking-widest mb-1"
-                        style={{ color: "#94a3b8" }}>F&G Index</div>
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <div className="text-xs font-bold uppercase tracking-widest"
+                          style={{ color: "#94a3b8" }}>F&G Index</div>
+                        {statusStale && <StaleBadge lastSuccessAt={statusLastOk} />}
+                      </div>
                       <FngGauge value={fngValue} label={fngLabel} compact />
                     </div>
                     <div className="rounded-xl p-3 space-y-2"
                       style={{ background: "#0a1628", border: "1px solid #1e3a5f" }}>
-                      <div className="text-xs font-bold uppercase tracking-widest"
-                        style={{ color: "#94a3b8" }}>Stats</div>
+                      <div className="flex items-center gap-1.5">
+                        <div className="text-xs font-bold uppercase tracking-widest"
+                          style={{ color: "#94a3b8" }}>Stats</div>
+                        {statusStale && <StaleBadge lastSuccessAt={statusLastOk} />}
+                      </div>
                       {[
                         { label: "Trades",    value: `${activeTrades.length} / ${maxTrades}`, color: "#93c5fd" },
                         { label: "Mode",      value: status?.mode ?? "VIRTUAL",                color: "#facc15" },
@@ -157,6 +173,8 @@ export default function App() {
                   trades={activeTrades}
                   maxTrades={maxTrades}
                   loading={statusLoading && activeTrades.length === 0}
+                  stale={tradesStale}
+                  lastSuccessAt={tradesLastOk}
                 />
 
                 {/* Bot settings on mobile: show inline after trades */}
@@ -171,6 +189,8 @@ export default function App() {
                 <ScanStatus
                   scan={scan}
                   loading={scan == null}
+                  stale={scanStale}
+                  lastSuccessAt={scanLastOk}
                 />
               </div>
 
@@ -179,8 +199,11 @@ export default function App() {
                 <div className="space-y-3">
                   <div className="rounded-xl p-4"
                     style={{ background: "#0a1628", border: "1px solid #1e3a5f" }}>
-                    <h2 className="text-xs font-bold uppercase tracking-widest mb-2"
-                      style={{ color: "#94a3b8" }}>Fear & Greed Index</h2>
+                    <div className="flex items-center gap-2 mb-2">
+                      <h2 className="text-xs font-bold uppercase tracking-widest"
+                        style={{ color: "#94a3b8" }}>Fear & Greed Index</h2>
+                      {statusStale && <StaleBadge lastSuccessAt={statusLastOk} />}
+                    </div>
                     <FngGauge value={fngValue} label={fngLabel} />
                     {fngValue != null && (
                       <div className="text-center mt-1">
@@ -203,8 +226,11 @@ export default function App() {
 
                   <div className="rounded-xl p-4 space-y-3"
                     style={{ background: "#0a1628", border: "1px solid #1e3a5f" }}>
-                    <h2 className="text-xs font-bold uppercase tracking-widest"
-                      style={{ color: "#94a3b8" }}>Quick Stats</h2>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-xs font-bold uppercase tracking-widest"
+                        style={{ color: "#94a3b8" }}>Quick Stats</h2>
+                      {statusStale && <StaleBadge lastSuccessAt={statusLastOk} />}
+                    </div>
                     {[
                       { label: "Active Trades",  value: `${activeTrades.length} / ${maxTrades}`, color: "#93c5fd" },
                       { label: "Exchange",       value: status?.exchange ?? "Bitget",             color: "#e2e8f0" },
@@ -293,6 +319,8 @@ export default function App() {
           trades={auditTrades}
           loading={auditLoading}
           onClose={() => setShowHistory(false)}
+          stale={auditStale}
+          lastSuccessAt={auditLastOk}
         />
       )}
     </div>

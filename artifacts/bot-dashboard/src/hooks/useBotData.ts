@@ -182,8 +182,10 @@ export interface PollResult<T> {
   data: T | null;
   loading: boolean;
   error: boolean;
-  /** true when data exists but last successful fetch was > 2× the poll interval ago */
+  /** true when data exists but last successful fetch was > 1× the poll interval ago */
   stale: boolean;
+  /** timestamp (ms) of the last successful fetch, or null if never fetched */
+  lastSuccessAt: number | null;
   refetch: () => void;
 }
 
@@ -217,8 +219,8 @@ function usePoll<T>(url: string, interval: number, enabled = true): PollResult<T
     return () => clearInterval(id);
   }, [fetch_, interval, enabled]);
 
-  const stale = data != null && lastOk != null && (Date.now() - lastOk) > interval * 2;
-  return { data, loading, error, stale, refetch };
+  const stale = data != null && lastOk != null && (Date.now() - lastOk) > interval;
+  return { data, loading, error, stale, lastSuccessAt: lastOk, refetch };
 }
 
 // ── Public hooks ───────────────────────────────────────────────

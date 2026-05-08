@@ -1,9 +1,12 @@
 import { BotTrade } from "@/hooks/useBotData";
+import { StaleBadge } from "./StaleBadge";
 
 interface ActiveTradesTableProps {
   trades: BotTrade[];
   maxTrades: number;
   loading: boolean;
+  stale?: boolean;
+  lastSuccessAt?: number | null;
 }
 
 function fmt(n: number) {
@@ -14,15 +17,18 @@ function fmt(n: number) {
   return n.toLocaleString();
 }
 
-export function ActiveTradesTable({ trades, maxTrades, loading }: ActiveTradesTableProps) {
+export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSuccessAt }: ActiveTradesTableProps) {
   return (
     <div className="rounded-xl overflow-hidden"
       style={{ background: "#0a1628", border: "1px solid #1e3a5f" }}>
       <div className="px-4 py-3 flex items-center justify-between"
         style={{ borderBottom: "1px solid #1e3a5f" }}>
-        <h2 className="text-xs font-bold uppercase tracking-widest" style={{ color: "#94a3b8" }}>
-          Active Trades
-        </h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-xs font-bold uppercase tracking-widest" style={{ color: "#94a3b8" }}>
+            Active Trades
+          </h2>
+          {stale && <StaleBadge lastSuccessAt={lastSuccessAt ?? null} />}
+        </div>
         <span className="text-xs px-2 py-0.5 rounded-full font-mono"
           style={{
             background: "rgba(59,130,246,0.15)",
