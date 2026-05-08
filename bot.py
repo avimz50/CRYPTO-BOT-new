@@ -5988,17 +5988,18 @@ def _btc_above_ema20_15m() -> bool:
 def _sol_1h_breakout_above_4h_high() -> tuple[bool, float, float]:
     """
     Breakout Confirmation:
-    מחזיר (breakout:bool, sol_1h_close:float, recent_4h_high:float).
-    breakout=True אם 1H close > highest high של 5 נרות 4H אחרונים שלמים.
+    מחזיר (breakout:bool, sol_1h_close:float, recent_1h_high:float).
+    breakout=True אם 1H close > highest high של 10 נרות 1H אחרונים שלמים.
+    (שונה מ-5×4H ל-10×1H — תגובה מהירה יותר לשינויי טרנד)
     """
     try:
-        df_4h = get_data('SOL/USDT', timeframe='4h', limit=10)
-        df_1h = get_data('SOL/USDT', timeframe='1h', limit=5)
-        # 5 נרות 4H שלמים (לא כולל הנר הנוכחי שעוד מתגבש)
-        recent_4h_high = float(df_4h['high'].iloc[-6:-1].max())
+        df_4h = get_data('SOL/USDT', timeframe='4h', limit=20)
+        df_1h = get_data('SOL/USDT', timeframe='1h', limit=15)
+        # 10 נרות 1H שלמים (לא כולל הנר הנוכחי שעוד מתגבש)
+        recent_1h_high = float(df_1h['high'].iloc[-11:-1].max())
         sol_1h_close   = float(df_1h['close'].iloc[-1])
-        breakout       = sol_1h_close > recent_4h_high
-        return breakout, sol_1h_close, recent_4h_high
+        breakout       = sol_1h_close > recent_1h_high
+        return breakout, sol_1h_close, recent_1h_high
     except Exception:
         return False, 0.0, 0.0
 
@@ -6006,18 +6007,19 @@ def _sol_1h_breakout_above_4h_high() -> tuple[bool, float, float]:
 def _coin_1h_breakout_above_4h_high(symbol: str) -> tuple[bool, float, float, float | None]:
     """
     Generic Breakout Check — כל מטבע.
-    מחזיר (breakout, price_1h, high_4h, rsi_4h).
-    breakout=True אם 1H close > highest high של 5 נרות 4H שלמים אחרונים.
+    מחזיר (breakout, price_1h, high_1h, rsi_4h).
+    breakout=True אם 1H close > highest high של 10 נרות 1H שלמים אחרונים.
+    (שונה מ-5×4H ל-10×1H — תגובה מהירה יותר לשינויי טרנד)
     """
     try:
-        df_4h          = get_data(symbol, timeframe='4h', limit=10)
-        df_1h          = get_data(symbol, timeframe='1h', limit=5)
-        recent_4h_high = float(df_4h['high'].iloc[-6:-1].max())
+        df_4h    = get_data(symbol, timeframe='4h', limit=20)
+        df_1h    = get_data(symbol, timeframe='1h', limit=15)
+        recent_1h_high = float(df_1h['high'].iloc[-11:-1].max())
         price_1h       = float(df_1h['close'].iloc[-1])
-        breakout       = price_1h > recent_4h_high
+        breakout       = price_1h > recent_1h_high
         rsi_s          = ta.rsi(df_4h['close'], length=14)
         rsi            = round(float(rsi_s.iloc[-1]), 1) if (rsi_s is not None and not rsi_s.isna().all()) else None
-        return breakout, price_1h, recent_4h_high, rsi
+        return breakout, price_1h, recent_1h_high, rsi
     except Exception:
         return False, 0.0, 0.0, None
 
@@ -6025,7 +6027,7 @@ def _coin_1h_breakout_above_4h_high(symbol: str) -> tuple[bool, float, float, fl
 # ── Breakout Strategy Constants ───────────────────────────────────────────────
 BREAKOUT_FNG_LONG_MIN         = 0    # FNG מינימום ל-LONG — BTC BULL + כל FNG → קונים!
 BREAKOUT_FNG_SHORT_MAX        = 65   # FNG מקסימום ל-SHORT (מעל = חמדנות, לא שורטים)
-RSI_VETO_SHORT                = 35   # RSI מינימום ל-SHORT (מתחת = oversold, לא שורטים)
+RSI_VETO_SHORT                = 15   # RSI מינימום ל-SHORT (מתחת = oversold; lowered to allow high-momentum sells)
 BREAKOUT_MIN_VOL              = 1.5  # volume ratio מינימלי (150% מהממוצע = 50% מעל)
 RSI_VETO_BREAKOUT_LONG        = 78   # RSI מקסימום ל-LONG בפריצה עם נפח גבוה (≥1.5x)
 BREAKOUT_FNG_REDUCED_MARGIN_MAX  = 20    # FNG ≤ 20 → מרג'ין מוקטן ב-20%
@@ -6037,30 +6039,39 @@ def _coin_breakout_full(symbol: str, direction: str = 'LONG') -> tuple[bool, flo
     """
     Breakout / Breakdown check + Volume ratio — לשימוש Top10 Auto-Loop.
 
-    LONG:  breakout=True אם 1H close > highest HIGH של 5 נרות 4H שלמים.
-    SHORT: breakout=True אם 1H close < lowest  LOW  של 5 נרות 4H שלמים.
+    LONG:  breakout=True אם 1H close > highest HIGH של 10 נרות 1H שלמים.
+    SHORT: breakout=True אם 1H close < lowest  LOW  של 10 נרות 1H שלמים
+           + volume חייב להיות מעל הממוצע (anti-fakeout filter).
 
-    מחזיר (signal, price_1h, h4_level, rsi_4h, vol_ratio).
-      h4_level = 4H High (LONG) / 4H Low (SHORT).
+    שינויים מגרסה קודמת:
+      - הוחלף חלון 5×4H ב-10×1H לתגובה מהירה יותר לשינויי כיוון
+      - SHORT דורש vol_ratio ≥ BREAKOUT_MIN_VOL (anti-fakeout)
+
+    מחזיר (signal, price_1h, level_1h, rsi_4h, vol_ratio).
     """
     try:
         df_4h     = get_data(symbol, timeframe='4h', limit=25)
-        df_1h     = get_data(symbol, timeframe='1h', limit=25)
+        df_1h     = get_data(symbol, timeframe='1h', limit=15)
         price_1h  = float(df_1h['close'].iloc[-1])
 
         if direction == 'LONG':
-            h4_level = float(df_4h['high'].iloc[-6:-1].max())
-            signal   = price_1h > h4_level
+            level_1h = float(df_1h['high'].iloc[-11:-1].max())  # 10 complete 1H candles
+            signal   = price_1h > level_1h
         else:  # SHORT
-            h4_level = float(df_4h['low'].iloc[-6:-1].min())
-            signal   = price_1h < h4_level
+            level_1h = float(df_1h['low'].iloc[-11:-1].min())   # 10 complete 1H candles
+            signal   = price_1h < level_1h
 
         rsi_s     = ta.rsi(df_4h['close'], length=14)
         rsi       = round(float(rsi_s.iloc[-1]), 1) if (rsi_s is not None and not rsi_s.isna().all()) else None
         vol_cur   = float(df_1h['volume'].iloc[-1])
-        vol_avg   = float(df_1h['volume'].iloc[-21:-1].mean())
+        vol_avg   = float(df_1h['volume'].iloc[-11:-1].mean())
         vol_ratio = round(vol_cur / vol_avg, 2) if vol_avg > 0 else 1.0
-        return signal, price_1h, h4_level, rsi, vol_ratio
+
+        # SHORT anti-fakeout: require volume above average to confirm breakdown
+        if direction == 'SHORT' and signal and vol_ratio < BREAKOUT_MIN_VOL:
+            signal = False
+
+        return signal, price_1h, level_1h, rsi, vol_ratio
     except Exception:
         return False, 0.0, 0.0, None, 1.0
 
