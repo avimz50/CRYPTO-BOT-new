@@ -1,6 +1,6 @@
 {
-  "updated": "2026-05-05T22:41:31+03:00",
-  "count": 23,
+  "updated": "2026-05-08T11:09:45+03:00",
+  "count": 24,
   "trades": [
     {
       "symbol": "TRX/USDT",
@@ -733,6 +733,38 @@
       "scalp": false,
       "hunter_mode": false,
       "lesson": "📉 Stagnation — עסקה הפסידה $-0.11 · 399 דקות · Score=88. חזור על ניתוח הכניסה.",
+      "prebreakout_signals": "None"
+    },
+    {
+      "symbol": "ETH/USDT",
+      "direction": "LONG",
+      "timeframe": "Breakout",
+      "entry_price": 2340.02,
+      "close_price": 2280.75,
+      "sl_at_open": 2342.36002,
+      "tp_at_open": 2691.023,
+      "dist_sl_pct": 0.1,
+      "dist_tp_pct": 15.0,
+      "rr_ratio": 150.0,
+      "rr_achieved": 25.33,
+      "score": 95,
+      "rsi": 76.4,
+      "ema200": null,
+      "score_breakdown": "Breakout Strategy LONG: 1H $2340.02 > 4H High `$2337.88` | FNG=47 | RSI=76.4 | Vol×3.0",
+      "strategy": "",
+      "track": "Swing",
+      "slippage_pct": 0.0,
+      "close_reason": "Trailing",
+      "pnl_usd": -3.49,
+      "opened_at": "2026-05-03T23:38:26+03:00",
+      "closed_at": "2026-05-08T11:09:45+03:00",
+      "fng_at_entry": 47,
+      "atr": 9.67388886,
+      "duration_min": 6451.3,
+      "sniper": false,
+      "scalp": false,
+      "hunter_mode": false,
+      "lesson": "⚠️ Early Reversal — Trailing נגע בהפסד ($-3.49). כניסה הייתה מוקדמת מדי או המומנטום התהפך חדות. בדוק Volume Ratio בכניסה.",
       "prebreakout_signals": "None"
     }
   ]
