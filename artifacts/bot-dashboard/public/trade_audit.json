@@ -1,6 +1,6 @@
 {
-  "updated": "2026-05-08T11:09:45+03:00",
-  "count": 24,
+  "updated": "2026-05-10T21:05:43+03:00",
+  "count": 25,
   "trades": [
     {
       "symbol": "TRX/USDT",
@@ -765,6 +765,38 @@
       "scalp": false,
       "hunter_mode": false,
       "lesson": "⚠️ Early Reversal — Trailing נגע בהפסד ($-3.49). כניסה הייתה מוקדמת מדי או המומנטום התהפך חדות. בדוק Volume Ratio בכניסה.",
+      "prebreakout_signals": "None"
+    },
+    {
+      "symbol": "SOL/USDT",
+      "direction": "LONG",
+      "timeframe": "1H",
+      "entry_price": 86.43,
+      "close_price": 96.26,
+      "sl_at_open": 86.51643,
+      "tp_at_open": 91.61580000000001,
+      "dist_sl_pct": 0.1,
+      "dist_tp_pct": 6.0,
+      "rr_ratio": 60.0,
+      "rr_achieved": 113.73,
+      "score": 88,
+      "rsi": null,
+      "ema200": null,
+      "score_breakdown": "Major Watch Breakout — 1H > 4H High ($86.09)",
+      "strategy": "",
+      "track": "Swing",
+      "slippage_pct": 0.0,
+      "close_reason": "TP",
+      "pnl_usd": 4.01,
+      "opened_at": "2026-05-05T22:41:33+03:00",
+      "closed_at": "2026-05-10T21:05:43+03:00",
+      "fng_at_entry": 50,
+      "atr": 1.03716,
+      "duration_min": 7104.2,
+      "sniper": false,
+      "scalp": false,
+      "hunter_mode": false,
+      "lesson": "✅ Setup Confirmed — תזה טכנית הצליחה לאחר 7104 דקות. סבלנות הוכיחה את עצמה. Score=88 היה נכון.",
       "prebreakout_signals": "None"
     }
   ]
