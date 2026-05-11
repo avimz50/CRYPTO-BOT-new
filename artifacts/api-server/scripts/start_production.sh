@@ -30,13 +30,19 @@ if [ -n "$REPLIT_DEPLOYMENT" ]; then
   fi
 
   echo "=== [Bot] Starting: $PYTHON_RUN bot.py ==="
-  $PYTHON_RUN bot.py >> /tmp/bot_stdout.log 2>>/tmp/bot_stderr.log &
+  # Output goes to deployment logs (no file redirect) so we can see errors
+  $PYTHON_RUN bot.py &
   BOT_PID=$!
   echo "=== [Bot] PID=$BOT_PID — background started ==="
 
-  # המתן רגע לוודא שה-Flask עלה לפני שמתחיל Node
-  sleep 3
-  echo "=== [Bot] Flask startup wait done ==="
+  # Wait and verify bot is still alive after 5s
+  sleep 5
+  if kill -0 "$BOT_PID" 2>/dev/null; then
+    echo "=== [Bot] ✅ Still running after 5s (PID=$BOT_PID) ==="
+  else
+    echo "=== [Bot] ❌ CRASHED within 5s — check logs above ==="
+  fi
+
 else
   echo "=== [API] Dev mode — bot.py managed by separate Trading Bot workflow ==="
 fi
