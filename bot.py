@@ -57,7 +57,6 @@ exchange = ccxt.bitget({
 })
 print("[BOOT] ccxt exchange OK.", flush=True)
 
-telebot.apihelper.ENABLE_MIDDLEWARE = True
 bot = telebot.TeleBot(os.environ['TELEGRAM_TOKEN'])
 CHAT_ID = os.environ['CHAT_ID']
 print("[BOOT] Telegram bot OK.", flush=True)
@@ -4961,13 +4960,6 @@ def handle_scan(message):
     threading.Thread(target=run_manual_scan, daemon=True).start()
 
 
-@bot.middleware_handler(update_types=['message', 'callback_query', 'inline_query'])
-def _polling_activity_tracker(bot_instance, update):
-    """Watchdog middleware — stamps the last time any Telegram update was received."""
-    global _polling_last_activity
-    _polling_last_activity = time.time()
-
-
 def _polling_watchdog_loop():
     """
     Watchdog thread — restarts infinity_polling if it silently freezes.
@@ -4975,14 +4967,14 @@ def _polling_watchdog_loop():
     If no update is received for WATCHDOG_IDLE_SEC, we call bot.stop_polling() which
     causes the while-True loop in start_telegram_polling() to restart the session.
     """
-    WATCHDOG_IDLE_SEC = 300   # 5 minutes without any update → restart
+    WATCHDOG_IDLE_SEC = 1800  # 30 min: if polling session hasn't restarted → frozen
     WATCHDOG_CHECK_SEC = 60   # check every minute
     time.sleep(90)            # give the bot time to fully start before first check
     while True:
         time.sleep(WATCHDOG_CHECK_SEC)
         idle = time.time() - _polling_last_activity
         if _polling_last_activity > 0 and idle > WATCHDOG_IDLE_SEC:
-            print(f"[WATCHDOG] ⚠️  No Telegram update for {idle:.0f}s — force-restarting polling...", flush=True)
+            print(f"[WATCHDOG] ⚠️  Polling session frozen for {idle:.0f}s — force-restarting...", flush=True)
             try:
                 bot.stop_polling()
             except Exception as _we:
@@ -5011,11 +5003,14 @@ def start_telegram_polling():
         print(f"[{mode_label}] delete_webhook error (non-fatal): {e}", flush=True)
 
     while True:
+        global _polling_last_activity
+        _polling_last_activity = time.time()   # watchdog: mark session start
         try:
             bot.infinity_polling(
                 timeout=25,
-                long_polling_timeout=20,
+                long_polling_timeout=15,
                 logger_level=None,
+                allowed_updates=['message', 'callback_query'],
             )
         except Exception as e:
             err_str = str(e)
