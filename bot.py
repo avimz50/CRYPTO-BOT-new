@@ -5006,14 +5006,16 @@ def start_telegram_polling():
         global _polling_last_activity
         _polling_last_activity = time.time()   # watchdog: mark session start
         try:
+            print(f"[{mode_label}] infinity_polling starting...", flush=True)
             bot.infinity_polling(
-                timeout=25,
-                long_polling_timeout=15,
+                timeout=20,
+                long_polling_timeout=5,
                 logger_level=None,
-                allowed_updates=['message', 'callback_query'],
             )
+            print(f"[{mode_label}] infinity_polling returned — restarting loop", flush=True)
         except Exception as e:
             err_str = str(e)
+            print(f"[{mode_label}] Polling exception: {err_str[:200]}", flush=True)
             if '409' in err_str:
                 print(f"⚠️  [{mode_label}] Telegram 409 Conflict — ממתין 30s...", flush=True)
                 time.sleep(30)
