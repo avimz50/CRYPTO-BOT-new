@@ -7146,6 +7146,16 @@ def _sigterm_handler(signum, frame):
 signal.signal(signal.SIGTERM, _sigterm_handler)
 
 if __name__ == "__main__":
+    # Early startup marker — written before anything else so we can detect crashes
+    import time as _boot_time
+    _boot_ts = _boot_time.strftime('%Y-%m-%d %H:%M:%S UTC', _boot_time.gmtime())
+    try:
+        with open('/tmp/bot_startup.log', 'w') as _sf:
+            _sf.write(f"bot.py started at {_boot_ts}\nREPLIT_DEPLOYMENT={os.environ.get('REPLIT_DEPLOYMENT','')}\n")
+    except Exception:
+        pass
+    print(f"[BOT] Starting bot.py at {_boot_ts} — DEPLOYMENT={os.environ.get('REPLIT_DEPLOYMENT','')}", flush=True)
+
     try:
         main()
     except Exception as _boot_err:
@@ -7154,7 +7164,7 @@ if __name__ == "__main__":
         print(f"[FATAL] Bot crashed at startup:\n{_crash_msg}", flush=True)
         try:
             with open('/tmp/bot_crash.log', 'w') as _cf:
-                _cf.write(_crash_msg)
+                _cf.write(f"Crashed at {_boot_ts}\n\n{_crash_msg}")
         except Exception:
             pass
         raise

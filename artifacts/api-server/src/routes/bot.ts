@@ -141,6 +141,7 @@ router.get("/trade_audit", async (_req, res) => {
 
 router.get("/debug", async (_req, res) => {
   const data = await fetchFromFlask("/api/debug", "", null);
+  const readTmp = (f: string) => { try { return fs.readFileSync(f, "utf-8").slice(-3000); } catch { return null; } };
   res.json({
     flask_port: BOT_FLASK_PORT,
     flask_response: data,
@@ -150,6 +151,9 @@ router.get("/debug", async (_req, res) => {
     trades_exists: fs.existsSync(path.join(PUBLIC, "active_trades.json")),
     hot_exists:    fs.existsSync(path.join(PUBLIC, "hot_candidates.json")),
     cwd: process.cwd(),
+    bot_crash_log:   readTmp("/tmp/bot_crash.log"),
+    bot_startup_log: readTmp("/tmp/bot_startup.log"),
+    bot_stdout_log:  readTmp("/tmp/bot_stdout.log"),
   });
 });
 
