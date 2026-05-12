@@ -1007,6 +1007,18 @@ def api_fng_settings_post():
         'greed':        GREED_THRESHOLD,
     })
 
+@flask_app.route('/api/tg_hook', methods=['POST'])
+def api_tg_hook():
+    """Telegram webhook endpoint — used in production instead of polling."""
+    try:
+        json_string = flask_request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return flask_jsonify({'ok': True})
+    except Exception as e:
+        print(f"[WEBHOOK] Error processing update: {e}", flush=True)
+        return flask_jsonify({'ok': False}), 200  # always 200 so Telegram doesn't retry
+
 @flask_app.route('/api/slots', methods=['GET'])
 def api_slots_get():
     n_open = len(active_trades)
@@ -4981,53 +4993,94 @@ def _polling_watchdog_loop():
                 print(f"[WATCHDOG] stop_polling error (non-fatal): {_we}", flush=True)
 
 
+def _tg_api_call(token: str, method: str, payload: dict, timeout: int = 12) -> dict:
+    """Direct HTTP call to Telegram API with explicit timeout — never hangs."""
+    import urllib.request as _urlreq, urllib.error as _urlerr, json as _json
+    url = f"https://api.telegram.org/bot{token}/{method}"
+    data = _json.dumps(payload).encode('utf-8')
+    req  = _urlreq.Request(url, data=data, headers={'Content-Type': 'application/json'})
+    try:
+        with _urlreq.urlopen(req, timeout=timeout) as resp:
+            return _json.loads(resp.read().decode('utf-8'))
+    except Exception as e:
+        return {'ok': False, 'error': str(e)}
+
+
 def start_telegram_polling():
     """
-    Polling הטלגרם — פועל הן ב-DEV והן ב-PROD.
-    - PROD: ממתין 30 שניות לסיום instance ישן, מנקה webhook, מתחיל infinity_polling.
-    - DEV:  ממתין 10 שניות (קצר יותר), מנסה לפול. אם PROD רץ במקביל → 409 + retry.
-    טיפול ב-409 Conflict: ממתין 30s + מנקה webhook + מנסה שוב (לנצח).
+    PROD: רושם Telegram Webhook — Telegram שולח updates ל-/api/tg_hook.
+          לא צריך polling; מחסל את בעיית ה-long-polling ב-Replit production.
+    DEV:  infinity_polling רגיל (webhook לא זמין מ-localhost).
     """
     is_deployed = bool(os.environ.get('REPLIT_DEPLOYMENT', ''))
     mode_label  = "PROD" if is_deployed else "DEV"
+    token       = os.environ.get('TELEGRAM_TOKEN', '')
 
-    wait_sec = 30 if is_deployed else 10
-    print(f"[{mode_label}] Polling — ממתין {wait_sec}s לפני התחלה...", flush=True)
-    time.sleep(wait_sec)
+    if is_deployed:
+        # ── PROD: WEBHOOK MODE ──────────────────────────────────────────────
+        print(f"[PROD] Webhook mode — ממתין 35s לסיום boot...", flush=True)
+        time.sleep(35)
 
-    # נקה webhook + pending updates
-    try:
-        bot.delete_webhook(drop_pending_updates=True)
-        print(f"[{mode_label}] Webhook cleared — starting infinity_polling...", flush=True)
-    except Exception as e:
-        print(f"[{mode_label}] delete_webhook error (non-fatal): {e}", flush=True)
+        # בנה את ה-URL מ-REPLIT_DOMAINS (Replit מגדיר אוטומטית בפרודקשן)
+        domains = os.environ.get('REPLIT_DOMAINS', '')
+        if domains:
+            first_domain = domains.split(',')[0].strip()
+            webhook_url = f"https://{first_domain}/api/tg_hook"
+        else:
+            webhook_url = "https://crypto-bot-bymzrkhy.replit.app/api/tg_hook"
+
+        print(f"[PROD] Setting webhook → {webhook_url}", flush=True)
+
+        # מחק webhook קיים
+        r1 = _tg_api_call(token, "deleteWebhook", {"drop_pending_updates": True})
+        print(f"[PROD] deleteWebhook: {r1}", flush=True)
+        time.sleep(2)
+
+        # רשום webhook חדש
+        r2 = _tg_api_call(token, "setWebhook", {
+            "url": webhook_url,
+            "drop_pending_updates": True,
+            "allowed_updates": ["message", "callback_query"],
+        })
+        print(f"[PROD] setWebhook: {r2}", flush=True)
+
+        if r2.get('ok'):
+            print(f"[PROD] ✅ Webhook active — Telegram יישלח updates ל-{webhook_url}", flush=True)
+        else:
+            print(f"[PROD] ❌ setWebhook failed: {r2}", flush=True)
+        return  # no polling loop — updates arrive via /api/tg_hook
+
+    # ── DEV: POLLING MODE ───────────────────────────────────────────────────
+    print(f"[DEV] Polling mode — ממתין 10s...", flush=True)
+    time.sleep(10)
+
+    # נקה webhook קודם (עם timeout מפורש)
+    r = _tg_api_call(token, "deleteWebhook", {"drop_pending_updates": True})
+    print(f"[DEV] deleteWebhook: {r}", flush=True)
 
     while True:
         global _polling_last_activity
-        _polling_last_activity = time.time()   # watchdog: mark session start
+        _polling_last_activity = time.time()
         try:
-            print(f"[{mode_label}] infinity_polling starting...", flush=True)
+            print(f"[DEV] infinity_polling starting...", flush=True)
             bot.infinity_polling(
                 timeout=20,
                 long_polling_timeout=5,
                 logger_level=None,
             )
-            print(f"[{mode_label}] infinity_polling returned — restarting loop", flush=True)
+            print(f"[DEV] infinity_polling returned — restarting loop", flush=True)
         except Exception as e:
             err_str = str(e)
-            print(f"[{mode_label}] Polling exception: {err_str[:200]}", flush=True)
+            print(f"[DEV] Polling exception: {err_str[:200]}", flush=True)
             if '409' in err_str:
-                print(f"⚠️  [{mode_label}] Telegram 409 Conflict — ממתין 30s...", flush=True)
+                print(f"⚠️  [DEV] 409 Conflict — ממתין 30s...", flush=True)
                 time.sleep(30)
-                try:
-                    bot.delete_webhook(drop_pending_updates=True)
-                except Exception:
-                    pass
+                _tg_api_call(token, "deleteWebhook", {"drop_pending_updates": True})
             elif '401' in err_str:
-                print(f"❌  [{mode_label}] Telegram 401 Unauthorized — TELEGRAM_TOKEN שגוי?", flush=True)
+                print(f"❌  [DEV] 401 Unauthorized — TELEGRAM_TOKEN שגוי?", flush=True)
                 time.sleep(60)
             else:
-                print(f"[{mode_label}] Polling error — restart in 5s: {e}", flush=True)
+                print(f"[DEV] Polling error — restart in 5s: {e}", flush=True)
                 time.sleep(5)
 
 # --- לולאת מעקב עסקאות — Thread נפרד ---

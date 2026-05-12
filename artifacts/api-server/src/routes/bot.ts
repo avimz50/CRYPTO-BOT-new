@@ -369,4 +369,25 @@ router.get("/fng", (_req, res) => {
   });
 });
 
+// Telegram webhook — receives Telegram updates in production (webhook mode)
+// Proxies the POST body straight to Flask /api/tg_hook for bot.process_new_updates()
+router.post("/tg_hook", (req, res) => {
+  const body = JSON.stringify(req.body ?? {});
+  const options = {
+    hostname: BOT_FLASK_HOST,
+    port: BOT_FLASK_PNUM,
+    path: "/api/tg_hook",
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+  };
+  const proxyReq = _botHttp.request(options, (r) => {
+    let data = "";
+    r.on("data", (c) => (data += c));
+    r.on("end", () => res.status(r.statusCode ?? 200).json({ ok: true }));
+  });
+  proxyReq.on("error", () => res.status(200).json({ ok: false })); // always 200 so Telegram doesn't retry
+  proxyReq.write(body);
+  proxyReq.end();
+});
+
 export default router;
