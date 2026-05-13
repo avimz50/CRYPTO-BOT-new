@@ -17,6 +17,8 @@ from config import (
     VERBOSE_LOG, MIN_SCORE,
     RSI_VETO_LONG, RSI_VETO_SHORT, EMA_PROXIMITY_PCT, VOL_EMA_BYPASS_MULT,
     FNG_DEFAULTS,
+    MOMENTUM_VOL_RATIO, MOMENTUM_EMA_FAST, MOMENTUM_EMA_MID, MOMENTUM_EMA_SLOW,
+    MOMENTUM_MIN_VOL_SURGE,
 )
 
 # ── Fear & Greed Index — module-level cache (1h TTL) ──────────────────────────
@@ -579,6 +581,130 @@ def detect_rsi_divergence(df, direction: str, lookback: int = 30) -> tuple[int, 
 
     except Exception as e:
         return 0, f"RSI div error: {e}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 3-Filter Momentum Gate
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def momentum_gate(
+    symbol: str,
+    df_15m: pd.DataFrame | None,
+    df_1h:  pd.DataFrame | None,
+    direction: str,
+    volume_usd_24h: float = 0.0,
+    oi_data: dict | None = None,
+) -> tuple[bool, str]:
+    """
+    Hard pre-trade gate — ALL 3 filters must pass for a symbol to reach scoring.
+
+    Filter 1 — Liquidity  : 24h Volume > MOMENTUM_VOL_RATIO × OI Value (USD).
+                             Skipped (soft-pass) when OI data is unavailable.
+    Filter 2 — EMA Align  : EMA9 > EMA21 > EMA50 for LONG (reversed for SHORT)
+                             on the 1H timeframe.
+    Filter 3 — VWAP       : Current 1H close above VWAP (LONG) / below (SHORT).
+                             Calculated manually as cumulative (HLC/3 × Vol) / cumVol.
+                             Skipped (soft-pass) when the series is degenerate.
+
+    Returns: (passed: bool, reason: str)
+    Exceptions inside are caught — any crash yields a soft-pass so the main
+    scan loop is never halted by a gate error.
+    """
+    try:
+        # ── Filter 1: Liquidity — 24h Volume vs Open Interest ────────────────
+        if oi_data is not None:
+            oi_value = (
+                oi_data.get('openInterestValue')
+                or float((oi_data.get('info') or {}).get('size', 0) or 0)
+            )
+            try:
+                oi_value = float(oi_value) if oi_value else 0.0
+            except (TypeError, ValueError):
+                oi_value = 0.0
+
+            if oi_value > 0:
+                ratio = volume_usd_24h / oi_value
+                if ratio < MOMENTUM_VOL_RATIO:
+                    return False, (
+                        f"Filter1 Liquidity ✗ — "
+                        f"Vol/OI={ratio:.1%} < {MOMENTUM_VOL_RATIO:.0%} "
+                        f"(Vol=${volume_usd_24h/1e6:.1f}M  OI=${oi_value/1e6:.1f}M)"
+                    )
+        # OI unavailable → soft-pass Filter 1
+
+        # ── Filter 2: EMA Alignment on 1H ────────────────────────────────────
+        if df_1h is None or len(df_1h) < MOMENTUM_EMA_SLOW + 5:
+            return False, (
+                f"Filter2 EMA ✗ — insufficient 1H bars "
+                f"(need ≥{MOMENTUM_EMA_SLOW + 5}, got {0 if df_1h is None else len(df_1h)})"
+            )
+
+        close_1h = df_1h['close']
+        ema_fast_s = ta.ema(close_1h, length=MOMENTUM_EMA_FAST)
+        ema_mid_s  = ta.ema(close_1h, length=MOMENTUM_EMA_MID)
+        ema_slow_s = ta.ema(close_1h, length=MOMENTUM_EMA_SLOW)
+
+        if ema_fast_s is None or ema_mid_s is None or ema_slow_s is None:
+            return False, "Filter2 EMA ✗ — EMA series returned None"
+
+        ema_f = float(ema_fast_s.iloc[-1])
+        ema_m = float(ema_mid_s.iloc[-1])
+        ema_s = float(ema_slow_s.iloc[-1])
+
+        if any(pd.isna(v) for v in [ema_f, ema_m, ema_s]):
+            return False, "Filter2 EMA ✗ — NaN in EMA values (insufficient history)"
+
+        if direction == 'LONG':
+            aligned = ema_f > ema_m > ema_s
+        else:
+            aligned = ema_f < ema_m < ema_s
+
+        if not aligned:
+            order = '>' if direction == 'LONG' else '<'
+            return False, (
+                f"Filter2 EMA Align ✗ — "
+                f"EMA{MOMENTUM_EMA_FAST}={ema_f:.5g} {order} "
+                f"EMA{MOMENTUM_EMA_MID}={ema_m:.5g} {order} "
+                f"EMA{MOMENTUM_EMA_SLOW}={ema_s:.5g} not met"
+            )
+
+        # ── Filter 3: VWAP (manual calculation from 1H OHLCV) ────────────────
+        try:
+            typical_price = (df_1h['high'] + df_1h['low'] + df_1h['close']) / 3
+            cum_vol       = df_1h['volume'].cumsum()
+            if cum_vol.iloc[-1] <= 0:
+                raise ValueError("zero cumulative volume")
+            vwap_series = (typical_price * df_1h['volume']).cumsum() / cum_vol
+            vwap_v      = float(vwap_series.iloc[-1])
+            price_1h    = float(df_1h['close'].iloc[-1])
+
+            if pd.isna(vwap_v) or vwap_v <= 0:
+                raise ValueError(f"degenerate VWAP={vwap_v}")
+
+            vwap_ok = (price_1h > vwap_v) if direction == 'LONG' else (price_1h < vwap_v)
+            if not vwap_ok:
+                side = 'above' if direction == 'LONG' else 'below'
+                return False, (
+                    f"Filter3 VWAP ✗ — "
+                    f"price={price_1h:.5g} not {side} VWAP={vwap_v:.5g}"
+                )
+        except Exception as _ve:
+            # Soft-pass: degenerate data should not kill the scan
+            if VERBOSE_LOG:
+                print(f"  [MomentumGate] VWAP soft-pass {symbol}: {_ve}")
+
+        # ── All filters passed ────────────────────────────────────────────────
+        return True, (
+            f"Gate ✅  "
+            f"EMA{MOMENTUM_EMA_FAST}={ema_f:.5g} "
+            f"EMA{MOMENTUM_EMA_MID}={ema_m:.5g} "
+            f"EMA{MOMENTUM_EMA_SLOW}={ema_s:.5g}"
+        )
+
+    except Exception as _e:
+        # Fail-safe: unexpected crash → soft-pass so scan loop is never halted
+        print(f"  [MomentumGate] ⚠️ unexpected error for {symbol} — soft-pass: {_e}")
+        return True, f"Gate soft-pass (exception): {_e}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

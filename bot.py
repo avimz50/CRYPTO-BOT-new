@@ -25,6 +25,7 @@ from market_logic import (
     detect_flag, detect_bb_squeeze, detect_volume_buildup,
     detect_rsi_divergence, score_candles,
     calc_risk_position, get_dynamic_sl,
+    momentum_gate,
 )
 
 # ── אזור זמן ישראל — ZoneInfo עובד גם ב-Production ──
@@ -1474,6 +1475,8 @@ def get_data(symbol, timeframe='1h', limit=250):
 # ── Async OHLCV Pre-fetcher ────────────────────────────────────────────────────
 # Cache for async-fetched DataFrames: {(symbol, timeframe): DataFrame}
 _ohlcv_cache: dict = {}
+# Cache for async-fetched Open Interest: {symbol: oi_data_dict}
+_oi_cache: dict = {}
 _async_exchange_instance = None
 
 
@@ -1486,6 +1489,7 @@ async def _get_async_exchange():
             'secret':          os.environ.get('BITGET_SECRET', ''),
             'password':        os.environ.get('BITGET_PW', ''),
             'enableRateLimit': True,
+            'options':         {'defaultType': 'swap'},
         })
     return _async_exchange_instance
 
@@ -1497,37 +1501,68 @@ async def _fetch_ohlcv_async(symbol: str, timeframe: str, limit: int = 250) -> p
     return pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
 
 
+async def _fetch_oi_async(symbol: str) -> dict:
+    """Async fetch of current Open Interest for a single swap-market symbol.
+    Returns the raw ccxt OI dict (keys: openInterest, openInterestValue, ...)
+    or an empty dict on failure — callers must handle missing keys gracefully.
+    """
+    ex = await _get_async_exchange()
+    return await ex.fetch_open_interest(symbol)
+
+
 async def _prefetch_ohlcv(candidates: list, timeframes: list = None):
     """
-    Pre-fetches OHLCV data for all candidates in parallel using asyncio.gather.
-    Results stored in _ohlcv_cache[(symbol, timeframe)].
-    Speeds up _scan_batch significantly by eliminating sequential API latency.
+    Pre-fetches OHLCV data + Open Interest for all candidates in parallel.
+    OHLCV results stored in _ohlcv_cache[(symbol, timeframe)].
+    OI results stored in _oi_cache[symbol].
+    Speeds up _scan_batch by eliminating sequential API latency.
     """
-    global _ohlcv_cache, _async_exchange_instance
+    global _ohlcv_cache, _oi_cache, _async_exchange_instance
     if timeframes is None:
         timeframes = ['4h', '1h', '15m']
 
-    tasks = []
-    keys  = []
+    # ── OHLCV tasks (skip already-cached keys) ────────────────────────────────
+    ohlcv_tasks = []
+    ohlcv_keys  = []
     for c in candidates:
         sym = c['symbol'] if isinstance(c, dict) else c
         for tf in timeframes:
             key = (sym, tf)
             if key not in _ohlcv_cache:
-                tasks.append(_fetch_ohlcv_async(sym, tf, 250))
-                keys.append(key)
+                ohlcv_tasks.append(_fetch_ohlcv_async(sym, tf, 250))
+                ohlcv_keys.append(key)
 
-    if not tasks:
+    # ── OI tasks — always refresh; OI changes between scans ──────────────────
+    oi_tasks = []
+    oi_syms  = []
+    for c in candidates:
+        sym = c['symbol'] if isinstance(c, dict) else c
+        oi_tasks.append(_fetch_oi_async(sym))
+        oi_syms.append(sym)
+
+    all_tasks = ohlcv_tasks + oi_tasks
+    if not all_tasks:
         return
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    ok = 0
-    for key, result in zip(keys, results):
+    all_results = await asyncio.gather(*all_tasks, return_exceptions=True)
+
+    # ── Store OHLCV results ───────────────────────────────────────────────────
+    ohlcv_ok = 0
+    for key, result in zip(ohlcv_keys, all_results[:len(ohlcv_tasks)]):
         if isinstance(result, Exception):
-            print(f"[ASYNC] pre-fetch failed {key}: {result}")
+            print(f"[ASYNC] OHLCV fetch failed {key}: {result}")
         else:
             _ohlcv_cache[key] = result
-            ok += 1
+            ohlcv_ok += 1
+
+    # ── Store OI results ──────────────────────────────────────────────────────
+    oi_ok = 0
+    for sym, result in zip(oi_syms, all_results[len(ohlcv_tasks):]):
+        if isinstance(result, Exception):
+            print(f"[ASYNC] OI fetch failed {sym}: {result}")
+        else:
+            _oi_cache[sym] = result
+            oi_ok += 1
 
     # Close and reset the async exchange to free connections
     try:
@@ -1536,7 +1571,8 @@ async def _prefetch_ohlcv(candidates: list, timeframes: list = None):
             _async_exchange_instance = None
     except Exception:
         pass
-    print(f"[ASYNC] pre-fetched {ok}/{len(tasks)} OHLCV tasks in parallel")
+    print(f"[ASYNC] pre-fetched {ohlcv_ok}/{len(ohlcv_tasks)} OHLCV | "
+          f"{oi_ok}/{len(oi_tasks)} OI tasks in parallel")
 
 
 def get_data_cached(symbol: str, timeframe: str = '1h', limit: int = 250) -> pd.DataFrame:
@@ -5165,9 +5201,10 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                 })
             return 0
 
-    # ── Async OHLCV Pre-fetch — parallel fetch 4H+1H+15m for all candidates ─────
-    global _ohlcv_cache
+    # ── Async OHLCV + OI Pre-fetch — parallel fetch 4H+1H+15m + OI ─────────────
+    global _ohlcv_cache, _oi_cache
     _ohlcv_cache = {}   # clear any stale cache from previous scan
+    _oi_cache    = {}   # clear stale OI data from previous scan
     try:
         asyncio.run(_prefetch_ohlcv(candidates, timeframes=['4h', '1h', '15m']))
     except RuntimeError:
@@ -5213,6 +5250,30 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
             df_4h  = get_data_cached(symbol, timeframe='4h', limit=250)
             df_1h  = get_data_cached(symbol, timeframe='1h', limit=250)
             price  = df_4h['close'].iloc[-1]
+
+            # ── 3-Filter Momentum Gate ────────────────────────────────────────────
+            if MOMENTUM_GATE_ENABLED:
+                _df_15m_gate = get_data_cached(symbol, timeframe='15m', limit=250)
+                _gate_ok, _gate_reason = momentum_gate(
+                    symbol=symbol,
+                    df_15m=_df_15m_gate,
+                    df_1h=df_1h,
+                    direction=direction,
+                    volume_usd_24h=float(candidate.get('volume_usd', 0)),
+                    oi_data=_oi_cache.get(symbol),
+                )
+                if not _gate_ok:
+                    print(f"  [MomentumGate] ❌ {symbol}: {_gate_reason}")
+                    rejected_out.append({
+                        'symbol':     symbol,
+                        'direction':  direction,
+                        'best_score': 0,
+                        'reason':     f'MomentumGate: {_gate_reason}',
+                        'scores':     {'4H': 0, '1H': 0, '15m': 0},
+                    })
+                    continue
+                print(f"  [MomentumGate] ✅ {symbol}: {_gate_reason}")
+            # ─────────────────────────────────────────────────────────────────────
 
             print(f"Scoring {symbol} [{direction}] @ {price:.6g} [4H]")
             score, breakdown, atr = score_symbol(df_4h, df_1h, symbol, direction, fng_v=fng_v_scan)

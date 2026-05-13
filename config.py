@@ -137,6 +137,15 @@ CLIFF_MAX_DURATION_MIN = 30
 MAX_CLIFF_TRADES      = 2
 CLIFF_SCAN_INTERVAL   = 120
 
+# ── 3-Filter Momentum Gate ─────────────────────────────────────────────────────
+MOMENTUM_GATE_ENABLED  = True
+MOMENTUM_VOL_RATIO     = 0.10   # 24h Volume must be > 10% of Open Interest value
+MOMENTUM_EMA_FAST      = 9
+MOMENTUM_EMA_MID       = 21
+MOMENTUM_EMA_SLOW      = 50
+MOMENTUM_MIN_VOL_SURGE = 1.5    # 15m candle volume > 1.5× 20-bar average
+VWAP_TIMEFRAME         = '1h'   # Timeframe used for VWAP calculation
+
 # ── Slow-Movers Blacklist ──────────────────────────────────────────────────────
 SLOW_MOVERS = {'TRX/USDT', 'ADA/USDT'}
 
