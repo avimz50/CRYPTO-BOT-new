@@ -19,6 +19,8 @@ from config import (
     FNG_DEFAULTS,
     MOMENTUM_VOL_RATIO, MOMENTUM_EMA_FAST, MOMENTUM_EMA_MID, MOMENTUM_EMA_SLOW,
     MOMENTUM_MIN_VOL_SURGE,
+    TRADE_RISK_PCT, ROUND_TRIP_FEE_PCT, MIN_NET_PROFIT_USD, MIN_PROFIT_RR,
+    MAX_AUTO_LEVERAGE, MIN_AUTO_LEVERAGE,
 )
 
 # ── Fear & Greed Index — module-level cache (1h TTL) ──────────────────────────
@@ -1005,6 +1007,91 @@ def calc_risk_position(track: str, equity: float, fng_v: int = None) -> tuple:
     margin   = round(max(5.0, min(margin, MARGIN)), 2)
     pos_size = round(margin * leverage, 2)
     return margin, pos_size, leverage, sl_pct, tp1_pct, tp_pct
+
+
+def calculate_position_size(
+    balance: float,
+    risk_pct: float,
+    entry_price: float,
+    stop_loss_price: float,
+    margin_cap: float = 50.0,
+) -> tuple:
+    """
+    Risk-based position sizing: risk exactly risk_pct% of balance per trade.
+    Leverage is derived automatically from the SL distance so the position is
+    correctly sized regardless of how tight or wide the stop is.
+
+        risk_usd = balance × risk_pct / 100
+        sl_pct   = |entry - stop_loss| / entry × 100
+        pos_size = risk_usd / (sl_pct / 100)          ← dollars at risk / sl fraction
+        leverage = clamp(round(pos_size / margin_cap), MIN_AUTO_LEVERAGE, MAX_AUTO_LEVERAGE)
+        margin   = pos_size / leverage
+
+    Returns: (pos_size, margin, leverage, risk_usd)
+    """
+    risk_usd = round(balance * risk_pct / 100, 2)
+    sl_dist  = abs(entry_price - stop_loss_price)
+    if sl_dist <= 0 or entry_price <= 0:
+        return 0.0, 0.0, MIN_AUTO_LEVERAGE, risk_usd
+
+    sl_pct   = sl_dist / entry_price * 100
+    pos_size = risk_usd / (sl_pct / 100)
+
+    raw_lev  = pos_size / margin_cap
+    leverage = int(max(MIN_AUTO_LEVERAGE, min(round(raw_lev), MAX_AUTO_LEVERAGE)))
+    margin   = round(pos_size / leverage, 2)
+    pos_size = round(margin * leverage, 2)
+    return pos_size, margin, leverage, risk_usd
+
+
+def check_trade_viability(
+    pos_size: float,
+    entry_price: float,
+    tp1_price: float,
+    sl_price: float,
+    direction: str,
+    min_net_profit: float = MIN_NET_PROFIT_USD,
+    fee_pct: float = ROUND_TRIP_FEE_PCT,
+    min_rr: float = MIN_PROFIT_RR,
+) -> tuple:
+    """
+    Pre-trade profitability gate — filters trades that don't justify exchange fees
+    or fail the minimum risk-reward requirement.
+
+    Filter A — RR:         gross_profit(TP1) / gross_loss(SL) ≥ min_rr
+    Filter B — Net Profit: gross_profit(TP1) − round_trip_fee ≥ min_net_profit
+
+    Fee model: Bitget taker 0.06% per side → 0.12% round-trip on pos_size.
+
+    Returns: (viable: bool, net_profit_usd: float, rr_ratio: float, reason: str)
+    """
+    tp1_dist = abs(tp1_price - entry_price)
+    sl_dist  = abs(sl_price  - entry_price)
+
+    if sl_dist <= 0 or entry_price <= 0 or pos_size <= 0:
+        return False, 0.0, 0.0, "Invalid trade geometry (zero SL or position)"
+
+    gross_profit = pos_size * (tp1_dist / entry_price)
+    gross_loss   = pos_size * (sl_dist  / entry_price)
+    fee_cost     = pos_size * (fee_pct  / 100)          # round-trip on full notional
+    net_profit   = round(gross_profit - fee_cost, 2)
+    rr_ratio     = round(gross_profit / gross_loss, 2) if gross_loss > 0 else 0.0
+
+    if rr_ratio < min_rr:
+        return (
+            False, net_profit, rr_ratio,
+            f"RR@TP1 {rr_ratio:.2f} < min {min_rr:.1f} "
+            f"(gross_profit=${gross_profit:.2f} / risk=${gross_loss:.2f})",
+        )
+
+    if net_profit < min_net_profit:
+        return (
+            False, net_profit, rr_ratio,
+            f"Net profit ${net_profit:.2f} < min ${min_net_profit:.0f} "
+            f"(fee=${fee_cost:.2f}, gross=${gross_profit:.2f}, pos=${pos_size:.0f})",
+        )
+
+    return True, net_profit, rr_ratio, ""
 
 
 def get_dynamic_sl(symbol: str, price: float, atr: float, fng_v: int) -> float:

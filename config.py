@@ -78,6 +78,14 @@ HUNTER_MIN_RR        = 3.0
 HUNTER_TP1_RR        = 1.0
 WEEKLY_PROFIT_TARGET = 50.0
 
+# ── Risk & Position Sizing Engine ─────────────────────────────────────────────
+TRADE_RISK_PCT       = 1.0    # % of total balance to risk per trade (configurable)
+ROUND_TRIP_FEE_PCT   = 0.12   # Bitget round-trip taker fee: 0.06% entry + 0.06% exit
+MIN_NET_PROFIT_USD   = 15.0   # Minimum net profit at TP1 to justify opening a trade
+MIN_PROFIT_RR        = 1.5    # Minimum RR at TP1 (gross profit / gross loss)
+MAX_AUTO_LEVERAGE    = 20     # Cap on auto-calculated leverage
+MIN_AUTO_LEVERAGE    = 2      # Floor on auto-calculated leverage
+
 # ── Bollinger Band Squeeze ─────────────────────────────────────────────────────
 BB_SQUEEZE_RATIO    = 0.50
 BB_SQUEEZE_LOOKBACK = 20

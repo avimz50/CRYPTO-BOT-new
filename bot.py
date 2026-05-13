@@ -25,6 +25,7 @@ from market_logic import (
     detect_flag, detect_bb_squeeze, detect_volume_buildup,
     detect_rsi_divergence, score_candles,
     calc_risk_position, get_dynamic_sl,
+    calculate_position_size, check_trade_viability,
     momentum_gate,
 )
 
@@ -2120,9 +2121,11 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         )
         print(f"  [HUNTER MODE] {symbol}: {hunter_reason} → RR min={HUNTER_MIN_RR}")
 
-    equity = _get_equity()
-    # calc_risk_position מקבל fng_v — קובע SL/TP1/TP לפי FNG Mode
-    effective_margin, pos_size, leverage, sl_pct, tp1_pct, tp_pct = calc_risk_position('Swing', equity, fng_v=fng_v)
+    equity       = _get_equity()
+    balance_snap = wallet.get('balance', STARTING_BALANCE)
+
+    # ── Get SL/TP percentages from FNG Mode (ignore old margin/pos/lev values) ─
+    _, _, _, sl_pct, tp1_pct, tp_pct = calc_risk_position('Swing', equity, fng_v=fng_v)
 
     # ── SL דינמי — לפי סוג נכס / FNG / ATR ──────────────────────────────────
     dyn_sl = get_dynamic_sl(symbol, price, atr, fng_v)
@@ -2138,32 +2141,14 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     print(f"  [FNG MODE] {fng_mode['emoji']} {fng_mode['name']} (FNG={fng_v}) "
           f"| SL={sl_pct}% TP1={tp1_pct}% TP={tp_pct}% BE={fng_mode['be']}%")
 
-    # Sniper Mode: חצי גודל
-    if sniper_mode:
-        effective_margin = round(effective_margin * SNIPER_MARGIN_MULT, 2)
-        pos_size         = round(effective_margin * leverage, 2)
-
-    # Sentiment adjustments
-    if fng_v >= GREED_THRESHOLD and not sniper_mode:
-        pos_size         = round(pos_size * 0.60)
-        effective_margin = round(pos_size / leverage, 2)
-        print(f"  [SENTIMENT] GREED ({fng_v}) → Swing פוזיציה צומצמה ל-${pos_size}")
-
-    # Hunter Mode: TP1 = 1:1 RR, TP = 1:3 RR (מבטל FNG Mode)
+    # Hunter Mode: TP1 = 1:1 RR, TP = 1:3 RR — adjust % before price computation
     if hunter:
         tp1_pct = round(sl_pct * HUNTER_TP1_RR, 2)         # TP1 = SL distance (1:1)
         tp_pct  = round(sl_pct * HUNTER_MIN_RR, 2)          # TP  = 3 × SL distance (1:3)
         print(f"  [HUNTER] Swing TP1={tp1_pct}% TP={tp_pct}% (SL={sl_pct}%)")
 
-    # ── בדיקת יתרה ─────────────────────────────────────────────────────────
-    if wallet.get('balance', STARTING_BALANCE) < effective_margin:
-        print(f"WALLET: insufficient balance (${wallet.get('balance', 0):.2f}) — skipping {symbol}")
-        send_msg(f"⚠️ *יתרה נמוכה* — אין מספיק להפקדת מרג'ין\nנדרש: ${effective_margin:.0f} | יש: ${wallet.get('balance', 0):.2f}")
-        return
-
-    # ── SL / TP / BE — Swing Track (FNG Mode) ──────────────────────────────
-    be_pct = fng_mode['be']   # דינמי לפי FNG: Conservative=1% … Moon=5%
-
+    # ── SL / TP / BE price levels — computed from % BEFORE position sizing ────
+    be_pct   = fng_mode['be']   # דינמי לפי FNG: Conservative=1% … Moon=5%
     sl_dist  = price * sl_pct  / 100
     tp_dist  = price * tp_pct  / 100
     tp1_dist = price * tp1_pct / 100
@@ -2180,33 +2165,81 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         be_price  = price - be_dist
         tp1_price = price - tp1_dist
 
-    # ── בדיקת RR (מינימום 1:2 רגיל / 1:3 ב-Hunter Mode) ────────────────────
-    est_profit_tp = round(abs(tp_price  - price) / price * pos_size, 2)
-    est_loss_sl   = round(abs(sl_price  - price) / price * pos_size, 2)
-    rr_ratio      = round(est_profit_tp / est_loss_sl, 2) if est_loss_sl > 0 else 0
+    # ── Dynamic Position Sizing — risk TRADE_RISK_PCT% of balance on actual SL ─
+    pos_size, effective_margin, leverage, risk_usd = calculate_position_size(
+        balance=balance_snap,
+        risk_pct=TRADE_RISK_PCT,
+        entry_price=price,
+        stop_loss_price=sl_price,
+        margin_cap=MARGIN,
+    )
+    print(f"  [RiskSizing] balance=${balance_snap:.2f} | risk={TRADE_RISK_PCT}% = ${risk_usd:.2f} | "
+          f"pos=${pos_size:.2f} | margin=${effective_margin:.2f} | {leverage}x | SL={sl_pct:.2f}%")
 
-    # Hunter מחמיר תמיד 1:3 | אחרת — RR-min דינמי לפי FNG Mode
-    required_rr = HUNTER_MIN_RR if hunter else fng_mode['min_rr']
+    # Size adjustments: Sniper (half-size) and Sentiment (60% in greed)
+    if sniper_mode:
+        pos_size         = round(pos_size         * SNIPER_MARGIN_MULT, 2)
+        effective_margin = round(effective_margin  * SNIPER_MARGIN_MULT, 2)
+        risk_usd         = round(risk_usd          * SNIPER_MARGIN_MULT, 2)
+        print(f"  [SNIPER] Half-size → pos=${pos_size:.2f} margin=${effective_margin:.2f}")
 
-    if rr_ratio < required_rr:
+    if fng_v >= GREED_THRESHOLD and not sniper_mode:
+        pos_size         = round(pos_size * 0.60, 2)
+        effective_margin = round(pos_size / leverage, 2)
+        risk_usd         = round(risk_usd * 0.60, 2)
+        print(f"  [SENTIMENT] GREED ({fng_v}) → Swing פוזיציה צומצמה ל-${pos_size:.2f}")
+
+    # ── Wallet balance check ──────────────────────────────────────────────────
+    if balance_snap < effective_margin:
+        print(f"WALLET: insufficient balance (${balance_snap:.2f}) — skipping {symbol}")
+        send_msg(f"⚠️ *יתרה נמוכה* — אין מספיק להפקדת מרג'ין\nנדרש: ${effective_margin:.0f} | יש: ${balance_snap:.2f}")
+        return
+
+    # ── Profitability Gate: Net Profit at TP1 after round-trip fees ──────────
+    trade_ok, net_profit_usd, rr_ratio, veto_reason = check_trade_viability(
+        pos_size=pos_size,
+        entry_price=price,
+        tp1_price=tp1_price,
+        sl_price=sl_price,
+        direction=direction,
+        min_net_profit=MIN_NET_PROFIT_USD,
+        fee_pct=ROUND_TRIP_FEE_PCT,
+        min_rr=MIN_PROFIT_RR,
+    )
+    if not trade_ok:
+        print(f"[VIABILITY] ❌ {symbol} {direction} — {veto_reason}")
+        send_msg(
+            f"⚠️ *Trade Rejected — {symbol.replace('/USDT','')}*\n\n"
+            f"🚫 _{veto_reason}_\n"
+            f"📐 Pos\\=${pos_size:.0f} \\| SL\\={sl_pct:.1f}% \\| TP1\\={tp1_pct:.1f}%"
+        )
+        return
+
+    # ── Hunter / FNG full-TP RR check (hard guard on final TP, not TP1) ──────
+    est_profit_tp = round(abs(tp_price - price) / price * pos_size, 2)
+    est_loss_sl   = round(abs(sl_price - price) / price * pos_size, 2)
+    rr_full       = round(est_profit_tp / est_loss_sl, 2) if est_loss_sl > 0 else 0
+    required_rr   = HUNTER_MIN_RR if hunter else fng_mode['min_rr']
+
+    if rr_full < required_rr:
         _rr_mode_label = '(Hunter)' if hunter else f'({fng_mode["name"]})'
-        print(f"[SWING] RR={rr_ratio:.2f} < {required_rr} {_rr_mode_label} — {symbol} נדחה")
+        print(f"[SWING] RR_full={rr_full:.2f} < {required_rr} {_rr_mode_label} — {symbol} נדחה")
         if hunter:
             send_msg(
                 f"❌ *Trade Rejected: {symbol.replace('/USDT','')}*\n"
-                f"Current RR: 1:{rr_ratio} | Min requirement in tense market: 1:{int(HUNTER_MIN_RR)}\n"
+                f"Full-TP RR: 1:{rr_full} | Min (Hunter): 1:{int(HUNTER_MIN_RR)}\n"
                 f"🎯 _Hunter Mode Active — Precision entries only_"
             )
         else:
             send_msg(
                 f"⚠️ *RR נמוך — {symbol.replace('/USDT','')}*\n"
-                f"RR: {rr_ratio:.2f} | מינימום: {required_rr:.0f}\n"
+                f"RR: {rr_full:.2f} | מינימום: {required_rr:.0f}\n"
                 f"_העסקה נדחתה — יחס סיכון/תשואה לא מספיק_"
             )
         return
 
-    max_risk_usd = round(pos_size * sl_pct / 100, 2)
-    risk_pct_eq  = round(max_risk_usd / equity * 100, 2)
+    max_risk_usd = round(risk_usd, 2)
+    risk_pct_eq  = round(risk_usd / equity * 100, 2)
 
     # Hunter Mode: TP1 hit → auto-BE (flag stored in trade)
     hunter_be_on_tp1 = hunter   # בעסקות Hunter, TP1 מפעיל BE אוטומטית
@@ -2270,6 +2303,9 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         'ob_low':          ob_low,
         'ob_type':         ('Bullish' if direction == 'LONG' else 'Bearish') if ob_found else None,
     }
+    # ── Risk/Reward Summary Log — printed before every opened trade ──────────
+    print(f"  [Trade] Risking ${risk_usd:.2f} to make ${net_profit_usd:.2f}. "
+          f"Expected Net Profit: ${net_profit_usd:.2f}. RR (TP1): 1:{rr_ratio:.2f}")
     place_order(trade, effective_margin)
 
     dir_header = get_direction_header(direction)
@@ -2321,7 +2357,9 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     chart_buf = generate_chart(df_3h, symbol, price, sl_price, tp_price, direction) \
                 if df_3h is not None else None
     send_chart_alert(chart_buf, symbol, msg)
-    print(f"[SWING] Trade opened: {symbol} {direction} @ {price:.6g} | SL={sl_pct}% TP={tp_pct}% | {leverage}x | margin=${effective_margin} | Risk=${max_risk_usd} ({risk_pct_eq}%)")
+    print(f"[SWING] Trade opened: {symbol} {direction} @ {price:.6g} | SL={sl_pct}% TP={tp_pct}% | "
+          f"{leverage}x | margin=${effective_margin:.2f} | Risk=${max_risk_usd:.2f} ({risk_pct_eq:.2f}%) | "
+          f"NetProfit@TP1=${net_profit_usd:.2f}")
 
 
 def track_trades():
@@ -5215,9 +5253,9 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
 
     found = 0
     for candidate in candidates:
-        if len(active_trades) >= MAX_TRADES:
-            print(f"Max trades ({MAX_TRADES}) reached — skipping rest of batch")
-            break
+        at_capacity = (len(active_trades) >= MAX_TRADES)
+        if at_capacity:
+            print(f"[Slots] 🔒 {len(active_trades)}/{MAX_TRADES} slots full — scanning for priority comparison")
         symbol = candidate['symbol']
 
         # ── Slow-Movers Blacklist — Adaptive Sniper ignores low-momentum coins ──
@@ -5363,6 +5401,24 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                         chosen_df = df_15m
                         price     = df_15m['close'].iloc[-1]
                         tf_reason = f'Scalp Entry ב-15m (4H={score_4h}, 1H={score_1h} < {MIN_SCORE})'
+
+            # ── Priority Score Logging — compare with open trades when slots full ─
+            if at_capacity:
+                if score >= MIN_SCORE and active_trades:
+                    _lowest = min(active_trades, key=lambda t: t.get('score', 0))
+                    _delta  = score - _lowest.get('score', 0)
+                    if _delta > 0:
+                        print(
+                            f"[Priority] 📊 {symbol} {direction} score={score} "
+                            f"> open {_lowest['symbol']} score={_lowest.get('score', 0)} "
+                            f"(Δ+{_delta}) — {MAX_TRADES}/{MAX_TRADES} slots full, would replace"
+                        )
+                    else:
+                        print(
+                            f"[Priority] ➡️  {symbol} {direction} score={score} ≤ lowest open "
+                            f"{_lowest['symbol']} score={_lowest.get('score', 0)} — no swap needed"
+                        )
+                continue  # never open new trades when at capacity
 
             if score >= MIN_SCORE:
                 # ── Extreme Fear: LONG מותנה — Adaptive Sniper ────────────────────
