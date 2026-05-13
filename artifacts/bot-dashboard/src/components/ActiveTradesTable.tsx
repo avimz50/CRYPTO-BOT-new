@@ -79,8 +79,9 @@ export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSucce
                 const pnlUsd = t.tp1_triggered
                   ? (t.tp1_pnl ?? 0) + posSize * pnlPct / 100
                   : posSize * pnlPct / 100;
-                const estProfit = t.tp && t.entry
-                  ? Math.abs(t.tp - t.entry) / t.entry * posSize
+                const tp1Price = (t as any).tp1 ?? t.tp;
+                const estProfit = tp1Price && t.entry
+                  ? Math.abs(tp1Price - t.entry) / t.entry * posSize
                   : null;
                 const leverage = (t.leverage ?? Math.round(posSize / 50)) || 10;
                 const amount = Math.round(posSize / leverage);

@@ -2083,16 +2083,18 @@ def track_badge(track: str) -> str:
 def open_demo_trade(symbol, price, reason, df_3h=None,
                     direction='LONG', score=0, atr=0, timeframe='4H', tf_reason='',
                     rsi=None, ema200=None, fng_v=None, sniper_mode=False,
-                    ob_found=None, ob_high=None, ob_low=None, df_ob=None):
+                    ob_found=None, ob_high=None, ob_low=None, df_ob=None,
+                    df_1h=None):
     """
     פותח עסקת דמו — 🌊 מסלול Swing.
-    SL=6% | TP1=6% | TP=12% (RR 1:2) | BE=+4% (אחרי מבנה שוק ברור)
-    מינוף 3x | גודל פוזיציה לפי 1.5% סיכון מהון
+    ATR-based targets (1H): SL = 2×ATR | TP1 = 1.5×ATR (→ BE auto) | TP2 = 3×ATR
+    Dynamic position sizing: risk TRADE_RISK_PCT% of balance per trade.
     timeframe: '4H' / '1H' — גרף הכניסה שנבחר אדפטיבית
     fng_v: ערך FNG שכבר חושב ב-scan (כדי לא לשאול שוב)
     sniper_mode: True → Half-Size Entry (50% מגודל הפוזיציה הרגיל)
     ob_found/ob_high/ob_low: pre-computed OB zone (pass from scan to align with scoring df)
     df_ob: fallback df for OB detection if ob_found not pre-supplied (uses df_3h if None)
+    df_1h: 1H OHLCV dataframe used to compute ATR-based targets
     """
     track = 'Swing'
 
@@ -2141,18 +2143,39 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     print(f"  [FNG MODE] {fng_mode['emoji']} {fng_mode['name']} (FNG={fng_v}) "
           f"| SL={sl_pct}% TP1={tp1_pct}% TP={tp_pct}% BE={fng_mode['be']}%")
 
-    # Hunter Mode: TP1 = 1:1 RR, TP = 1:3 RR — adjust % before price computation
-    if hunter:
-        tp1_pct = round(sl_pct * HUNTER_TP1_RR, 2)         # TP1 = SL distance (1:1)
-        tp_pct  = round(sl_pct * HUNTER_MIN_RR, 2)          # TP  = 3 × SL distance (1:3)
+    # ── ATR-Based Dynamic Targets (1H timeframe) ─────────────────────────────
+    atr_1h = 0.0
+    if df_1h is not None and USE_ATR_TARGETS:
+        try:
+            _atr_s = ta.atr(df_1h['high'], df_1h['low'], df_1h['close'], length=ATR_PERIOD)
+            if _atr_s is not None and len(_atr_s.dropna()) > 0:
+                _atr_v = float(_atr_s.dropna().iloc[-1])
+                if _atr_v > 0:
+                    atr_1h   = _atr_v
+                    sl_dist  = ATR_SL_MULT  * atr_1h
+                    tp1_dist = ATR_TP1_MULT * atr_1h
+                    tp_dist  = ATR_TP2_MULT * atr_1h
+                    sl_pct   = round(sl_dist  / price * 100, 4)
+                    tp1_pct  = round(tp1_dist / price * 100, 4)
+                    tp_pct   = round(tp_dist  / price * 100, 4)
+                    print(f"  [ATR Targets] 1H ATR={atr_1h:.6g} | "
+                          f"SL={sl_pct:.2f}% TP1={tp1_pct:.2f}% TP2={tp_pct:.2f}%")
+        except Exception as _atr_e:
+            print(f"  [ATR Targets] fallback to FNG%: {_atr_e}")
+
+    # Hunter Mode — RR multiples only when ATR is unavailable
+    if hunter and atr_1h == 0.0:
+        tp1_pct = round(sl_pct * HUNTER_TP1_RR, 2)
+        tp_pct  = round(sl_pct * HUNTER_MIN_RR, 2)
         print(f"  [HUNTER] Swing TP1={tp1_pct}% TP={tp_pct}% (SL={sl_pct}%)")
 
-    # ── SL / TP / BE price levels — computed from % BEFORE position sizing ────
-    be_pct   = fng_mode['be']   # דינמי לפי FNG: Conservative=1% … Moon=5%
-    sl_dist  = price * sl_pct  / 100
-    tp_dist  = price * tp_pct  / 100
-    tp1_dist = price * tp1_pct / 100
-    be_dist  = price * be_pct  / 100
+    # ── SL / TP / BE price levels ─────────────────────────────────────────────
+    be_pct = fng_mode['be']
+    if atr_1h == 0.0:                # fallback: compute distances from %
+        sl_dist  = price * sl_pct  / 100
+        tp_dist  = price * tp_pct  / 100
+        tp1_dist = price * tp1_pct / 100
+    be_dist = price * be_pct / 100
 
     if direction == 'LONG':
         sl_price  = price - sl_dist
@@ -2216,8 +2239,9 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         return
 
     # ── Hunter / FNG full-TP RR check (hard guard on final TP, not TP1) ──────
-    est_profit_tp = round(abs(tp_price - price) / price * pos_size, 2)
-    est_loss_sl   = round(abs(sl_price - price) / price * pos_size, 2)
+    est_profit_tp  = round(abs(tp_price  - price) / price * pos_size, 2)
+    est_profit_tp1 = round(abs(tp1_price - price) / price * pos_size, 2)
+    est_loss_sl    = round(abs(sl_price  - price) / price * pos_size, 2)
     rr_full       = round(est_profit_tp / est_loss_sl, 2) if est_loss_sl > 0 else 0
     required_rr   = HUNTER_MIN_RR if hunter else fng_mode['min_rr']
 
@@ -2282,6 +2306,7 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         'trailing_sl':          None,
         'score':                score,
         'atr':                  round(atr, 6),
+        'atr_1h':               round(atr_1h, 8),
         'timeframe':       timeframe,
         'rsi':             round(rsi, 2) if rsi is not None else None,
         'ema200':          round(ema200, 6) if ema200 is not None else None,
@@ -2330,18 +2355,19 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     free_cash    = round(wallet.get('balance', 0) - effective_margin, 2)
     asset_class  = "Major" if ticker_base in MAJOR_COINS else "Altcoin"
 
+    atr_tag = f" | 📐 ATR={atr_1h:.4g}" if atr_1h > 0 else ""
     msg = (
         f"*{dir_icon}  |  {symbol_spaced}*\n"
         f"{hunter_line}"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"📊 *ניקוד:* `{score}/100` | {sniper_tag}{fng_mode['emoji']} {fng_mode['name']} | {asset_class}\n"
+        f"📊 *ניקוד:* `{score}/100` | {sniper_tag}{fng_mode['emoji']} {fng_mode['name']} | {asset_class}{atr_tag}\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"💵 כניסה: `{price:.6g}`\n"
-        f"🛑 SL:    `{sl_price:.6g}` (-{sl_pct}%)\n"
-        f"🎯 TP:    `{tp_price:.6g}` (+{tp_pct}%)\n"
-        f"🔒 BE:    `{be_price:.6g}` (+{be_pct}%)\n"
+        f"💵 כניסה:  `{price:.6g}`\n"
+        f"🛑 SL:     `{sl_price:.6g}` (-{sl_pct:.2f}%)\n"
+        f"🎯 TP1:    `{tp1_price:.6g}` (+{tp1_pct:.2f}%) → 🔒 BE auto\n"
+        f"🎯 TP2:    `{tp_price:.6g}` (+{tp_pct:.2f}%)\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"🛡️ סיכון: `${est_loss_sl}` | 💰 רווח צפוי: `${est_profit_tp}`\n"
+        f"🛡️ סיכון: `${est_loss_sl}` | 💰 רווח@TP1: `${est_profit_tp1}` | @TP2: `${est_profit_tp}`\n"
         f"💵 פנוי בארנק: `${free_cash:.2f}`"
     )
 
@@ -2800,27 +2826,18 @@ def track_trades():
                         trade['trailing_sl'] = current_price * 1.02
                     daily_stats['total_pnl'] += tp1_pnl
 
-                    # 🎯 Hunter Mode: TP1 hit → auto-move SL to Break Even immediately
-                    if trade.get('hunter_be_on_tp1'):
-                        trade['sl']          = entry
-                        trade['be_triggered'] = True
-                        send_msg(
-                            f"🎯 *TP1 הושג — {sym}!* [Hunter Mode]\n"
-                            f"מחיר: `{current_price:.6g}` | {direction} | {tbadge}\n"
-                            f"50% נסגרו · ✅ *Profit at TP1: +${tp1_pnl}* (+{tp1_pct_r}%)\n"
-                            f"🔒 *SL הועבר ל-BE אוטומטית!* `{entry:.6g}` — הון מוגן\n"
-                            f"🎯 _Precision Hunter: שאר 50% בטריילינג לכיוון 1:3_\n"
-                            f"📈 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
-                        )
-                    else:
-                        send_msg(
-                            f"🎯 *TP1 הושג — {sym}!*\n"
-                            f"מחיר: `{current_price:.6g}` | {direction} | {tbadge}\n"
-                            f"50% נסגרו · ✅ *Profit at TP1: +${tp1_pnl}* (+{tp1_pct_r}%)\n"
-                            f"💼 {t_leverage}x · שאר 50% בטריילינג\n"
-                            f"📍 Trailing SL: `{trade['trailing_sl']:.6g}`\n"
-                            f"📈 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
-                        )
+                    # TP1 hit → always move SL to Break Even (entry price)
+                    trade['sl']           = entry
+                    trade['be_triggered'] = True
+                    hunter_label = " [Hunter Mode]" if trade.get('hunter_be_on_tp1') else ""
+                    send_msg(
+                        f"🎯 *TP1 הושג — {sym}!*{hunter_label}\n"
+                        f"מחיר: `{current_price:.6g}` | {direction} | {tbadge}\n"
+                        f"50% נסגרו · ✅ *Profit at TP1: +${tp1_pnl}* (+{tp1_pct_r}%)\n"
+                        f"🔒 *SL הועבר ל-BE אוטומטית!* `{entry:.6g}` — הון מוגן\n"
+                        f"📍 Trailing SL: `{trade['trailing_sl']:.6g}` | שאר 50% ממשיכים ל-TP2\n"
+                        f"📈 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
+                    )
                     continue
 
                 # 3. SL נגע
@@ -5523,6 +5540,7 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                     rsi=_last_rsi, ema200=_last_ema,
                     fng_v=fng_v_scan,
                     ob_found=_ob_f, ob_high=_ob_h, ob_low=_ob_l,
+                    df_1h=df_1h,
                 )
                 found += 1
             else:

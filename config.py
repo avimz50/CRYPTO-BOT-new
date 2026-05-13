@@ -86,6 +86,13 @@ MIN_PROFIT_RR        = 1.5    # Minimum RR at TP1 (gross profit / gross loss)
 MAX_AUTO_LEVERAGE    = 20     # Cap on auto-calculated leverage
 MIN_AUTO_LEVERAGE    = 2      # Floor on auto-calculated leverage
 
+# ── ATR-Based Dynamic Targets ──────────────────────────────────────────────────
+USE_ATR_TARGETS = True   # Use 1H ATR to set SL/TP1/TP2 instead of fixed %
+ATR_PERIOD      = 14     # ATR calculation period (1H candles)
+ATR_SL_MULT     = 2.0    # SL = Entry ∓ (ATR_SL_MULT  × ATR)
+ATR_TP1_MULT    = 1.5    # TP1 = Entry ± (ATR_TP1_MULT × ATR)  → always triggers BE
+ATR_TP2_MULT    = 3.0    # TP2 = Entry ± (ATR_TP2_MULT × ATR)
+
 # ── Bollinger Band Squeeze ─────────────────────────────────────────────────────
 BB_SQUEEZE_RATIO    = 0.50
 BB_SQUEEZE_LOOKBACK = 20
