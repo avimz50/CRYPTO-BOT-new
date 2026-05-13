@@ -3449,21 +3449,36 @@ def handle_update(message):
                 except ValueError:
                     pass
 
-        # ולידציה: SL < מחיר כניסה < TP
-        entry = trade['entry']
-        if new_sl >= entry:
-            send_msg(f"⚠️ SL ({new_sl}) חייב להיות *מתחת* למחיר הכניסה ({entry:.4f})")
-            return
-        if new_tp <= entry:
-            send_msg(f"⚠️ TP ({new_tp}) חייב להיות *מעל* למחיר הכניסה ({entry:.4f})")
-            return
+        # ולידציה: תלוי כיוון (LONG / SHORT)
+        entry     = trade['entry']
+        direction = trade.get('direction', 'LONG').upper()
+        is_short  = direction == 'SHORT'
+
+        if is_short:
+            if not (new_tp < entry):
+                send_msg(f"⚠️ בשורט, TP ({new_tp}) חייב להיות *מתחת* למחיר הכניסה ({entry:.4f})")
+                return
+            if not (new_sl > entry):
+                send_msg(f"⚠️ בשורט, SL ({new_sl}) חייב להיות *מעל* למחיר הכניסה ({entry:.4f})")
+                return
+        else:  # LONG
+            if not (new_tp > entry):
+                send_msg(f"⚠️ בלונג, TP ({new_tp}) חייב להיות *מעל* למחיר הכניסה ({entry:.4f})")
+                return
+            if not (new_sl < entry):
+                send_msg(f"⚠️ בלונג, SL ({new_sl}) חייב להיות *מתחת* למחיר הכניסה ({entry:.4f})")
+                return
 
         # עדכון
         old_sl, old_tp = trade['sl'], trade['tp']
         trade['sl'] = new_sl
         trade['tp'] = new_tp
-        trade['sl_pct'] = round((entry - new_sl) / entry * 100, 2)
-        trade['tp_pct'] = round((new_tp - entry) / entry * 100, 2)
+        if is_short:
+            trade['sl_pct'] = round((new_sl - entry) / entry * 100, 2)
+            trade['tp_pct'] = round((entry - new_tp) / entry * 100, 2)
+        else:
+            trade['sl_pct'] = round((entry - new_sl) / entry * 100, 2)
+            trade['tp_pct'] = round((new_tp - entry) / entry * 100, 2)
 
         sl_pct    = trade['sl_pct']
         tp_pct    = trade['tp_pct']
