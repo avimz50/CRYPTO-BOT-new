@@ -846,16 +846,23 @@ def api_status():
 
 @flask_app.route('/api/sync', methods=['POST'])
 def api_sync():
-    """Dashboard SYNC button — שולח /status לטלגרם. ללא אימות (internal only)."""
-    try:
-        _get_unrealized_pnl()
-    except Exception:
-        pass
-    class _DummyMsg:
-        text = '/status'
+    """Dashboard SYNC button — שולח /status לטלגרם. ללא אימות (internal only).
+    NOTE: handle_status runs in a background thread to avoid blocking the Flask server.
+    _get_unrealized_pnl() is called INSIDE the thread, not in the request handler.
+    """
+    def _do_sync():
+        try:
+            _get_unrealized_pnl()   # רענון מחירים — בתוך thread נפרד, לא חוסם Flask
+        except Exception:
+            pass
+        class _DummyMsg:
+            text = '/status'
+        handle_status(_DummyMsg())
+
     import threading as _th
-    _th.Thread(target=handle_status, args=(_DummyMsg(),), daemon=True).start()
-    return flask_jsonify({'ok': True, 'trades': len(active_trades), 'sent': True})
+    _th.Thread(target=_do_sync, daemon=True).start()
+    n = len(active_trades)
+    return flask_jsonify({'ok': True, 'trades': n, 'sent': True})
 
 
 @flask_app.route('/api/fng_settings', methods=['GET'])

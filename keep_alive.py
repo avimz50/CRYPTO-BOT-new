@@ -82,7 +82,10 @@ def api_fng():
 def run():
     # Use BOT_PORT so Flask never conflicts with the Express api-server (PORT=8080)
     port = int(os.environ.get('BOT_PORT', 8091))
-    app.run(host='0.0.0.0', port=port)
+    # threaded=True: each request gets its own thread — prevents one slow handler
+    # from blocking the entire server (critical for /api/sync, /api/tg_hook etc.)
+    # use_reloader=False: reloader spawns child processes which breaks daemon threads
+    app.run(host='0.0.0.0', port=port, threaded=True, use_reloader=False)
 
 def keep_alive():
     t = Thread(target=run)
