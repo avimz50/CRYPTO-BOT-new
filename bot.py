@@ -844,6 +844,20 @@ def api_status():
         'updated':       now_il().strftime('%H:%M:%S'),
     })
 
+@flask_app.route('/api/sync', methods=['POST'])
+def api_sync():
+    """Dashboard SYNC button — שולח /status לטלגרם. ללא אימות (internal only)."""
+    try:
+        _get_unrealized_pnl()
+    except Exception:
+        pass
+    class _DummyMsg:
+        text = '/status'
+    import threading as _th
+    _th.Thread(target=handle_status, args=(_DummyMsg(),), daemon=True).start()
+    return flask_jsonify({'ok': True, 'trades': len(active_trades), 'sent': True})
+
+
 @flask_app.route('/api/fng_settings', methods=['GET'])
 def api_fng_settings_get():
     return flask_jsonify({

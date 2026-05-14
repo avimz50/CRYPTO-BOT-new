@@ -235,13 +235,13 @@ export function useBotLog(enabled: boolean) { return usePoll<BotLogData>("/api/b
 
 // ── Actions ────────────────────────────────────────────────────
 
-/** POST /api/make {action:"sync_telegram"} — forwarded to Flask bot */
+/** POST /api/sync — triggers /status message to Telegram from the bot */
 export async function syncTelegram(): Promise<boolean> {
   try {
-    const r = await fetch("/api/make", {
+    const r = await fetch("/api/sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "sync_telegram" }),
+      body: JSON.stringify({}),
     });
     return r.ok;
   } catch { return false; }

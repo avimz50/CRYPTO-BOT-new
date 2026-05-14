@@ -220,6 +220,31 @@ router.get("/audit", (_req, res) => {
   }
 });
 
+// Sync — dashboard SYNC button → Flask /api/sync → sends /status to Telegram
+router.post("/sync", (req, res) => {
+  const body = JSON.stringify(req.body ?? {});
+  const options = {
+    hostname: BOT_FLASK_HOST,
+    port: BOT_FLASK_PNUM,
+    path: "/api/sync",
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+    timeout: 8000,
+  };
+  const proxyReq = _botHttp.request(options, (r) => {
+    let data = "";
+    r.on("data", (c) => (data += c));
+    r.on("end", () => {
+      try { res.status(r.statusCode ?? 200).json(JSON.parse(data)); }
+      catch { res.status(500).json({ error: "invalid response from bot" }); }
+    });
+  });
+  proxyReq.on("error", () => res.status(503).json({ ok: false, error: "הבוט לא מחובר" }));
+  proxyReq.on("timeout", () => { proxyReq.destroy(); res.status(504).json({ ok: false, error: "timeout" }); });
+  proxyReq.write(body);
+  proxyReq.end();
+});
+
 // Slots — proxy GET/POST to Flask bot
 router.get("/slots", async (_req, res) => {
   const data = await fetchFromFlask("/api/slots", "", { max_trades: 5, active_trades: 0, open_slots: 5, min: 1, max: 5 });
