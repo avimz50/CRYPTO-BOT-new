@@ -79,10 +79,13 @@ HUNTER_TP1_RR        = 1.0
 WEEKLY_PROFIT_TARGET = 50.0
 
 # ── Risk & Position Sizing Engine ─────────────────────────────────────────────
-TRADE_RISK_PCT       = 1.0    # % of total balance to risk per trade (configurable)
+TRADE_RISK_PCT       = 1.0    # % of total balance to risk per trade (fallback)
+RISK_PER_TRADE_USD   = 2.0    # Fixed dollar risk per trade (overrides TRADE_RISK_PCT)
+MIN_POSITION_USD     = 20.0   # Minimum position size to cover exchange fees
+TARGET_RR_RATIO      = 2.0    # TP = Entry ± (SL_dist × TARGET_RR_RATIO); TP1 at 1:1
 ROUND_TRIP_FEE_PCT   = 0.12   # Bitget round-trip taker fee: 0.06% entry + 0.06% exit
-MIN_NET_PROFIT_USD   = 15.0   # Minimum net profit at TP1 to justify opening a trade
-MIN_PROFIT_RR        = 1.5    # Minimum RR at TP1 (gross profit / gross loss)
+MIN_NET_PROFIT_USD   = 1.50   # Minimum net profit at final TP (after fees) to open trade
+MIN_PROFIT_RR        = 1.8    # Minimum RR at final TP (gross profit / gross loss)
 MAX_AUTO_LEVERAGE    = 20     # Cap on auto-calculated leverage
 MIN_AUTO_LEVERAGE    = 2      # Floor on auto-calculated leverage
 

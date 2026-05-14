@@ -2152,10 +2152,10 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         tp_pct  = round(tp_pct  * ratio, 2)
         sl_pct  = dyn_sl
 
-    # FNG Mode — BE ו-min_rr דינמיים
+    # FNG Mode — min_rr דינמי (BE נחשב מ-TP1 עכשיו)
     fng_mode = get_fng_mode(fng_v)
     print(f"  [FNG MODE] {fng_mode['emoji']} {fng_mode['name']} (FNG={fng_v}) "
-          f"| SL={sl_pct}% TP1={tp1_pct}% TP={tp_pct}% BE={fng_mode['be']}%")
+          f"| SL={sl_pct}% TP1={tp1_pct}% TP={tp_pct}% | BE@50%→TP1")
 
     # ── ATR-Based Dynamic Targets (1H timeframe) ─────────────────────────────
     atr_1h = 0.0
@@ -2166,14 +2166,14 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
                 _atr_v = float(_atr_s.dropna().iloc[-1])
                 if _atr_v > 0:
                     atr_1h   = _atr_v
-                    sl_dist  = ATR_SL_MULT  * atr_1h
-                    tp1_dist = ATR_TP1_MULT * atr_1h
-                    tp_dist  = ATR_TP2_MULT * atr_1h
+                    sl_dist  = ATR_SL_MULT * atr_1h
+                    tp1_dist = sl_dist * 1.0              # TP1 at 1:1 RR (BE trigger + partial close)
+                    tp_dist  = sl_dist * TARGET_RR_RATIO  # TP2 at dynamic RR (default 1:2)
                     sl_pct   = round(sl_dist  / price * 100, 4)
                     tp1_pct  = round(tp1_dist / price * 100, 4)
                     tp_pct   = round(tp_dist  / price * 100, 4)
                     print(f"  [ATR Targets] 1H ATR={atr_1h:.6g} | "
-                          f"SL={sl_pct:.2f}% TP1={tp1_pct:.2f}% TP2={tp_pct:.2f}%")
+                          f"SL={sl_pct:.2f}% TP1={tp1_pct:.2f}%(1:1) TP2={tp_pct:.2f}%(1:{TARGET_RR_RATIO:.0f})")
         except Exception as _atr_e:
             print(f"  [ATR Targets] fallback to FNG%: {_atr_e}")
 
@@ -2184,12 +2184,12 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         print(f"  [HUNTER] Swing TP1={tp1_pct}% TP={tp_pct}% (SL={sl_pct}%)")
 
     # ── SL / TP / BE price levels ─────────────────────────────────────────────
-    be_pct = fng_mode['be']
     if atr_1h == 0.0:                # fallback: compute distances from %
         sl_dist  = price * sl_pct  / 100
         tp_dist  = price * tp_pct  / 100
         tp1_dist = price * tp1_pct / 100
-    be_dist = price * be_pct / 100
+    # Feature 4: Auto BE at 50% of the way to TP1 (risk-free trade when price moves halfway)
+    be_dist = tp1_dist * 0.50
 
     if direction == 'LONG':
         sl_price  = price - sl_dist
@@ -2202,15 +2202,17 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         be_price  = price - be_dist
         tp1_price = price - tp1_dist
 
-    # ── Dynamic Position Sizing — risk TRADE_RISK_PCT% of balance on actual SL ─
+    # ── Dynamic Position Sizing — fixed $RISK_PER_TRADE_USD at risk on actual SL ─
     pos_size, effective_margin, leverage, risk_usd = calculate_position_size(
         balance=balance_snap,
         risk_pct=TRADE_RISK_PCT,
         entry_price=price,
         stop_loss_price=sl_price,
         margin_cap=MARGIN,
+        risk_usd_override=RISK_PER_TRADE_USD,
+        min_pos_size=MIN_POSITION_USD,
     )
-    print(f"  [RiskSizing] balance=${balance_snap:.2f} | risk={TRADE_RISK_PCT}% = ${risk_usd:.2f} | "
+    print(f"  [RiskSizing] balance=${balance_snap:.2f} | risk_fixed=${RISK_PER_TRADE_USD:.2f} | "
           f"pos=${pos_size:.2f} | margin=${effective_margin:.2f} | {leverage}x | SL={sl_pct:.2f}%")
 
     # Size adjustments: Sniper (half-size) and Sentiment (60% in greed)
@@ -2232,11 +2234,12 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         send_msg(f"⚠️ *יתרה נמוכה* — אין מספיק להפקדת מרג'ין\nנדרש: ${effective_margin:.0f} | יש: ${balance_snap:.2f}")
         return
 
-    # ── Profitability Gate: Net Profit at TP1 after round-trip fees ──────────
+    # ── Profitability Gate: Net Profit at final TP after round-trip fees ────────
+    # With dynamic RR (TP1=1:1, TP2=TARGET_RR_RATIO), check viability against TP2
     trade_ok, net_profit_usd, rr_ratio, veto_reason = check_trade_viability(
         pos_size=pos_size,
         entry_price=price,
-        tp1_price=tp1_price,
+        tp1_price=tp_price,   # Check against final TP (1:2 RR), not TP1 (1:1)
         sl_price=sl_price,
         direction=direction,
         min_net_profit=MIN_NET_PROFIT_USD,
@@ -2248,7 +2251,7 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         send_msg(
             f"⚠️ *Trade Rejected — {symbol.replace('/USDT','')}*\n\n"
             f"🚫 {veto_reason}\n"
-            f"Pos=${pos_size:.0f} | SL={sl_pct:.1f}% | TP1={tp1_pct:.1f}%"
+            f"Pos=${pos_size:.0f} | SL={sl_pct:.1f}% | TP={tp_pct:.1f}%(1:{TARGET_RR_RATIO:.0f})"
         )
         return
 

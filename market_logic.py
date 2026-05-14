@@ -1015,27 +1015,34 @@ def calculate_position_size(
     entry_price: float,
     stop_loss_price: float,
     margin_cap: float = 50.0,
+    risk_usd_override: float | None = None,
+    min_pos_size: float = 20.0,
 ) -> tuple:
     """
-    Risk-based position sizing: risk exactly risk_pct% of balance per trade.
+    Risk-based position sizing: risk exactly risk_pct% of balance per trade,
+    or a fixed dollar amount when risk_usd_override is set (Feature 3).
     Leverage is derived automatically from the SL distance so the position is
     correctly sized regardless of how tight or wide the stop is.
 
-        risk_usd = balance × risk_pct / 100
+        risk_usd = risk_usd_override  OR  balance × risk_pct / 100
         sl_pct   = |entry - stop_loss| / entry × 100
-        pos_size = risk_usd / (sl_pct / 100)          ← dollars at risk / sl fraction
+        pos_size = max(risk_usd / (sl_pct / 100), min_pos_size)
         leverage = clamp(round(pos_size / margin_cap), MIN_AUTO_LEVERAGE, MAX_AUTO_LEVERAGE)
         margin   = pos_size / leverage
 
     Returns: (pos_size, margin, leverage, risk_usd)
     """
-    risk_usd = round(balance * risk_pct / 100, 2)
+    if risk_usd_override is not None:
+        risk_usd = round(risk_usd_override, 2)
+    else:
+        risk_usd = round(balance * risk_pct / 100, 2)
+
     sl_dist  = abs(entry_price - stop_loss_price)
     if sl_dist <= 0 or entry_price <= 0:
         return 0.0, 0.0, MIN_AUTO_LEVERAGE, risk_usd
 
     sl_pct   = sl_dist / entry_price * 100
-    pos_size = risk_usd / (sl_pct / 100)
+    pos_size = max(risk_usd / (sl_pct / 100), min_pos_size)
 
     raw_lev  = pos_size / margin_cap
     leverage = int(max(MIN_AUTO_LEVERAGE, min(round(raw_lev), MAX_AUTO_LEVERAGE)))

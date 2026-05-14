@@ -43,7 +43,7 @@ export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSucce
         <table className="w-full text-xs">
           <thead>
             <tr style={{ background: "#0d1f3c", borderBottom: "1px solid #1e3a5f" }}>
-              {["COIN ↗", "DIR", "LEVERAGE", "AMOUNT", "ENTRY", "SL", "TP", "EST. PROFIT", "LIVE P&L", "STATUS"].map(h => (
+              {["COIN ↗", "DIR", "LEVERAGE", "AMOUNT", "ENTRY", "CURR PRICE", "SL", "TP", "EST. PROFIT", "LIVE P&L", "STATUS"].map(h => (
                 <th key={h} className="px-3 py-2 text-left font-semibold uppercase tracking-wide whitespace-nowrap"
                   style={{ color: "#64748b" }}>
                   {h}
@@ -64,7 +64,7 @@ export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSucce
               ))
             ) : trades.length === 0 ? (
               <tr>
-                <td colSpan={10} className="px-4 py-6 text-center text-xs"
+                <td colSpan={11} className="px-4 py-6 text-center text-xs"
                   style={{ color: "#475569" }}>
                   No active trades
                 </td>
@@ -114,6 +114,13 @@ export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSucce
                     <td className="px-3 py-2.5 font-mono" style={{ color: "#cbd5e1" }}>{leverage}x</td>
                     <td className="px-3 py-2.5 font-mono" style={{ color: "#cbd5e1" }}>${amount}</td>
                     <td className="px-3 py-2.5 font-mono" style={{ color: "#cbd5e1" }}>{fmt(t.entry)}</td>
+                    <td className="px-3 py-2.5 font-mono font-semibold"
+                      style={{ color: pnlUsd >= 0 ? "#4ade80" : "#f87171" }}>
+                      {fmt(cp)}
+                      <span className="ml-1 text-xs font-normal opacity-60">
+                        {pnlUsd >= 0 ? "▲" : "▼"}
+                      </span>
+                    </td>
                     <td className="px-3 py-2.5 font-mono font-semibold" style={{ color: "#f87171" }}>
                       {fmt(t.sl)}
                     </td>
