@@ -408,6 +408,7 @@ router.post("/tg_hook", (req, res) => {
     path: "/api/tg_hook",
     method: "POST",
     headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+    timeout: 5000, // always return to Telegram within 5s — prevents retry storms
   };
   const proxyReq = _botHttp.request(options, (r) => {
     let data = "";
@@ -415,6 +416,7 @@ router.post("/tg_hook", (req, res) => {
     r.on("end", () => res.status(r.statusCode ?? 200).json({ ok: true }));
   });
   proxyReq.on("error", () => res.status(200).json({ ok: false })); // always 200 so Telegram doesn't retry
+  proxyReq.on("timeout", () => { proxyReq.destroy(); res.status(200).json({ ok: false }); });
   proxyReq.write(body);
   proxyReq.end();
 });

@@ -56,6 +56,7 @@ exchange = ccxt.bitget({
     'secret': os.environ['BITGET_SECRET'],
     'password': os.environ['BITGET_PW'],
     'enableRateLimit': True,
+    'options': {'defaultType': 'swap'},
 })
 print("[BOOT] ccxt exchange OK.", flush=True)
 
@@ -776,11 +777,7 @@ _polling_last_activity: float = 0.0   # watchdog: updated on every Telegram upda
 
 @flask_app.route('/api/trades')
 def api_trades():
-    # רענן מחירים חיים לפני החזרת הנתונים לדשבורד
-    try:
-        _get_unrealized_pnl()
-    except Exception:
-        pass
+    # current_price מתעדכן כל 60s ע"י track_trades() — ללא קריאת API כאן
     with trades_lock:
         snapshot = list(active_trades)
     return flask_jsonify({
@@ -792,11 +789,10 @@ def api_trades():
 @flask_app.route('/api/wallet')
 def api_wallet():
     data = dict(wallet)
-    locked              = sum(t.get('margin', MARGIN) for t in active_trades)
-    unrealized          = _get_unrealized_pnl()
-    data['equity']          = _get_equity()
+    unrealized              = _unrealized_cached()
+    data['equity']          = _equity_cached()
     data['available_balance']= round(wallet.get('balance', STARTING_BALANCE), 2)
-    data['locked_balance']  = round(locked, 2)
+    data['locked_balance']  = round(sum(t.get('margin', MARGIN) for t in active_trades), 2)
     data['unrealized_pnl']  = unrealized
     data['active_count']    = len(active_trades)
     return flask_jsonify(data)
@@ -826,16 +822,15 @@ def api_active_trades():
 def api_status():
     """Aggregate status snapshot — combines wallet + FNG + active-trade count.
     /api/fng and /api/last_scan are already defined in keep_alive.py (same Flask app).
+    Uses cached equity (no live API call) — fast response for dashboard polling.
     """
-    eq      = _get_equity()
-    # re-use keep_alive's fng cache via the shared app context
     from keep_alive import _fng_ka
     fng_v   = _fng_ka.get('value') or 50
     fng_lbl = _fng_ka.get('label') or 'Neutral'
     return flask_jsonify({
         'connected':     True,
         'exchange':      'Bitget VIRTUAL',
-        'equity':        round(eq, 2),
+        'equity':        _equity_cached(),
         'starting':      STARTING_BALANCE,
         'fng_value':     fng_v,
         'fng_label':     fng_lbl,
@@ -1136,6 +1131,27 @@ def _get_equity():
     locked     = sum(t.get('margin', MARGIN) for t in active_trades)
     unrealized = _get_unrealized_pnl()
     return round(wallet.get('balance', STARTING_BALANCE) + locked + unrealized, 2)
+
+def _unrealized_cached() -> float:
+    """P&L מ-current_price ששמור בתוך כל trade — ללא קריאת API.
+    track_trades() מעדכן current_price כל 60 שניות — מספיק לדשבורד."""
+    total = 0.0
+    for t in active_trades:
+        curr  = t.get('current_price', t.get('entry', 0))
+        entry = t.get('entry', 0)
+        pos   = t.get('pos_size', POSITION_SIZE)
+        if entry <= 0:
+            continue
+        if t.get('direction') == 'LONG':
+            total += (curr - entry) / entry * pos
+        else:
+            total += (entry - curr) / entry * pos
+    return round(total, 2)
+
+def _equity_cached() -> float:
+    """Equity מהיר מ-cache — ללא קריאת API."""
+    locked = sum(t.get('margin', MARGIN) for t in active_trades)
+    return round(wallet.get('balance', STARTING_BALANCE) + locked + _unrealized_cached(), 2)
 
 def _append_equity_point():
     hist = wallet.setdefault('equity_history', [])
