@@ -202,9 +202,17 @@ router.get("/bot_log", (_req, res) => {
     const crash = fs.existsSync("/tmp/bot_crash.log")
       ? fs.readFileSync("/tmp/bot_crash.log", "utf-8")
       : null;
-    res.json({ stdout, stderr, crash });
+
+    let restart_info: Record<string, unknown> | null = null;
+    if (fs.existsSync("/tmp/bot_restart.log")) {
+      try {
+        restart_info = JSON.parse(fs.readFileSync("/tmp/bot_restart.log", "utf-8"));
+      } catch { /* ignore malformed */ }
+    }
+
+    res.json({ stdout, stderr, crash, restart_info });
   } catch (e) {
-    res.json({ stdout: "", stderr: String(e), crash: null });
+    res.json({ stdout: "", stderr: String(e), crash: null, restart_info: null });
   }
 });
 

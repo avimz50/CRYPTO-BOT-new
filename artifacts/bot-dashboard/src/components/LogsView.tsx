@@ -1,5 +1,5 @@
 import { useRef, useEffect } from "react";
-import { BotLogData } from "@/hooks/useBotData";
+import { BotLogData, RestartEvent } from "@/hooks/useBotData";
 
 interface LogsViewProps {
   logData: BotLogData | null;
@@ -55,6 +55,74 @@ function LogBlock({ title, content, color }: { title: string; content: string; c
   );
 }
 
+function RestartBanner({ info }: { info: BotLogData["restart_info"] }) {
+  if (!info || info.restart_count === 0) return null;
+
+  const count = info.restart_count;
+  const lastAt = info.last_restart_at ?? "unknown";
+  const lastReason = info.last_reason ?? "";
+  const history: RestartEvent[] = info.history ?? [];
+
+  return (
+    <div className="rounded-xl p-4 space-y-3"
+      style={{ background: "rgba(251,191,36,0.08)", border: "1px solid #f59e0b" }}>
+
+      {/* Header row */}
+      <div className="flex items-center gap-2">
+        <span style={{ color: "#fbbf24", fontSize: 16 }}>⚠</span>
+        <span className="font-bold text-sm" style={{ color: "#fbbf24" }}>
+          Bot restarted {count} {count === 1 ? "time" : "times"}
+        </span>
+        <span className="text-xs ml-auto" style={{ color: "#94a3b8" }}>
+          Watchdog is active — bot will auto-recover from crashes
+        </span>
+      </div>
+
+      {/* Last restart detail */}
+      <div className="text-xs space-y-1" style={{ color: "#cbd5e1" }}>
+        <div>
+          <span style={{ color: "#94a3b8" }}>Last restart: </span>
+          <span className="font-mono">{lastAt}</span>
+        </div>
+        {lastReason && (
+          <div>
+            <span style={{ color: "#94a3b8" }}>Reason: </span>
+            <span className="font-mono" style={{ color: "#fca5a5" }}>{lastReason}</span>
+          </div>
+        )}
+      </div>
+
+      {/* History table — last 5 events */}
+      {history.length > 1 && (
+        <div>
+          <div className="text-xs font-semibold mb-1 uppercase tracking-wide" style={{ color: "#64748b" }}>
+            Recent restarts
+          </div>
+          <div className="space-y-1">
+            {[...history].reverse().slice(0, 5).map((ev, i) => (
+              <div key={i}
+                className="flex items-center gap-3 text-xs font-mono px-2 py-1 rounded"
+                style={{ background: "rgba(255,255,255,0.03)", color: "#94a3b8" }}>
+                <span className="flex-shrink-0" style={{ color: "#64748b" }}>{ev.ts}</span>
+                <span className="flex-1 truncate" style={{ color: "#fca5a5" }}>{ev.reason}</span>
+                {ev.exit_code !== null && (
+                  <span className="flex-shrink-0 px-1.5 py-0.5 rounded"
+                    style={{
+                      background: ev.exit_code === 0 ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
+                      color: ev.exit_code === 0 ? "#4ade80" : "#f87171",
+                    }}>
+                    exit {ev.exit_code}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function LogsView({ logData, loading }: LogsViewProps) {
   if (loading && !logData) {
     return (
@@ -70,6 +138,9 @@ export function LogsView({ logData, loading }: LogsViewProps) {
 
   return (
     <div className="space-y-4">
+      {/* Watchdog restart banner — shown whenever the bot has been restarted */}
+      <RestartBanner info={logData?.restart_info ?? null} />
+
       {logData?.crash && (
         <div className="rounded-xl p-4"
           style={{ background: "rgba(239,68,68,0.1)", border: "1px solid #ef4444" }}>

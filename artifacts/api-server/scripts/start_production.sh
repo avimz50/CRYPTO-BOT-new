@@ -29,18 +29,19 @@ if [ -n "$REPLIT_DEPLOYMENT" ]; then
     PYTHON_RUN="echo NO_PYTHON_FOUND"
   fi
 
-  echo "=== [Bot] Starting: $PYTHON_RUN bot.py ==="
-  # Output goes to deployment logs (no file redirect) so we can see errors
-  $PYTHON_RUN bot.py &
+  echo "=== [Bot] Starting watchdog.py (auto-restart supervisor) ==="
+  # watchdog.py launches bot.py and restarts it automatically if it crashes.
+  # stdout/stderr are tee'd to /tmp/bot_stdout.log and /tmp/bot_stderr.log.
+  $PYTHON_RUN watchdog.py &
   BOT_PID=$!
-  echo "=== [Bot] PID=$BOT_PID — background started ==="
+  echo "=== [Bot] Watchdog PID=$BOT_PID — background started ==="
 
-  # Wait and verify bot is still alive after 5s
+  # Wait and verify watchdog is still alive after 5s
   sleep 5
   if kill -0 "$BOT_PID" 2>/dev/null; then
-    echo "=== [Bot] ✅ Still running after 5s (PID=$BOT_PID) ==="
+    echo "=== [Bot] ✅ Watchdog still running after 5s (PID=$BOT_PID) ==="
   else
-    echo "=== [Bot] ❌ CRASHED within 5s — check logs above ==="
+    echo "=== [Bot] ❌ Watchdog CRASHED within 5s — check logs above ==="
   fi
 
 else

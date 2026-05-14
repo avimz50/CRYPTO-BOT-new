@@ -145,10 +145,25 @@ export interface FngSettings {
   };
 }
 
+export interface RestartEvent {
+  ts: string;
+  exit_code: number | null;
+  reason: string;
+}
+
+export interface RestartInfo {
+  restart_count: number;
+  last_restart_at: string | null;
+  last_exit_code: number | null;
+  last_reason: string | null;
+  history: RestartEvent[];
+}
+
 export interface BotLogData {
   stdout: string;
   stderr: string;
   crash: string | null;
+  restart_info: RestartInfo | null;
 }
 
 // ── localStorage — client-side persistence for settings Flask doesn't expose ─
