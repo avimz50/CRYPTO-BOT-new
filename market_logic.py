@@ -1080,8 +1080,8 @@ def check_trade_viability(
     if rr_ratio < min_rr:
         return (
             False, net_profit, rr_ratio,
-            f"RR@TP1 {rr_ratio:.2f} < min {min_rr:.1f} "
-            f"(gross_profit=${gross_profit:.2f} / risk=${gross_loss:.2f})",
+            f"RR(TP1) {rr_ratio:.2f} < min {min_rr:.1f} "
+            f"(profit=${gross_profit:.2f} / risk=${gross_loss:.2f})",
         )
 
     if net_profit < min_net_profit:

@@ -2233,8 +2233,8 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         print(f"[VIABILITY] ❌ {symbol} {direction} — {veto_reason}")
         send_msg(
             f"⚠️ *Trade Rejected — {symbol.replace('/USDT','')}*\n\n"
-            f"🚫 _{veto_reason}_\n"
-            f"📐 Pos\\=${pos_size:.0f} \\| SL\\={sl_pct:.1f}% \\| TP1\\={tp1_pct:.1f}%"
+            f"🚫 {veto_reason}\n"
+            f"Pos=${pos_size:.0f} | SL={sl_pct:.1f}% | TP1={tp1_pct:.1f}%"
         )
         return
 
@@ -2367,7 +2367,7 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         f"🎯 TP1:    `{tp1_price:.6g}` (+{tp1_pct:.2f}%) → 🔒 BE auto\n"
         f"🎯 TP2:    `{tp_price:.6g}` (+{tp_pct:.2f}%)\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"🛡️ סיכון: `${est_loss_sl}` | 💰 רווח@TP1: `${est_profit_tp1}` | @TP2: `${est_profit_tp}`\n"
+        f"🛡️ סיכון: `${est_loss_sl}` | 💰 רווח(TP1): `${est_profit_tp1}` | (TP2): `${est_profit_tp}`\n"
         f"💵 פנוי בארנק: `${free_cash:.2f}`"
     )
 

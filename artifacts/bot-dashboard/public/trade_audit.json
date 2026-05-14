@@ -1,6 +1,6 @@
 {
-  "updated": "2026-05-13T16:56:24+03:00",
-  "count": 27,
+  "updated": "2026-05-14T19:06:29+03:00",
+  "count": 28,
   "trades": [
     {
       "symbol": "TRX/USDT",
@@ -861,6 +861,38 @@
       "scalp": false,
       "hunter_mode": false,
       "lesson": "❌ SL Hit — תזת ה-LONG התבטלה. הפסד $-1.74 לאחר 4061 דקות. Score=88. בדוק: האם ה-BTC Compass הצביע לאותו כיוון? האם הייתה התנגדות שקרובה לכניסה?",
+      "prebreakout_signals": "None"
+    },
+    {
+      "symbol": "LINK/USDT",
+      "direction": "SHORT",
+      "timeframe": "Breakout",
+      "entry_price": 10.204,
+      "close_price": 10.697,
+      "sl_at_open": 10.56114,
+      "tp_at_open": 8.6734,
+      "dist_sl_pct": 3.5,
+      "dist_tp_pct": 15.0,
+      "rr_ratio": 4.29,
+      "rr_achieved": 1.38,
+      "score": 95,
+      "rsi": 50.5,
+      "ema200": null,
+      "score_breakdown": "Breakout Strategy SHORT: 1H $10.204 < 4H Low `$10.248` | FNG=42 | RSI=50.5 | Vol×1.6",
+      "strategy": "",
+      "track": "Swing",
+      "slippage_pct": 0.0,
+      "close_reason": "SL",
+      "pnl_usd": -5.65,
+      "opened_at": "2026-05-13T16:56:33+03:00",
+      "closed_at": "2026-05-14T19:06:29+03:00",
+      "fng_at_entry": 42,
+      "atr": 0.11703805,
+      "duration_min": 1569.9,
+      "sniper": false,
+      "scalp": false,
+      "hunter_mode": false,
+      "lesson": "❌ SL Hit — תזת ה-SHORT התבטלה. הפסד $-5.65 לאחר 1570 דקות. Score=95. בדוק: האם ה-BTC Compass הצביע לאותו כיוון? האם הייתה התנגדות שקרובה לכניסה?",
       "prebreakout_signals": "None"
     }
   ]
