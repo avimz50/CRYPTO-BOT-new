@@ -415,8 +415,8 @@ router.post("/tg_hook", (req, res) => {
     r.on("data", (c) => (data += c));
     r.on("end", () => res.status(r.statusCode ?? 200).json({ ok: true }));
   });
-  proxyReq.on("error", () => res.status(200).json({ ok: false })); // always 200 so Telegram doesn't retry
-  proxyReq.on("timeout", () => { proxyReq.destroy(); res.status(200).json({ ok: false }); });
+  proxyReq.on("error", () => { if (!res.headersSent) res.status(200).json({ ok: false }); }); // always 200 so Telegram doesn't retry
+  proxyReq.on("timeout", () => { proxyReq.destroy(); if (!res.headersSent) res.status(200).json({ ok: false }); });
   proxyReq.write(body);
   proxyReq.end();
 });

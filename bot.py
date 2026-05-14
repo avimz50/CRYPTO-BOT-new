@@ -2445,10 +2445,29 @@ def track_trades():
     # FNG once per manage cycle (avoid spamming API/log)
     fng_v_mgr, _, _ = sentiment_check("manage_risk")
 
+    # ── Pre-fetch all prices in ONE batch call (outside any lock) ──────────
+    # Replaces N sequential fetch_ticker() calls (2-3s each) with a single
+    # fetch_tickers() batch request — drastically shorter loop duration and
+    # far less time where trades_lock branches can block Flask/Telegram threads.
+    _tracked_syms   = list({t['symbol'] for t in active_trades[:]})
+    _batch_prices: dict[str, float] = {}
+    if _tracked_syms:
+        try:
+            _bt = exchange.fetch_tickers(_tracked_syms)
+            for _s, _tk in _bt.items():
+                if _tk.get('last'):
+                    _batch_prices[_s] = float(_tk['last'])
+        except Exception as _bpe:
+            print(f"[TRACK] batch fetch_tickers failed ({_bpe}), will fallback per-symbol", flush=True)
+
     for trade in active_trades[:]:
         try:
-            ticker        = exchange.fetch_ticker(trade['symbol'])
-            current_price = ticker['last']
+            sym_key = trade['symbol']
+            if sym_key in _batch_prices:
+                current_price = _batch_prices[sym_key]
+            else:
+                # Fallback: individual call for symbols not in batch result
+                current_price = exchange.fetch_ticker(sym_key)['last']
             trade['current_price'] = current_price   # שמור לדאשבורד (Floating P&L)
             entry         = trade['entry']
             sym           = trade['symbol']
