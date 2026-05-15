@@ -7290,47 +7290,140 @@ def scan_loop():
 
 def reconcile_with_exchange():
     """
-    Startup safety net: compare local active_trades against Bitget's actual
-    open positions. If a local trade is no longer open on the exchange,
-    drop it from the local list (it was closed while the bot was offline).
-    Pure cleanup — never invents trades that aren't in our local record,
-    because we don't have the original entry metadata for them.
+    Authoritative startup sync: rebuild active_trades from Bitget's open
+    positions. Local entries that match an open position keep their stored
+    metadata (sl/tp/score/etc.); positions on the exchange with no local
+    record are imported with conservative defaults; local entries with no
+    matching open position are dropped (they closed while we were offline).
     """
     global active_trades
     try:
         positions = exchange.fetch_positions()
     except Exception as e:
-        print(f"[Reconcile] fetch_positions failed: {e} — keeping local state as-is", flush=True)
+        print(f"[SYNC] reconciled 0 positions from Bitget — fetch_positions failed: {e}", flush=True)
         return
 
-    open_symbols = set()
+    # Index live positions by symbol
+    live: dict[str, dict] = {}
     for p in positions:
         try:
             contracts = float(p.get('contracts') or 0)
         except (TypeError, ValueError):
             contracts = 0.0
-        if contracts > 0 and p.get('symbol'):
-            open_symbols.add(p['symbol'])
+        sym = p.get('symbol')
+        if contracts <= 0 or not sym:
+            continue
+        live[sym] = p
 
     with trades_lock:
-        before = len(active_trades)
-        kept   = [t for t in active_trades if t.get('symbol') in open_symbols]
-        dropped = [t.get('symbol') for t in active_trades if t.get('symbol') not in open_symbols]
-        active_trades = kept
+        local_by_sym = {t.get('symbol'): t for t in active_trades if t.get('symbol')}
+        rebuilt: list[dict] = []
+        imported: list[str] = []
 
+        for sym, pos in live.items():
+            if sym in local_by_sym:
+                # Keep existing local metadata (sl/tp/score/strategy/...)
+                rebuilt.append(local_by_sym[sym])
+                continue
+
+            # Import missing position with conservative defaults
+            try:
+                entry = float(pos.get('entryPrice') or pos.get('info', {}).get('openPriceAvg') or 0)
+            except (TypeError, ValueError):
+                entry = 0.0
+            side = (pos.get('side') or 'long').upper()
+            direction = 'LONG' if side.startswith('L') else 'SHORT'
+            try:
+                contracts = float(pos.get('contracts') or 0)
+            except (TypeError, ValueError):
+                contracts = 0.0
+            try:
+                lev = float(pos.get('leverage') or LEVERAGE)
+            except (TypeError, ValueError):
+                lev = float(LEVERAGE)
+            pos_size = round(entry * contracts, 2) if entry and contracts else POSITION_SIZE
+            margin = round(pos_size / lev, 2) if lev else MARGIN
+
+            rebuilt.append({
+                'symbol':        sym,
+                'direction':     direction,
+                'entry':         entry,
+                'sl':            None,
+                'tp':            None,
+                'tp1':           None,
+                'score':         0,
+                'strategy':      'imported',
+                'pos_size':      pos_size,
+                'margin':        margin,
+                'leverage':      lev,
+                'open_time':     now_il().isoformat(timespec='seconds'),
+                'imported':      True,
+                'current_price': entry,
+            })
+            imported.append(sym)
+
+        dropped = [s for s in local_by_sym if s not in live]
+        active_trades = rebuilt
+
+    save_active_trades()
+    print(
+        f"[SYNC] reconciled {len(live)} positions from Bitget "
+        f"(kept={len(live) - len(imported)}, imported={len(imported)}, dropped={len(dropped)})",
+        flush=True,
+    )
+    if imported:
+        print(f"[SYNC] imported symbols: {imported}", flush=True)
     if dropped:
-        print(f"[Reconcile] Dropped {len(dropped)} stale local trade(s) not on Bitget: {dropped}", flush=True)
-        save_active_trades()
-    else:
-        print(f"[Reconcile] OK — {before} local trade(s), all match Bitget open positions", flush=True)
+        print(f"[SYNC] dropped stale local symbols: {dropped}", flush=True)
+
+
+# Bumping BOOTSTRAP_VERSION forces a one-time reset of wallet/trades/audit to the
+# baseline below on the next startup. Increment manually whenever you want to wipe
+# durable state (e.g. fresh capital, schema change). Stored in Object Storage so
+# each version only ever resets once across all deploys.
+BOOTSTRAP_VERSION = "v2_200usd_2026_05_15"
+
+
+def maybe_bootstrap_baseline():
+    """
+    On first boot for a given BOOTSTRAP_VERSION, force the durable store to a
+    fresh $200 / zero-trades / zero-audit baseline. Subsequent boots see the
+    version marker and skip the reset, so live state is preserved.
+    """
+    marker = state_store.os_get('bootstrap_version')
+    if marker == BOOTSTRAP_VERSION:
+        print(f"[STATE] bootstrap up-to-date ({BOOTSTRAP_VERSION}) — keeping live state", flush=True)
+        return
+
+    print(
+        f"[STATE] bootstrap {marker!r} → {BOOTSTRAP_VERSION!r}: forcing $200 baseline reset",
+        flush=True,
+    )
+    fresh_wallet = {
+        'balance':         STARTING_BALANCE,
+        'starting':        STARTING_BALANCE,
+        'total_pnl':       0.0,
+        'trades_opened':   0,
+        'total_wins':      0,
+        'total_losses':    0,
+        'locked_balance':  0.0,
+        'available_balance': STARTING_BALANCE,
+        'unrealized_pnl':  0.0,
+        'equity_history':  [{'t': now_il().strftime('%m/%d %H:%M'), 'eq': STARTING_BALANCE}],
+    }
+    state_store.reset_state('wallet',         fresh_wallet,                                          WALLET_FILE)
+    state_store.reset_state('active_trades',  {'updated': now_il().strftime('%H:%M:%S'), 'count': 0, 'trades': []}, ACTIVE_TRADES_FILE)
+    state_store.reset_state('trade_audit',    {'updated': now_il().isoformat(timespec='seconds'), 'count': 0, 'trades': []}, AUDIT_LOG_FILE)
+    state_store.os_set('bootstrap_version', BOOTSTRAP_VERSION)
 
 
 def main():
     keep_alive()
-    load_wallet()              # ← טעינת ארנק וירטואלי (Replit DB → disk → default)
-    load_active_trades()       # ← שחזור עסקאות פעילות (Replit DB → disk)
-    _load_audit_log()          # ← שחזור Audit Log (Replit DB → disk)
-    reconcile_with_exchange()  # ← השוואה מול עמדות פתוחות ב-Bitget; ניקוי עסקאות שכבר נסגרו
+    maybe_bootstrap_baseline() # ← אם זו הפעלה ראשונה לגרסה הזו — איפוס ל-$200
+    load_wallet()              # ← טעינת ארנק וירטואלי (Object Storage → disk → default)
+    load_active_trades()       # ← שחזור עסקאות פעילות (Object Storage → disk)
+    _load_audit_log()          # ← שחזור Audit Log (Object Storage → disk)
+    reconcile_with_exchange()  # ← בנייה מחדש של active_trades מהעמדות הפתוחות ב-Bitget
 
     # Thread 1 — Telegram polling
     polling_thread = threading.Thread(target=start_telegram_polling, daemon=True)

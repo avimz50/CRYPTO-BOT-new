@@ -12,4 +12,5 @@ dependencies = [
     "anthropic>=0.80.0",
     "requests>=2.32.0",
     "google-generativeai>=0.8.0",
+    "google-cloud-storage>=3.4.1",
 ]

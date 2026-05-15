@@ -36,42 +36,23 @@ function readJson(filePath: string): unknown {
 }
 
 /**
- * Replit DB read (HTTP). Returns null on miss/error.
- * Same key namespace the Python bot writes via state_store.py.
+ * Fetch JSON from internal Flask bot server, fall back to disk cache → default.
+ *
+ * The disk cache (artifacts/bot-dashboard/public/*.json) is kept in sync by
+ * the Python bot's state_store, which writes through to disk on every read
+ * AND write to the durable Object Storage. So disk is always at least as
+ * fresh as the last successful state_store call after bot startup.
+ *
+ * The fourth `dbKey` arg is kept for signature compatibility with callers
+ * but is no longer used here — durable reads happen inside the Flask bot.
  */
-const REPLIT_DB_URL = (process.env.REPLIT_DB_URL ?? "").replace(/\/$/, "");
-async function readReplitDb(key: string): Promise<unknown> {
-  if (!REPLIT_DB_URL || !key) return null;
-  try {
-    const res = await fetch(`${REPLIT_DB_URL}/${encodeURIComponent(key)}`, {
-      signal: AbortSignal.timeout(3000),
-    });
-    if (!res.ok) return null;
-    const text = await res.text();
-    if (!text) return null;
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Resolve fallback in priority order: Replit DB (durable) → disk cache → default.
- * Used whenever the Flask bot is down or returns a non-JSON response.
- */
-async function resolveFallback(dbKey: string, fallbackFile: string, fallback: unknown): Promise<unknown> {
-  const fromDb = await readReplitDb(dbKey);
-  if (fromDb != null) return fromDb;
-  return readJson(fallbackFile) ?? fallback;
-}
-
-/** Fetch JSON from internal Flask bot server, fallback to Replit DB → disk → default */
 function fetchFromFlask(
   endpoint: string,
   fallbackFile: string,
   fallback: unknown,
-  dbKey = "",
+  _dbKey = "",
 ): Promise<unknown> {
+  const fb = () => readJson(fallbackFile) ?? fallback;
   return new Promise((resolve) => {
     const req = _botHttp.get(`${BOT_FLASK_BASE}${endpoint}`, { timeout: 5000 }, (r) => {
       let body = "";
@@ -80,12 +61,12 @@ function fetchFromFlask(
         try {
           resolve(JSON.parse(body));
         } catch {
-          resolveFallback(dbKey, fallbackFile, fallback).then(resolve);
+          resolve(fb());
         }
       });
     });
-    req.on("error", () => { resolveFallback(dbKey, fallbackFile, fallback).then(resolve); });
-    req.on("timeout", () => { req.destroy(); resolveFallback(dbKey, fallbackFile, fallback).then(resolve); });
+    req.on("error", () => resolve(fb()));
+    req.on("timeout", () => { req.destroy(); resolve(fb()); });
   });
 }
 
