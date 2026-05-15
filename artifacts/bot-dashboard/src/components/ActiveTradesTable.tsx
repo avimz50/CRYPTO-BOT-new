@@ -43,7 +43,7 @@ export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSucce
         <table className="w-full text-xs">
           <thead>
             <tr style={{ background: "#0d1f3c", borderBottom: "1px solid #1e3a5f" }}>
-              {["COIN ↗", "DIR", "LEVERAGE", "AMOUNT", "ENTRY", "CURR PRICE", "SL", "TP", "EST. PROFIT", "LIVE P&L", "STATUS"].map(h => (
+              {["COIN ↗", "DIR", "LEVERAGE", "AMOUNT", "ENTRY", "CURR PRICE", "SL", "TP (BE Trigger)", "EST. PROFIT", "LIVE P&L", "STATUS"].map(h => (
                 <th key={h} className="px-3 py-2 text-left font-semibold uppercase tracking-wide whitespace-nowrap"
                   style={{ color: "#64748b" }}>
                   {h}
@@ -125,7 +125,7 @@ export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSucce
                       {fmt(t.sl)}
                     </td>
                     <td className="px-3 py-2.5 font-mono font-semibold" style={{ color: "#4ade80" }}>
-                      {fmt(t.tp)}
+                      {fmt(tp1Price)}
                     </td>
                     <td className="px-3 py-2.5 font-mono" style={{ color: "#93c5fd" }}>
                       {estProfit != null ? `+$${estProfit.toFixed(2)}` : "—"}
