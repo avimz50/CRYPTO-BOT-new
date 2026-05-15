@@ -35,8 +35,43 @@ function readJson(filePath: string): unknown {
   }
 }
 
-/** Fetch JSON from internal Flask bot server, fallback to reading disk file */
-function fetchFromFlask(endpoint: string, fallbackFile: string, fallback: unknown): Promise<unknown> {
+/**
+ * Replit DB read (HTTP). Returns null on miss/error.
+ * Same key namespace the Python bot writes via state_store.py.
+ */
+const REPLIT_DB_URL = (process.env.REPLIT_DB_URL ?? "").replace(/\/$/, "");
+async function readReplitDb(key: string): Promise<unknown> {
+  if (!REPLIT_DB_URL || !key) return null;
+  try {
+    const res = await fetch(`${REPLIT_DB_URL}/${encodeURIComponent(key)}`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return null;
+    const text = await res.text();
+    if (!text) return null;
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve fallback in priority order: Replit DB (durable) → disk cache → default.
+ * Used whenever the Flask bot is down or returns a non-JSON response.
+ */
+async function resolveFallback(dbKey: string, fallbackFile: string, fallback: unknown): Promise<unknown> {
+  const fromDb = await readReplitDb(dbKey);
+  if (fromDb != null) return fromDb;
+  return readJson(fallbackFile) ?? fallback;
+}
+
+/** Fetch JSON from internal Flask bot server, fallback to Replit DB → disk → default */
+function fetchFromFlask(
+  endpoint: string,
+  fallbackFile: string,
+  fallback: unknown,
+  dbKey = "",
+): Promise<unknown> {
   return new Promise((resolve) => {
     const req = _botHttp.get(`${BOT_FLASK_BASE}${endpoint}`, { timeout: 5000 }, (r) => {
       let body = "";
@@ -45,12 +80,12 @@ function fetchFromFlask(endpoint: string, fallbackFile: string, fallback: unknow
         try {
           resolve(JSON.parse(body));
         } catch {
-          resolve(readJson(fallbackFile) ?? fallback);
+          resolveFallback(dbKey, fallbackFile, fallback).then(resolve);
         }
       });
     });
-    req.on("error", () => resolve(readJson(fallbackFile) ?? fallback));
-    req.on("timeout", () => { req.destroy(); resolve(readJson(fallbackFile) ?? fallback); });
+    req.on("error", () => { resolveFallback(dbKey, fallbackFile, fallback).then(resolve); });
+    req.on("timeout", () => { req.destroy(); resolveFallback(dbKey, fallbackFile, fallback).then(resolve); });
   });
 }
 
@@ -76,14 +111,14 @@ function _recordPrices(tradesPayload: unknown): void {
 }
 
 router.get("/trades", async (_req, res) => {
-  const data = await fetchFromFlask("/api/trades", path.join(PUBLIC, "active_trades.json"), { updated: null, count: 0, trades: [] });
+  const data = await fetchFromFlask("/api/trades", path.join(PUBLIC, "active_trades.json"), { updated: null, count: 0, trades: [] }, "active_trades");
   _recordPrices(data);
   res.json(data);
 });
 
 /** Alias: /active_trades → same as /trades (required by dashboard spec) */
 router.get("/active_trades", async (_req, res) => {
-  const data = await fetchFromFlask("/api/trades", path.join(PUBLIC, "active_trades.json"), { updated: null, count: 0, trades: [] });
+  const data = await fetchFromFlask("/api/trades", path.join(PUBLIC, "active_trades.json"), { updated: null, count: 0, trades: [] }, "active_trades");
   _recordPrices(data);
   res.json(data);
 });
@@ -98,9 +133,9 @@ router.get("/price_history/:symbol", (req, res) => {
 /** /status — combined connection/equity/FNG snapshot for the top status bar */
 router.get("/status", async (_req, res) => {
   const [walletRaw, fngRaw, tradesRaw, btcPrice] = await Promise.all([
-    fetchFromFlask("/api/wallet",  path.join(PUBLIC, "wallet.json"),       { balance: 200, starting: 200, total_pnl: 0, equity: 200, available_balance: 200, locked_balance: 0, unrealized_pnl: 0 }),
+    fetchFromFlask("/api/wallet",  path.join(PUBLIC, "wallet.json"),       { balance: 200, starting: 200, total_pnl: 0, equity: 200, available_balance: 200, locked_balance: 0, unrealized_pnl: 0 }, "wallet"),
     fetchFromFlask("/api/fng",     "",                                      { value: 50, label: "Neutral" }),
-    fetchFromFlask("/api/trades",  path.join(PUBLIC, "active_trades.json"), { count: 0, trades: [] }),
+    fetchFromFlask("/api/trades",  path.join(PUBLIC, "active_trades.json"), { count: 0, trades: [] }, "active_trades"),
     fetchBtcPrice(),
   ]);
   const w = walletRaw as Record<string, number>;
@@ -125,7 +160,7 @@ router.get("/status", async (_req, res) => {
 });
 
 router.get("/wallet", async (_req, res) => {
-  const data = await fetchFromFlask("/api/wallet", path.join(PUBLIC, "wallet.json"), { balance: 200, starting: 200, total_pnl: 0, trades_opened: 0, equity_history: [] });
+  const data = await fetchFromFlask("/api/wallet", path.join(PUBLIC, "wallet.json"), { balance: 200, starting: 200, total_pnl: 0, trades_opened: 0, equity_history: [] }, "wallet");
   res.json(data);
 });
 
@@ -135,7 +170,7 @@ router.get("/hot", async (_req, res) => {
 });
 
 router.get("/trade_audit", async (_req, res) => {
-  const data = await fetchFromFlask("/api/trade_audit", path.join(PUBLIC, "trade_audit.json"), { updated: null, count: 0, trades: [] });
+  const data = await fetchFromFlask("/api/trade_audit", path.join(PUBLIC, "trade_audit.json"), { updated: null, count: 0, trades: [] }, "trade_audit");
   res.json(data);
 });
 

@@ -47,6 +47,7 @@ plt = None  # יאותחל ב-generate_chart בפעם הראשונה
 mpf = None  # יאותחל ב-generate_chart בפעם הראשונה
 
 # --- הגדרות וחיבורים ---
+import state_store  # Replit DB persistence (durable across deploys)
 print("[BOOT] bot.py loading — env check...", flush=True)
 _missing = [k for k in ('BITGET_KEY','BITGET_SECRET','BITGET_PW','TELEGRAM_TOKEN','CHAT_ID') if not os.environ.get(k)]
 if _missing:
@@ -815,11 +816,14 @@ def api_hot():
 
 @flask_app.route('/api/trade_audit')
 def api_trade_audit():
-    try:
-        with open(AUDIT_LOG_FILE, 'r', encoding='utf-8') as f:
-            return flask_jsonify(json.load(f))
-    except Exception:
-        return flask_jsonify({'updated': None, 'count': 0, 'trades': []})
+    # Serve from in-memory trade_audit_log (loaded from Replit DB on startup
+    # and kept current by _save_audit_log on every close). Disk file is just
+    # a cache for the api-server fallback layer — never read live from here.
+    return flask_jsonify({
+        'updated': now_il().isoformat(timespec='seconds'),
+        'count':   len(trade_audit_log),
+        'trades':  list(trade_audit_log),
+    })
 
 @flask_app.route('/api/active_trades')
 def api_active_trades():
@@ -1177,36 +1181,31 @@ def _append_equity_point():
 
 def load_wallet():
     global wallet
-    try:
-        with open(WALLET_FILE, 'r') as f:
-            wallet = json.load(f)
-        print(f"Wallet loaded: balance=${wallet.get('balance', 0):.2f} equity=${_get_equity():.2f}")
-    except Exception:
-        wallet = {
-            'balance':        STARTING_BALANCE,
-            'starting':       STARTING_BALANCE,
-            'total_pnl':      0.0,
-            'trades_opened':  0,
-            'equity_history': [{'t': now_il().strftime('%m/%d %H:%M'), 'eq': STARTING_BALANCE}],
-        }
-        save_wallet()
-        print(f"Wallet created fresh: ${STARTING_BALANCE}")
+    default = {
+        'balance':        STARTING_BALANCE,
+        'starting':       STARTING_BALANCE,
+        'total_pnl':      0.0,
+        'trades_opened':  0,
+        'equity_history': [{'t': now_il().strftime('%m/%d %H:%M'), 'eq': STARTING_BALANCE}],
+    }
+    wallet = state_store.load_state('wallet', WALLET_FILE, default)
+    print(f"Wallet loaded: balance=${wallet.get('balance', 0):.2f} equity=${_get_equity():.2f}", flush=True)
 
 def load_active_trades():
-    """טוען עסקאות פעילות מ-JSON לאחר הפעלה מחדש של הבוט."""
+    """טוען עסקאות פעילות מ-Replit DB / קובץ JSON לאחר הפעלה מחדש של הבוט."""
     global active_trades
-    try:
-        with open(ACTIVE_TRADES_FILE, 'r') as f:
-            data = json.load(f)
-        loaded = data.get('trades', [])
-        if loaded:
-            with trades_lock:
-                active_trades = loaded
-            print(f"Active trades loaded: {len(loaded)} trade(s) restored from disk")
-        else:
-            print("Active trades loaded: none on disk")
-    except Exception:
-        print("Active trades: no existing file, starting fresh")
+    data = state_store.load_state(
+        'active_trades',
+        ACTIVE_TRADES_FILE,
+        {'updated': None, 'count': 0, 'trades': []},
+    )
+    loaded = data.get('trades', []) if isinstance(data, dict) else []
+    if loaded:
+        with trades_lock:
+            active_trades = loaded
+        print(f"Active trades loaded: {len(loaded)} trade(s) restored", flush=True)
+    else:
+        print("Active trades loaded: none on record", flush=True)
 
 def save_wallet():
     try:
@@ -1216,10 +1215,9 @@ def save_wallet():
             'locked_balance':    round(locked, 2),
             'available_balance': round(wallet.get('balance', STARTING_BALANCE), 2),
         }
-        with open(WALLET_FILE, 'w') as f:
-            json.dump(snapshot, f)
+        state_store.save_state('wallet', snapshot, WALLET_FILE)
     except Exception as e:
-        print(f"Wallet save error: {e}")
+        print(f"Wallet save error: {e}", flush=True)
 
 def wallet_deduct(amount: float = MARGIN):
     """קיזוז מרג'ין בפתיחת עסקה. amount=MARGIN רגיל, MARGIN*0.5 ל-Sniper."""
@@ -1372,33 +1370,30 @@ def _generate_lesson(close_reason: str, pnl_usd: float, duration_min: float,
 
 
 def _save_audit_log():
-    """שומר את trade_audit_log ל-AUDIT_LOG_FILE (100 עסקאות אחרונות)."""
+    """שומר את trade_audit_log ל-Replit DB + disk cache (100 עסקאות אחרונות)."""
     global trade_audit_log
     trade_audit_log = trade_audit_log[-100:]
     try:
-        with open(AUDIT_LOG_FILE, 'w', encoding='utf-8') as f:
-            json.dump({
-                'updated': now_il().isoformat(timespec='seconds'),
-                'count':   len(trade_audit_log),
-                'trades':  trade_audit_log,
-            }, f, ensure_ascii=False, indent=2)
+        payload = {
+            'updated': now_il().isoformat(timespec='seconds'),
+            'count':   len(trade_audit_log),
+            'trades':  trade_audit_log,
+        }
+        state_store.save_state('trade_audit', payload, AUDIT_LOG_FILE)
     except Exception as e:
-        print(f"[AuditLog] שגיאה בשמירה: {e}")
+        print(f"[AuditLog] שגיאה בשמירה: {e}", flush=True)
 
 
 def _load_audit_log():
-    """טוען audit log קיים מהדיסק אם קיים."""
+    """טוען audit log מ-Replit DB / מהדיסק."""
     global trade_audit_log
-    try:
-        with open(AUDIT_LOG_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            trade_audit_log = data.get('trades', [])
-            print(f"[AuditLog] נטען: {len(trade_audit_log)} עסקאות")
-    except FileNotFoundError:
-        trade_audit_log = []
-    except Exception as e:
-        print(f"[AuditLog] שגיאה בטעינה: {e}")
-        trade_audit_log = []
+    data = state_store.load_state(
+        'trade_audit',
+        AUDIT_LOG_FILE,
+        {'updated': None, 'count': 0, 'trades': []},
+    )
+    trade_audit_log = data.get('trades', []) if isinstance(data, dict) else []
+    print(f"[AuditLog] נטען: {len(trade_audit_log)} עסקאות", flush=True)
 
 
 def _extract_prebreakout(breakdown: str) -> str:
@@ -1936,7 +1931,7 @@ def get_hot_candidates():
 
 
 def save_active_trades():
-    """שומר את רשימת העסקאות הפעילות לקובץ JSON לדאשבורד."""
+    """שומר עסקאות פעילות ל-Replit DB + cache בדיסק לדאשבורד."""
     try:
         with trades_lock:
             snapshot = list(active_trades)
@@ -1945,11 +1940,9 @@ def save_active_trades():
             'count':   len(snapshot),
             'trades':  snapshot,
         }
-        os.makedirs(os.path.dirname(ACTIVE_TRADES_FILE), exist_ok=True)
-        with open(ACTIVE_TRADES_FILE, 'w') as f:
-            json.dump(data, f, default=str)
+        state_store.save_state('active_trades', data, ACTIVE_TRADES_FILE)
     except Exception as e:
-        print(f"save_active_trades error: {e}")
+        print(f"save_active_trades error: {e}", flush=True)
 
 
 def get_btc_regime():
@@ -7295,11 +7288,49 @@ def scan_loop():
 
 # --- הלולאה הראשית ---
 
+def reconcile_with_exchange():
+    """
+    Startup safety net: compare local active_trades against Bitget's actual
+    open positions. If a local trade is no longer open on the exchange,
+    drop it from the local list (it was closed while the bot was offline).
+    Pure cleanup — never invents trades that aren't in our local record,
+    because we don't have the original entry metadata for them.
+    """
+    global active_trades
+    try:
+        positions = exchange.fetch_positions()
+    except Exception as e:
+        print(f"[Reconcile] fetch_positions failed: {e} — keeping local state as-is", flush=True)
+        return
+
+    open_symbols = set()
+    for p in positions:
+        try:
+            contracts = float(p.get('contracts') or 0)
+        except (TypeError, ValueError):
+            contracts = 0.0
+        if contracts > 0 and p.get('symbol'):
+            open_symbols.add(p['symbol'])
+
+    with trades_lock:
+        before = len(active_trades)
+        kept   = [t for t in active_trades if t.get('symbol') in open_symbols]
+        dropped = [t.get('symbol') for t in active_trades if t.get('symbol') not in open_symbols]
+        active_trades = kept
+
+    if dropped:
+        print(f"[Reconcile] Dropped {len(dropped)} stale local trade(s) not on Bitget: {dropped}", flush=True)
+        save_active_trades()
+    else:
+        print(f"[Reconcile] OK — {before} local trade(s), all match Bitget open positions", flush=True)
+
+
 def main():
     keep_alive()
-    load_wallet()          # ← טעינת ארנק וירטואלי
-    load_active_trades()   # ← שחזור עסקאות פעילות לאחר restart
-    _load_audit_log()      # ← שחזור Audit Log מהדיסק
+    load_wallet()              # ← טעינת ארנק וירטואלי (Replit DB → disk → default)
+    load_active_trades()       # ← שחזור עסקאות פעילות (Replit DB → disk)
+    _load_audit_log()          # ← שחזור Audit Log (Replit DB → disk)
+    reconcile_with_exchange()  # ← השוואה מול עמדות פתוחות ב-Bitget; ניקוי עסקאות שכבר נסגרו
 
     # Thread 1 — Telegram polling
     polling_thread = threading.Thread(target=start_telegram_polling, daemon=True)
