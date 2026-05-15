@@ -3,6 +3,9 @@ import io
 import json
 import signal
 import sys
+
+print("[BOT-BEACON] bot.py process started — beginning imports", flush=True, file=sys.stderr)
+sys.stderr.flush()
 import asyncio
 import requests
 import ccxt

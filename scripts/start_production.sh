@@ -27,7 +27,10 @@ else
 fi
 
 echo "=== [Bot] Starting watchdog.py (auto-restart supervisor) ==="
-$PYTHON_RUN watchdog.py &
+# Redirect watchdog stdout/stderr explicitly to the parent's fds (1 & 2) so
+# they keep flowing even after `exec node` replaces the bash process below.
+# Without this, autoscale loses the background process's pipe on exec.
+$PYTHON_RUN -u watchdog.py >&1 2>&1 &
 BOT_PID=$!
 echo "=== [Bot] Watchdog PID=$BOT_PID — background started ==="
 
