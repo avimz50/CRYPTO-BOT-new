@@ -138,7 +138,7 @@ def run_watchdog():
     signal.signal(signal.SIGINT,  _handle_signal)
 
     python_cmd = _find_python()
-    cmd = python_cmd + ["bot.py"]
+    cmd = python_cmd + ["-u", "bot.py"]
 
     repo_root = os.path.dirname(os.path.abspath(__file__))
     os.chdir(repo_root)
@@ -160,12 +160,15 @@ def run_watchdog():
         print(f"[WATCHDOG] Launching bot.py at {ts}", flush=True)
 
         try:
+            child_env = os.environ.copy()
+            child_env["PYTHONUNBUFFERED"] = "1"
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,
+                env=child_env,
             )
         except Exception as e:
             reason = f"Failed to launch: {e}"
