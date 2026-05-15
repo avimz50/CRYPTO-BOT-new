@@ -3433,7 +3433,7 @@ def handle_status(message):
             f"   ניקוד: *{score}/100* | ATR: `{t.get('atr', 0):.6g}`\n"
             f"   כניסה: `{entry:.6g}` → נוכחי: `{curr_p:.6g}` ({'+' if curr_p>=entry else ''}{dist_pct:.2f}%)\n"
             f"   {pnl_icon} *P&L: `{trade_pnl:+.2f}$`*{tp1_bonus}\n"
-            f"   🛑 SL: `{t['sl']:.6g}` | 🎯 TP: `{t['tp']:.6g}`\n"
+            f"   🛑 SL: `{t['sl']:.6g}` | 🎯 TP1 \\(BE\\): `{t.get('tp1', t['tp']):.6g}` | TP2: `{t['tp']:.6g}`\n"
         )
         if t.get('trailing_sl'):
             ref = "שיא" if direction == 'LONG' else "שפל"
