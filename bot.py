@@ -789,12 +789,17 @@ def api_trades():
 @flask_app.route('/api/wallet')
 def api_wallet():
     data = dict(wallet)
-    unrealized              = _unrealized_cached()
-    data['equity']          = _equity_cached()
-    data['available_balance']= round(wallet.get('balance', STARTING_BALANCE), 2)
-    data['locked_balance']  = round(sum(t.get('margin', MARGIN) for t in active_trades), 2)
-    data['unrealized_pnl']  = unrealized
-    data['active_count']    = len(active_trades)
+    unrealized = _unrealized_cached()
+    # Post-restart fallback: if trades exist but none have a fresh current_price
+    # yet, serve the last-persisted unrealized P&L from wallet.json instead of 0.
+    _no_prices = active_trades and all('current_price' not in t for t in active_trades)
+    if unrealized == 0 and _no_prices:
+        unrealized = wallet.get('unrealized_pnl', 0.0)
+    data['equity']           = _equity_cached()
+    data['available_balance'] = round(wallet.get('balance', STARTING_BALANCE), 2)
+    data['locked_balance']   = round(sum(t.get('margin', MARGIN) for t in active_trades), 2)
+    data['unrealized_pnl']   = unrealized
+    data['active_count']     = len(active_trades)
     return flask_jsonify(data)
 
 @flask_app.route('/api/hot')
@@ -1149,9 +1154,17 @@ def _unrealized_cached() -> float:
     return round(total, 2)
 
 def _equity_cached() -> float:
-    """Equity מהיר מ-cache — ללא קריאת API."""
-    locked = sum(t.get('margin', MARGIN) for t in active_trades)
-    return round(wallet.get('balance', STARTING_BALANCE) + locked + _unrealized_cached(), 2)
+    """Equity מהיר מ-cache — ללא קריאת API.
+    If no trade has a fresh current_price yet (e.g. immediately after a bot
+    restart), fall back to the last value persisted in wallet.json so the
+    dashboard never shows a stale/zero equity during the first 60-second gap."""
+    locked     = sum(t.get('margin', MARGIN) for t in active_trades)
+    unrealized = _unrealized_cached()
+    # Detect the post-restart window: active trades exist but none have been
+    # priced yet (current_price absent → _unrealized_cached returns 0).
+    if unrealized == 0 and active_trades and all('current_price' not in t for t in active_trades):
+        return round(wallet.get('equity', wallet.get('balance', STARTING_BALANCE) + locked), 2)
+    return round(wallet.get('balance', STARTING_BALANCE) + locked + unrealized, 2)
 
 def _append_equity_point():
     hist = wallet.setdefault('equity_history', [])
@@ -3020,6 +3033,21 @@ def track_trades():
             print(f"Track error {trade.get('symbol','?')}: {e}")
 
     save_active_trades()   # שמור גם שינויי BE / Trailing SL
+
+    # Persist the latest equity + unrealized P&L snapshot so the dashboard
+    # always shows an accurate number — even immediately after a bot restart
+    # (before the next track_trades() cycle re-populates current_price).
+    _snap_unrealized = _unrealized_cached()
+    _snap_equity     = _equity_cached()
+    wallet['unrealized_pnl'] = _snap_unrealized
+    wallet['equity']         = _snap_equity
+    # Append to equity history using the already-computed value (avoids a
+    # redundant live API call that _append_equity_point → _get_equity would make).
+    _eq_hist = wallet.setdefault('equity_history', [])
+    _eq_hist.append({'t': now_il().strftime('%m/%d %H:%M'), 'eq': _snap_equity})
+    if len(_eq_hist) > 120:
+        wallet['equity_history'] = _eq_hist[-120:]
+    save_wallet()
 
 # --- דוח יומי ---
 
