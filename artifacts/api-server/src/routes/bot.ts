@@ -18,7 +18,7 @@ const BOT_FLASK_HOST = BOT_BASE_URL.hostname;
 const BOT_FLASK_PNUM = BOT_BASE_URL.port
   ? parseInt(BOT_BASE_URL.port, 10)
   : BOT_BASE_URL.protocol === "https:" ? 443 : 80;
-const _botHttp = BOT_BASE_URL.protocol === "https:" ? https : (http as typeof https);
+const _botHttp = BOT_BASE_URL.protocol === "https:" ? https : (http as unknown as typeof https);
 
 // Use import.meta.url so ROOT is always correct regardless of process.cwd().
 // Compiled bundle lives at: <workspace>/artifacts/api-server/dist/index.mjs
@@ -126,15 +126,17 @@ router.get("/price_history/:symbol", (req, res) => {
 
 /** /status — combined connection/equity/FNG snapshot for the top status bar */
 router.get("/status", async (_req, res) => {
-  const [walletRaw, fngRaw, tradesRaw, btcPrice] = await Promise.all([
+  const [walletRaw, tradesRaw, btcPrice] = await Promise.all([
     fetchFromFlask("/api/wallet",  path.join(PUBLIC, "wallet.json"),       { balance: 200, starting: 200, total_pnl: 0, equity: 200, available_balance: 200, locked_balance: 0, unrealized_pnl: 0 }, "wallet"),
-    fetchFromFlask("/api/fng",     "",                                      { value: 50, label: "Neutral" }),
     fetchFromFlask("/api/trades",  path.join(PUBLIC, "active_trades.json"), { count: 0, trades: [] }, "active_trades"),
     fetchBtcPrice(),
   ]);
   const w = walletRaw as Record<string, number>;
-  const f = fngRaw    as Record<string, string | number>;
   const t = tradesRaw as Record<string, number>;
+  // Flask has no /api/fng route — use the api-server's own FNG cache (fetched
+  // from alternative.me every 15 min by the /fng endpoint). _fngCache starts
+  // at value=50 until first successful fetch; the /fng endpoint is called on
+  // dashboard load so by the time /status is polled the cache is usually warm.
   res.json({
     connected:    true,
     exchange:     "Bitget",
@@ -145,8 +147,8 @@ router.get("/status", async (_req, res) => {
     unrealized:   w.unrealized_pnl   ?? 0,
     realized:     w.total_pnl    ?? 0,
     locked:       w.locked_balance   ?? 0,
-    fng_value:    Number(f.value ?? 50),
-    fng_label:    String(f.label ?? "Neutral"),
+    fng_value:    _fngCache.value,
+    fng_label:    _fngCache.label,
     active_trades: Number(t.count ?? 0),
     btc_price:    btcPrice,
     ts: Date.now(),
