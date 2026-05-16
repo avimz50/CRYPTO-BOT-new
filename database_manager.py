@@ -1,13 +1,14 @@
 """
-database_manager.py — The Single Source of Truth
+database_manager.py — Equity & balance helpers
 
-RULES (enforced by design):
-  - This is the ONLY module that reads/writes to Replit Object Storage.
-  - No other module may call state_store directly or modify wallet state.
-  - Equity formula is immutable and lives only here:
+Responsibilities:
+  - Immutable equity formula (single definition):
       Equity = STARTING_BALANCE + realized_pnl + floating_pnl
+  - reconcile_balance(): enforce balance == equity when no trades are open
+  - calc_equity(), save_wallet() helpers called by bot.py
 
-All other modules (bot.py, strategy_engine.py, telegram UI) call this module.
+State I/O (Object Storage + disk write-through) is handled by state_store.py.
+bot.py calls state_store directly for active_trades, audit, and bootstrap.
 """
 
 from __future__ import annotations

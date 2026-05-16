@@ -7,6 +7,7 @@
  * Call order in fetchFromFlask: Flask → Object Storage → disk → hardcoded default
  */
 import { Storage } from "@google-cloud/storage";
+import type { AuthClient } from "@google-cloud/storage";
 import { IdentityPoolClient } from "google-auth-library";
 
 const BUCKET_ID    = process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID ?? "";
@@ -30,7 +31,7 @@ function _getStorage(): Storage | null {
         },
       },
     });
-    _storage = new Storage({ authClient: authClient as never });
+    _storage = new Storage({ authClient: authClient as unknown as AuthClient });
     return _storage;
   } catch {
     return null;
