@@ -64,6 +64,16 @@ exchange = ccxt.bitget({
     'enableRateLimit': True,
     'options': {'defaultType': 'swap'},
 })
+# Market-data-only instance — NO paper flag.
+# Bitget Paper mode blocks fetch_tickers() (returns 0 pairs).
+# Real swap market data is identical for virtual & live accounts.
+exchange_md = ccxt.bitget({
+    'apiKey': os.environ['BITGET_KEY'],
+    'secret': os.environ['BITGET_SECRET'],
+    'password': os.environ['BITGET_PW'],
+    'enableRateLimit': True,
+    'options': {'defaultType': 'swap'},
+})
 print("[BOOT] ccxt exchange OK.", flush=True)
 
 bot = telebot.TeleBot(os.environ['TELEGRAM_TOKEN'])
@@ -1923,34 +1933,31 @@ def get_hot_candidates():
     מחשב שינוי % ידנית מ-open/last.
     """
     try:
+        # Bitget swap: fetch_tickers() without args returns 0 results.
+        # Must load markets first, then pass explicit symbol list.
+        # exchange_md = real market data instance (no paper flag).
+        if not exchange_md.markets:
+            exchange_md.load_markets()
+        usdt_symbols = [
+            s for s, m in exchange_md.markets.items()
+            if s.endswith('/USDT') and m.get('active')
+        ]
         if VERBOSE_LOG:
-            print("[Scan] Fetching all tickers for hot candidates...")
-        tickers = exchange.fetch_tickers()
+            print(f"[Scan] Fetching {len(usdt_symbols)} USDT swap tickers...")
+        tickers = exchange_md.fetch_tickers(usdt_symbols)
 
         gainers, losers = [], []
-        total_usdt   = 0
-        null_pct     = 0
-        low_vol      = 0
+        low_vol = 0
 
         for symbol, ticker in tickers.items():
-            if not symbol.endswith('/USDT'):
-                continue
-            total_usdt += 1
-
             change_pct = ticker.get('percentage', None)
             volume_usd = ticker.get('quoteVolume', 0) or 0
             last_price = ticker.get('last', 0) or 0
 
-            # Fallback — Virtual/Paper mode often returns percentage=None
-            if change_pct is None:
-                open_price = ticker.get('open', 0) or 0
-                if open_price > 0 and last_price > 0:
-                    change_pct = round((last_price - open_price) / open_price * 100, 2)
-                else:
-                    null_pct += 1
-                    continue
+            if change_pct is None or last_price <= 0:
+                continue
 
-            if volume_usd < 1_000_000 or last_price <= 0:
+            if volume_usd < 1_000_000:
                 low_vol += 1
                 continue
 
@@ -1965,8 +1972,8 @@ def get_hot_candidates():
             elif change_pct < 0:
                 losers.append(row)
 
-        print(f"[Scan] Tickers: {total_usdt} USDT pairs → {len(gainers)}↑ {len(losers)}↓ "
-              f"(filtered: {null_pct} no-price, {low_vol} low-vol)", flush=True)
+        print(f"[Scan] {len(usdt_symbols)} pairs → {len(gainers)}↑ gainers "
+              f"{len(losers)}↓ losers ({low_vol} low-vol filtered)", flush=True)
 
         gainers.sort(key=lambda x: x['change_pct'], reverse=True)
         losers.sort(key=lambda x: x['change_pct'])   # שלילי ביותר קודם

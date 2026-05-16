@@ -1,5 +1,5 @@
 {
-  "scan_time": "2026-05-16T21:38:09+03:00",
+  "scan_time": "2026-05-16T22:18:28+03:00",
   "total_scanned": 3,
   "signals_found": 0,
   "active_trades_count": 0,
@@ -33,7 +33,7 @@
     }
   ],
   "system_message": "אף מטבע לא הגיע לציון 78/100. הטוב ביותר: POWR/USDT עם 0/100",
-  "scan_duration_s": 0.6,
+  "scan_duration_s": 0.3,
   "bubble_watch": [],
   "sandbox_analysis": []
 }
