@@ -47,7 +47,9 @@ plt = None  # יאותחל ב-generate_chart בפעם הראשונה
 mpf = None  # יאותחל ב-generate_chart בפעם הראשונה
 
 # --- הגדרות וחיבורים ---
-import state_store  # Replit DB persistence (durable across deploys)
+import state_store        # Replit Object Storage persistence (durable across deploys)
+import database_manager as db  # Single source of truth — all state I/O goes here
+import strategy_engine  as se  # Pure math — ATR / SL / TP calculations (no wallet access)
 print("[BOOT] bot.py loading — env check...", flush=True)
 _missing = [k for k in ('BITGET_KEY','BITGET_SECRET','BITGET_PW','TELEGRAM_TOKEN','CHAT_ID') if not os.environ.get(k)]
 if _missing:
@@ -792,18 +794,23 @@ def api_trades():
 
 @flask_app.route('/api/wallet')
 def api_wallet():
-    data = dict(wallet)
+    """Serve wallet snapshot. Equity always uses the immutable formula via database_manager."""
     unrealized = _unrealized_cached()
     # Post-restart fallback: if trades exist but none have a fresh current_price
     # yet, serve the last-persisted unrealized P&L from wallet.json instead of 0.
     _no_prices = active_trades and all('current_price' not in t for t in active_trades)
     if unrealized == 0 and _no_prices:
         unrealized = wallet.get('unrealized_pnl', 0.0)
-    data['equity']           = _equity_cached()
+    realized   = wallet.get('total_pnl', 0.0)
+    locked     = round(sum(t.get('margin', MARGIN) for t in active_trades), 2)
+    data = dict(wallet)
+    data['equity']            = db.calc_equity(realized, unrealized)
     data['available_balance'] = round(wallet.get('balance', STARTING_BALANCE), 2)
-    data['locked_balance']   = round(sum(t.get('margin', MARGIN) for t in active_trades), 2)
-    data['unrealized_pnl']   = unrealized
-    data['active_count']     = len(active_trades)
+    data['locked_balance']    = locked
+    data['unrealized_pnl']    = unrealized
+    data['realized_pnl']      = realized
+    data['starting']          = db.STARTING_BALANCE
+    data['active_count']      = len(active_trades)
     return flask_jsonify(data)
 
 @flask_app.route('/api/hot')
@@ -832,23 +839,29 @@ def api_active_trades():
 
 @flask_app.route('/api/status')
 def api_status():
-    """Aggregate status snapshot — combines wallet + FNG + active-trade count.
-    /api/fng and /api/last_scan are already defined in keep_alive.py (same Flask app).
-    Uses cached equity (no live API call) — fast response for dashboard polling.
-    """
+    """Aggregate status snapshot. Equity always uses the immutable formula via database_manager."""
     from keep_alive import _fng_ka
     fng_v   = _fng_ka.get('value') or 50
     fng_lbl = _fng_ka.get('label') or 'Neutral'
+    realized   = wallet.get('total_pnl', 0.0)
+    unrealized = _unrealized_cached()
     return flask_jsonify({
-        'connected':     True,
-        'exchange':      'Bitget VIRTUAL',
-        'equity':        _equity_cached(),
-        'starting':      STARTING_BALANCE,
-        'fng_value':     fng_v,
-        'fng_label':     fng_lbl,
-        'active_trades': len(active_trades),
-        'max_trades':    MAX_TRADES,
-        'updated':       now_il().strftime('%H:%M:%S'),
+        'connected':       True,
+        'exchange':        'Bitget VIRTUAL',
+        'mode':            'VIRTUAL',
+        'starting':        db.STARTING_BALANCE,
+        'realized':        realized,
+        'unrealized':      unrealized,
+        'equity':          db.calc_equity(realized, unrealized),
+        'available':       round(wallet.get('balance', db.STARTING_BALANCE), 2),
+        'locked':          round(sum(t.get('margin', MARGIN) for t in active_trades), 2),
+        'fng_value':       fng_v,
+        'fng_label':       fng_lbl,
+        'active_trades':   len(active_trades),
+        'max_trades':      MAX_TRADES,
+        'btc_price':       wallet.get('btc_price', 0),
+        'ts':              int(now_il().timestamp() * 1000),
+        'updated':         now_il().strftime('%H:%M:%S'),
     })
 
 @flask_app.route('/api/sync', methods=['POST'])
@@ -1139,10 +1152,11 @@ def _get_unrealized_pnl() -> float:
     return round(total, 2)
 
 def _get_equity():
-    """Total equity = available_balance + locked_margin + unrealized_pnl."""
-    locked     = sum(t.get('margin', MARGIN) for t in active_trades)
+    """Total equity = STARTING_BALANCE + realized_pnl + unrealized_pnl.
+    Uses database_manager.calc_equity — the single immutable formula."""
     unrealized = _get_unrealized_pnl()
-    return round(wallet.get('balance', STARTING_BALANCE) + locked + unrealized, 2)
+    realized   = wallet.get('total_pnl', 0.0)
+    return db.calc_equity(realized, unrealized)
 
 def _unrealized_cached() -> float:
     """P&L מ-current_price ששמור בתוך כל trade — ללא קריאת API.
@@ -1162,16 +1176,17 @@ def _unrealized_cached() -> float:
 
 def _equity_cached() -> float:
     """Equity מהיר מ-cache — ללא קריאת API.
-    If no trade has a fresh current_price yet (e.g. immediately after a bot
-    restart), fall back to the last value persisted in wallet.json so the
-    dashboard never shows a stale/zero equity during the first 60-second gap."""
-    locked     = sum(t.get('margin', MARGIN) for t in active_trades)
+    Formula (immutable, from database_manager):
+        Equity = STARTING_BALANCE + realized_pnl + floating_pnl
+    Falls back to last persisted equity during the post-restart window
+    (when trades exist but current_price hasn't been refreshed yet)."""
     unrealized = _unrealized_cached()
-    # Detect the post-restart window: active trades exist but none have been
-    # priced yet (current_price absent → _unrealized_cached returns 0).
+    realized   = wallet.get('total_pnl', 0.0)
+    # Post-restart window: active trades exist but current_price not yet refreshed
     if unrealized == 0 and active_trades and all('current_price' not in t for t in active_trades):
-        return round(wallet.get('equity', wallet.get('balance', STARTING_BALANCE) + locked), 2)
-    return round(wallet.get('balance', STARTING_BALANCE) + locked + unrealized, 2)
+        # Use last-persisted equity until the price-tracking thread catches up (~60s)
+        return wallet.get('equity', db.calc_equity(realized, 0.0))
+    return db.calc_equity(realized, unrealized)
 
 def _append_equity_point():
     hist = wallet.setdefault('equity_history', [])
@@ -1209,12 +1224,18 @@ def load_active_trades():
         print("Active trades loaded: none on record", flush=True)
 
 def save_wallet():
+    """Persist wallet. Equity is ALWAYS recomputed using the immutable formula."""
     try:
-        locked = sum(t.get('margin', MARGIN) for t in active_trades)
+        realized   = wallet.get('total_pnl', 0.0)
+        unrealized = wallet.get('unrealized_pnl', 0.0)
+        locked     = sum(t.get('margin', MARGIN) for t in active_trades)
         snapshot = {
             **wallet,
+            'starting':          db.STARTING_BALANCE,
             'locked_balance':    round(locked, 2),
             'available_balance': round(wallet.get('balance', STARTING_BALANCE), 2),
+            # Equity recomputed every save — never trusted from in-memory value
+            'equity':            db.calc_equity(realized, unrealized),
         }
         state_store.save_state('wallet', snapshot, WALLET_FILE)
     except Exception as e:
@@ -2190,40 +2211,34 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     print(f"  [FNG MODE] {fng_mode['emoji']} {fng_mode['name']} (FNG={fng_v}) "
           f"| SL={sl_pct}% TP1={tp1_pct}% TP={tp_pct}% | BE@50%→TP1")
 
-    # ── ATR-Based Dynamic Targets ────────────────────────────────────────────
+    # ── ATR-Based Dynamic Targets (via strategy_engine — pure math, no wallet access) ──
     # SL  = ATR_SL_MULT  × ATR(1H)   — slow timeframe → stable stop
     # TP1 = ATR_TP1_MULT × ATR(15m)  — fast timeframe → quicker partial + BE
     # TP2 = SL_dist × TARGET_RR_RATIO (RR-based final target, default 1:2)
     atr_1h = 0.0
     if df_1h is not None and USE_ATR_TARGETS:
         try:
-            _atr_s = ta.atr(df_1h['high'], df_1h['low'], df_1h['close'], length=ATR_PERIOD)
-            if _atr_s is not None and len(_atr_s.dropna()) > 0:
-                _atr_v = float(_atr_s.dropna().iloc[-1])
-                if _atr_v > 0:
-                    atr_1h = _atr_v
+            atr_1h = se.calc_atr(df_1h, period=ATR_PERIOD)
+            if atr_1h > 0:
+                # Fetch 15m ATR for faster TP1 trigger
+                atr_15m = 0.0
+                try:
+                    df_15m = get_data(symbol, timeframe=ATR_TP1_TF, limit=ATR_PERIOD * 4)
+                    atr_15m = se.calc_atr(df_15m, period=ATR_PERIOD)
+                except Exception as _atr15_e:
+                    print(f"  [ATR Targets] 15m fetch failed, using 1H for TP1: {_atr15_e}")
 
-                    # Fetch 15m ATR for the faster TP1 trigger
-                    atr_15m = 0.0
-                    try:
-                        df_15m = get_data(symbol, timeframe=ATR_TP1_TF, limit=ATR_PERIOD * 4)
-                        _atr15_s = ta.atr(df_15m['high'], df_15m['low'], df_15m['close'], length=ATR_PERIOD)
-                        if _atr15_s is not None and len(_atr15_s.dropna()) > 0:
-                            atr_15m = float(_atr15_s.dropna().iloc[-1])
-                    except Exception as _atr15_e:
-                        print(f"  [ATR Targets] 15m ATR fetch failed, falling back to 1H for TP1: {_atr15_e}")
-                    if atr_15m <= 0:
-                        atr_15m = atr_1h  # safe fallback
-
-                    sl_dist  = ATR_SL_MULT  * atr_1h
-                    tp1_dist = ATR_TP1_MULT * atr_15m       # TP1 = 1.0 × ATR(15m) → BE trigger + partial close
-                    tp_dist  = sl_dist * TARGET_RR_RATIO    # TP2 at RR (default 1:2)
-                    sl_pct   = round(sl_dist  / price * 100, 4)
-                    tp1_pct  = round(tp1_dist / price * 100, 4)
-                    tp_pct   = round(tp_dist  / price * 100, 4)
-                    tp1_rr   = (tp1_dist / sl_dist) if sl_dist > 0 else 0
-                    print(f"  [ATR Targets] 1H ATR={atr_1h:.6g} 15m ATR={atr_15m:.6g} | "
-                          f"SL={sl_pct:.2f}% TP1={tp1_pct:.2f}%(1:{tp1_rr:.2f} • {ATR_TP1_MULT}×ATR15m) "
+                tgt = se.calc_targets(price, direction, atr_sl=atr_1h, atr_tp1=atr_15m,
+                                      rr_ratio=TARGET_RR_RATIO, hunter=hunter and atr_1h > 0)
+                if tgt:
+                    sl_dist  = tgt['sl_dist']
+                    tp1_dist = tgt['tp1_dist']
+                    tp_dist  = tgt['tp_dist']
+                    sl_pct   = tgt['sl_pct']
+                    tp1_pct  = tgt['tp1_pct']
+                    tp_pct   = tgt['tp_pct']
+                    print(f"  [ATR Targets] 1H ATR={atr_1h:.6g} 15m ATR={tgt['atr_tp1']:.6g} | "
+                          f"SL={sl_pct:.2f}% TP1={tp1_pct:.2f}%(1:{tgt['tp1_rr']:.2f}×ATR15m) "
                           f"TP2={tp_pct:.2f}%(1:{TARGET_RR_RATIO:.0f})")
         except Exception as _atr_e:
             print(f"  [ATR Targets] fallback to FNG%: {_atr_e}")
