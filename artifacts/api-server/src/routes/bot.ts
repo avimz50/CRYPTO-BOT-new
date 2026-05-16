@@ -4,6 +4,7 @@ import path from "path";
 import http from "http";
 import https from "https";
 import { fileURLToPath } from "url";
+import { osGet } from "../lib/objectStorage.js";
 
 const router = Router();
 
@@ -36,23 +37,35 @@ function readJson(filePath: string): unknown {
 }
 
 /**
- * Fetch JSON from internal Flask bot server, fall back to disk cache → default.
+ * Fetch JSON from internal Flask bot server.
+ * Fallback chain: Flask → Object Storage (durable) → disk cache → hardcoded default.
  *
- * The disk cache (artifacts/bot-dashboard/public/*.json) is kept in sync by
- * the Python bot's state_store, which writes through to disk on every read
- * AND write to the durable Object Storage. So disk is always at least as
- * fresh as the last successful state_store call after bot startup.
+ * Object Storage is authoritative and survives Republish; disk cache is a
+ * best-effort write-through maintained by the Python bot. The hardcoded
+ * default is only used when all three sources fail (e.g. first-ever boot
+ * before the bot has written anything).
  *
- * The fourth `dbKey` arg is kept for signature compatibility with callers
- * but is no longer used here — durable reads happen inside the Flask bot.
+ * @param endpoint     Flask API path, e.g. "/api/wallet"
+ * @param fallbackFile Disk-cache path (artifacts/bot-dashboard/public/*.json)
+ * @param fallback     Hardcoded last-resort default value
+ * @param dbKey        Object Storage key (e.g. "wallet", "active_trades")
  */
 function fetchFromFlask(
   endpoint: string,
   fallbackFile: string,
   fallback: unknown,
-  _dbKey = "",
+  dbKey = "",
 ): Promise<unknown> {
-  const fb = () => readJson(fallbackFile) ?? fallback;
+  const diskFb = () => readJson(fallbackFile) ?? fallback;
+
+  const osFallback = async (): Promise<unknown> => {
+    if (dbKey) {
+      const osData = await osGet(dbKey);
+      if (osData != null) return osData;
+    }
+    return diskFb();
+  };
+
   return new Promise((resolve) => {
     const req = _botHttp.get(`${BOT_FLASK_BASE}${endpoint}`, { timeout: 5000 }, (r) => {
       let body = "";
@@ -61,12 +74,12 @@ function fetchFromFlask(
         try {
           resolve(JSON.parse(body));
         } catch {
-          resolve(fb());
+          osFallback().then(resolve);
         }
       });
     });
-    req.on("error", () => resolve(fb()));
-    req.on("timeout", () => { req.destroy(); resolve(fb()); });
+    req.on("error", () => osFallback().then(resolve));
+    req.on("timeout", () => { req.destroy(); osFallback().then(resolve); });
   });
 }
 
