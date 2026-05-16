@@ -1,7 +1,7 @@
 {
-  "scan_time": "2026-05-16T22:18:28+03:00",
-  "total_scanned": 3,
-  "signals_found": 0,
+  "scan_time": "2026-05-16T22:57:50+03:00",
+  "total_scanned": 32,
+  "signals_found": 3,
   "active_trades_count": 0,
   "max_trades": 3,
   "min_score": 78,
@@ -11,29 +11,115 @@
   "market_sentiment_factor": "Fear & Greed=31 (Fear) — מצב ניטרלי",
   "rejected_coins": [
     {
-      "symbol": "POWR/USDT",
+      "symbol": "B/USDT",
+      "direction": "SHORT",
+      "best_score": 70,
+      "reason": "ניקוד 70/100 — MACD חסר (10/25), RSI חלש (10/20)",
+      "scores": {
+        "4H": 70,
+        "1H": 0,
+        "15m": 0
+      }
+    },
+    {
+      "symbol": "TAO/USDT",
+      "direction": "SHORT",
+      "best_score": 65,
+      "reason": "ניקוד 65/100 — MACD חסר (0/25), RSI חלש (10/20)",
+      "scores": {
+        "4H": 0,
+        "1H": 65,
+        "15m": 0
+      }
+    },
+    {
+      "symbol": "AIA/USDT",
       "direction": "LONG",
       "best_score": 0,
       "reason": "BTC BEAR Regime — LONGs חסומים",
       "scores": {}
     },
     {
-      "symbol": "HNT/USDT",
+      "symbol": "LAB/USDT",
       "direction": "LONG",
       "best_score": 0,
       "reason": "BTC BEAR Regime — LONGs חסומים",
       "scores": {}
     },
     {
-      "symbol": "WLD/USDT",
+      "symbol": "PRESPAX/USDT",
       "direction": "LONG",
       "best_score": 0,
       "reason": "BTC BEAR Regime — LONGs חסומים",
       "scores": {}
     }
   ],
-  "system_message": "אף מטבע לא הגיע לציון 78/100. הטוב ביותר: POWR/USDT עם 0/100",
-  "scan_duration_s": 0.3,
-  "bubble_watch": [],
+  "system_message": "3 עסקה/ות נפתחו — סריקה ידנית",
+  "scan_duration_s": 8.7,
+  "bubble_watch": [
+    {
+      "symbol": "BILL/USDT",
+      "change_pct": -22.62,
+      "direction": "SHORT",
+      "price": 0.145425,
+      "volume_usd": 14612908
+    },
+    {
+      "symbol": "JCT/USDT",
+      "change_pct": -22.31,
+      "direction": "SHORT",
+      "price": 0.00319,
+      "volume_usd": 1010473
+    },
+    {
+      "symbol": "AIA/USDT",
+      "change_pct": 21.64,
+      "direction": "LONG",
+      "price": 0.06578,
+      "volume_usd": 1219211
+    },
+    {
+      "symbol": "NAORIS/USDT",
+      "change_pct": -19.01,
+      "direction": "SHORT",
+      "price": 0.03732,
+      "volume_usd": 1775810
+    },
+    {
+      "symbol": "LAB/USDT",
+      "change_pct": 17.38,
+      "direction": "LONG",
+      "price": 4.7,
+      "volume_usd": 6947183
+    },
+    {
+      "symbol": "ILY/USDT",
+      "change_pct": -16.31,
+      "direction": "SHORT",
+      "price": 0.867065,
+      "volume_usd": 2642616
+    },
+    {
+      "symbol": "IRYS/USDT",
+      "change_pct": -13.75,
+      "direction": "SHORT",
+      "price": 0.05111,
+      "volume_usd": 10696458
+    },
+    {
+      "symbol": "B/USDT",
+      "change_pct": -11.45,
+      "direction": "SHORT",
+      "price": 0.39911,
+      "volume_usd": 1619950
+    },
+    {
+      "symbol": "SOON/USDT",
+      "change_pct": -10.29,
+      "direction": "SHORT",
+      "price": 0.1596,
+      "volume_usd": 1389437
+    }
+  ],
   "sandbox_analysis": []
 }
