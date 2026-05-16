@@ -2189,7 +2189,10 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     print(f"  [FNG MODE] {fng_mode['emoji']} {fng_mode['name']} (FNG={fng_v}) "
           f"| SL={sl_pct}% TP1={tp1_pct}% TP={tp_pct}% | BE@50%→TP1")
 
-    # ── ATR-Based Dynamic Targets (1H timeframe) ─────────────────────────────
+    # ── ATR-Based Dynamic Targets ────────────────────────────────────────────
+    # SL  = ATR_SL_MULT  × ATR(1H)   — slow timeframe → stable stop
+    # TP1 = ATR_TP1_MULT × ATR(15m)  — fast timeframe → quicker partial + BE
+    # TP2 = SL_dist × TARGET_RR_RATIO (RR-based final target, default 1:2)
     atr_1h = 0.0
     if df_1h is not None and USE_ATR_TARGETS:
         try:
@@ -2197,15 +2200,30 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
             if _atr_s is not None and len(_atr_s.dropna()) > 0:
                 _atr_v = float(_atr_s.dropna().iloc[-1])
                 if _atr_v > 0:
-                    atr_1h   = _atr_v
-                    sl_dist  = ATR_SL_MULT * atr_1h
-                    tp1_dist = sl_dist * 1.0              # TP1 at 1:1 RR (BE trigger + partial close)
-                    tp_dist  = sl_dist * TARGET_RR_RATIO  # TP2 at dynamic RR (default 1:2)
+                    atr_1h = _atr_v
+
+                    # Fetch 15m ATR for the faster TP1 trigger
+                    atr_15m = 0.0
+                    try:
+                        df_15m = get_data(symbol, timeframe=ATR_TP1_TF, limit=ATR_PERIOD * 4)
+                        _atr15_s = ta.atr(df_15m['high'], df_15m['low'], df_15m['close'], length=ATR_PERIOD)
+                        if _atr15_s is not None and len(_atr15_s.dropna()) > 0:
+                            atr_15m = float(_atr15_s.dropna().iloc[-1])
+                    except Exception as _atr15_e:
+                        print(f"  [ATR Targets] 15m ATR fetch failed, falling back to 1H for TP1: {_atr15_e}")
+                    if atr_15m <= 0:
+                        atr_15m = atr_1h  # safe fallback
+
+                    sl_dist  = ATR_SL_MULT  * atr_1h
+                    tp1_dist = ATR_TP1_MULT * atr_15m       # TP1 = 1.0 × ATR(15m) → BE trigger + partial close
+                    tp_dist  = sl_dist * TARGET_RR_RATIO    # TP2 at RR (default 1:2)
                     sl_pct   = round(sl_dist  / price * 100, 4)
                     tp1_pct  = round(tp1_dist / price * 100, 4)
                     tp_pct   = round(tp_dist  / price * 100, 4)
-                    print(f"  [ATR Targets] 1H ATR={atr_1h:.6g} | "
-                          f"SL={sl_pct:.2f}% TP1={tp1_pct:.2f}%(1:1) TP2={tp_pct:.2f}%(1:{TARGET_RR_RATIO:.0f})")
+                    tp1_rr   = (tp1_dist / sl_dist) if sl_dist > 0 else 0
+                    print(f"  [ATR Targets] 1H ATR={atr_1h:.6g} 15m ATR={atr_15m:.6g} | "
+                          f"SL={sl_pct:.2f}% TP1={tp1_pct:.2f}%(1:{tp1_rr:.2f} • {ATR_TP1_MULT}×ATR15m) "
+                          f"TP2={tp_pct:.2f}%(1:{TARGET_RR_RATIO:.0f})")
         except Exception as _atr_e:
             print(f"  [ATR Targets] fallback to FNG%: {_atr_e}")
 

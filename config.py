@@ -90,11 +90,13 @@ MAX_AUTO_LEVERAGE    = 20     # Cap on auto-calculated leverage
 MIN_AUTO_LEVERAGE    = 2      # Floor on auto-calculated leverage
 
 # ── ATR-Based Dynamic Targets ──────────────────────────────────────────────────
-USE_ATR_TARGETS = True   # Use 1H ATR to set SL/TP1/TP2 instead of fixed %
-ATR_PERIOD      = 14     # ATR calculation period (1H candles)
-ATR_SL_MULT     = 2.0    # SL = Entry ∓ (ATR_SL_MULT  × ATR)
-ATR_TP1_MULT    = 1.5    # TP1 = Entry ± (ATR_TP1_MULT × ATR)  → always triggers BE
-ATR_TP2_MULT    = 3.0    # TP2 = Entry ± (ATR_TP2_MULT × ATR)
+USE_ATR_TARGETS = True   # Use ATR to set SL/TP1/TP2 instead of fixed %
+ATR_PERIOD      = 14     # ATR calculation period
+ATR_SL_TF       = '1h'   # Timeframe for SL ATR (kept on 1H for stability)
+ATR_TP1_TF      = '15m'  # Timeframe for TP1 ATR (faster — 15m for quicker partial+BE)
+ATR_SL_MULT     = 2.0    # SL  = Entry ∓ (ATR_SL_MULT  × ATR_1H)
+ATR_TP1_MULT    = 1.0    # TP1 = Entry ± (ATR_TP1_MULT × ATR_15M)  → BE trigger + partial close
+ATR_TP2_MULT    = 3.0    # TP2 = Entry ± (ATR_TP2_MULT × ATR_1H)  (final target uses TARGET_RR_RATIO)
 
 # ── Bollinger Band Squeeze ─────────────────────────────────────────────────────
 BB_SQUEEZE_RATIO    = 0.50
