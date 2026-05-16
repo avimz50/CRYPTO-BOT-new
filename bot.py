@@ -1190,6 +1190,7 @@ def load_wallet():
     }
     wallet = state_store.load_state('wallet', WALLET_FILE, default)
     print(f"Wallet loaded: balance=${wallet.get('balance', 0):.2f} equity=${_get_equity():.2f}", flush=True)
+    return wallet
 
 def load_active_trades():
     """טוען עסקאות פעילות מ-Replit DB / קובץ JSON לאחר הפעלה מחדש של הבוט."""
