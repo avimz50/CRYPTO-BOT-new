@@ -1,144 +1,39 @@
 {
-  "scan_time": "2026-05-03T22:22:30+03:00",
-  "total_scanned": 33,
-  "signals_found": 3,
-  "active_trades_count": 3,
-  "max_trades": 5,
+  "scan_time": "2026-05-16T21:13:17+03:00",
+  "total_scanned": 3,
+  "signals_found": 0,
+  "active_trades_count": 0,
+  "max_trades": 3,
   "min_score": 78,
-  "btc_regime": "BULL",
-  "fng_value": 47,
-  "fng_label": "Neutral",
-  "market_sentiment_factor": "Fear & Greed=47 (Neutral) — מצב ניטרלי",
+  "btc_regime": "BEAR",
+  "fng_value": 31,
+  "fng_label": "Fear",
+  "market_sentiment_factor": "Fear & Greed=31 (Fear) — מצב ניטרלי",
   "rejected_coins": [
     {
-      "symbol": "BABY/USDT",
-      "direction": "LONG",
-      "best_score": 77,
-      "reason": "ניקוד 77/100 — MACD חסר (10/25), RSI חלש (10/20)",
-      "scores": {
-        "4H": 77,
-        "1H": 0,
-        "15m": 0
-      }
-    },
-    {
-      "symbol": "B/USDT",
+      "symbol": "POWR/USDT",
       "direction": "LONG",
       "best_score": 0,
-      "reason": "EMA200 chase veto (131.9% above EMA200)",
-      "scores": {
-        "4H": 0,
-        "1H": 0,
-        "15m": 0
-      }
+      "reason": "BTC BEAR Regime — LONGs חסומים",
+      "scores": {}
     },
     {
-      "symbol": "TAC/USDT",
+      "symbol": "HNT/USDT",
       "direction": "LONG",
       "best_score": 0,
-      "reason": "EMA200 chase veto (170.8% above EMA200)",
-      "scores": {
-        "4H": 0,
-        "1H": 0,
-        "15m": 0
-      }
+      "reason": "BTC BEAR Regime — LONGs חסומים",
+      "scores": {}
     },
     {
-      "symbol": "AIGENSYN/USDT",
+      "symbol": "WLD/USDT",
       "direction": "LONG",
       "best_score": 0,
-      "reason": "ניקוד 0/100 — כלל הפילטרים",
-      "scores": {
-        "4H": 0,
-        "1H": 0,
-        "15m": 0
-      }
-    },
-    {
-      "symbol": "GENIUS/USDT",
-      "direction": "LONG",
-      "best_score": 0,
-      "reason": "ניקוד 0/100 — כלל הפילטרים",
-      "scores": {
-        "4H": 0,
-        "1H": 0,
-        "15m": 0
-      }
+      "reason": "BTC BEAR Regime — LONGs חסומים",
+      "scores": {}
     }
   ],
-  "system_message": "3 עסקה/ות נפתחו — סריקה ידנית",
-  "scan_duration_s": 12.1,
-  "bubble_watch": [
-    {
-      "symbol": "B/USDT",
-      "change_pct": 32.43,
-      "direction": "LONG",
-      "price": 0.41759,
-      "volume_usd": 6050798
-    },
-    {
-      "symbol": "LAB/USDT",
-      "change_pct": 22.59,
-      "direction": "LONG",
-      "price": 2.27011,
-      "volume_usd": 91365264
-    },
-    {
-      "symbol": "TAC/USDT",
-      "change_pct": 19.11,
-      "direction": "LONG",
-      "price": 0.024782,
-      "volume_usd": 1562249
-    },
-    {
-      "symbol": "AIGENSYN/USDT",
-      "change_pct": 18.93,
-      "direction": "LONG",
-      "price": 0.038426,
-      "volume_usd": 13542364
-    },
-    {
-      "symbol": "NAORIS/USDT",
-      "change_pct": 17.33,
-      "direction": "LONG",
-      "price": 0.11997,
-      "volume_usd": 1848530
-    },
-    {
-      "symbol": "GENIUS/USDT",
-      "change_pct": 16.59,
-      "direction": "LONG",
-      "price": 0.61925,
-      "volume_usd": 2540870
-    },
-    {
-      "symbol": "TRADOOR/USDT",
-      "change_pct": 12.56,
-      "direction": "LONG",
-      "price": 0.8027,
-      "volume_usd": 1180518
-    },
-    {
-      "symbol": "BIO/USDT",
-      "change_pct": 11.53,
-      "direction": "LONG",
-      "price": 0.06382,
-      "volume_usd": 2610974
-    },
-    {
-      "symbol": "SPACE/USDT",
-      "change_pct": -11.12,
-      "direction": "SHORT",
-      "price": 0.007308,
-      "volume_usd": 2254015
-    },
-    {
-      "symbol": "H/USDT",
-      "change_pct": 10.82,
-      "direction": "LONG",
-      "price": 0.2117988,
-      "volume_usd": 1598629
-    }
-  ],
+  "system_message": "אף מטבע לא הגיע לציון 78/100. הטוב ביותר: POWR/USDT עם 0/100",
+  "scan_duration_s": 0.6,
+  "bubble_watch": [],
   "sandbox_analysis": []
 }
