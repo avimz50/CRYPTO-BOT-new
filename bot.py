@@ -1925,12 +1925,12 @@ def send_chart_alert(chart_buf, symbol, caption):
 
 def get_hot_candidates():
     """
-    שלב 1: שליפת כל זוגות USDT מ-Bitget (ווליום $1M+)
+    שלב 1: שליפת כל זוגות USDT מ-Bitget swap (ווליום $1M+)
     שלב 2: Top 15 Gainers (LONG) + Top 15 Losers (SHORT)
     מחזיר: (gainers_list, losers_list)
 
-    Fallback: אם percentage=None (מצב שכיח ב-Virtual/Paper mode),
-    מחשב שינוי % ידנית מ-open/last.
+    שימוש ב-exchange_md (ללא paper flag) כי Bitget Paper mode חוסם
+    fetch_tickers() — מחזיר 0 תוצאות ללא רשימת סימבולים מפורשת.
     """
     try:
         # Bitget swap: fetch_tickers() without args returns 0 results.
@@ -7404,12 +7404,7 @@ def reconcile_with_exchange():
         imported: list[str] = []
 
         for sym, pos in live.items():
-            if sym in local_by_sym:
-                # Keep existing local metadata (sl/tp/score/strategy/...)
-                rebuilt.append(local_by_sym[sym])
-                continue
-
-            # Import missing position with conservative defaults
+            # Extract authoritative financial fields from live position
             try:
                 entry = float(pos.get('entryPrice') or pos.get('info', {}).get('openPriceAvg') or 0)
             except (TypeError, ValueError):
@@ -7427,6 +7422,33 @@ def reconcile_with_exchange():
             pos_size = round(entry * contracts, 2) if entry and contracts else POSITION_SIZE
             margin = round(pos_size / lev, 2) if lev else MARGIN
 
+            if sym in local_by_sym:
+                local = local_by_sym[sym]
+                # Start from authoritative live position fields, then overlay
+                # optional metadata from local record (sl/tp/score/strategy/...).
+                # This ensures financial fields (entry/size/side) are always
+                # accurate even if the bot restarted mid-trade.
+                trade = {
+                    'symbol':        sym,
+                    'direction':     direction,
+                    'entry':         entry,
+                    'pos_size':      pos_size,
+                    'margin':        margin,
+                    'leverage':      lev,
+                    'current_price': local.get('current_price', entry),
+                }
+                # Overlay optional metadata that only the bot tracks
+                _META_KEYS = ('sl', 'tp', 'tp1', 'score', 'strategy', 'track',
+                              'timeframe', 'open_time', 'sniper', 'scalp',
+                              'hunter_mode', 'atr', 'fng_at_entry',
+                              'score_breakdown', 'imported')
+                for k in _META_KEYS:
+                    if k in local:
+                        trade[k] = local[k]
+                rebuilt.append(trade)
+                continue
+
+            # Import position with no local record (opened while bot was down)
             rebuilt.append({
                 'symbol':        sym,
                 'direction':     direction,
@@ -7503,10 +7525,10 @@ def maybe_bootstrap_baseline():
 def main():
     keep_alive()
     maybe_bootstrap_baseline() # ← אם זו הפעלה ראשונה לגרסה הזו — איפוס ל-$200
-    load_wallet()              # ← טעינת ארנק וירטואלי (Object Storage → disk → default)
-    load_active_trades()       # ← שחזור עסקאות פעילות (Object Storage → disk)
+    load_active_trades()       # ← שחזור עסקאות פעילות (Object Storage → disk)  [MUST be before load_wallet]
     _load_audit_log()          # ← שחזור Audit Log (Object Storage → disk)
-    reconcile_with_exchange()  # ← בנייה מחדש של active_trades מהעמדות הפתוחות ב-Bitget
+    reconcile_with_exchange()  # ← בנייה מחדש של active_trades מהעמדות הפתוחות ב-Bitget [MUST be before load_wallet]
+    load_wallet()              # ← טעינת ארנק — חייב לאחר reconcile כדי ש-locked יהיה מדויק
 
     # Thread 1 — Telegram polling
     polling_thread = threading.Thread(target=start_telegram_polling, daemon=True)
