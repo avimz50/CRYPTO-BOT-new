@@ -803,9 +803,12 @@ def api_wallet():
         unrealized = wallet.get('unrealized_pnl', 0.0)
     realized   = wallet.get('total_pnl', 0.0)
     locked     = round(sum(t.get('margin', MARGIN) for t in active_trades), 2)
+    equity     = db.calc_equity(realized, unrealized)
+    available  = db.reconcile_balance(wallet.get('balance', STARTING_BALANCE), equity, locked)
     data = dict(wallet)
-    data['equity']            = db.calc_equity(realized, unrealized)
-    data['available_balance'] = round(wallet.get('balance', STARTING_BALANCE), 2)
+    data['equity']            = equity
+    data['available_balance'] = available
+    data['balance']           = available
     data['locked_balance']    = locked
     data['unrealized_pnl']    = unrealized
     data['realized_pnl']      = realized
@@ -1204,6 +1207,17 @@ def load_wallet():
         'equity_history': [{'t': now_il().strftime('%m/%d %H:%M'), 'eq': STARTING_BALANCE}],
     }
     wallet = state_store.load_state('wallet', WALLET_FILE, default)
+    # Reconcile on load: if no open trades, balance MUST equal equity
+    locked = round(sum(t.get('margin', MARGIN) for t in active_trades), 2)
+    if locked == 0:
+        wallet['unrealized_pnl'] = 0.0
+        equity = db.calc_equity(wallet.get('total_pnl', 0.0), 0.0)
+        corrected = db.reconcile_balance(wallet.get('balance', STARTING_BALANCE), equity, 0.0)
+        if corrected != wallet.get('balance'):
+            print(f"[RECONCILE] balance drift fixed: ${wallet.get('balance', 0):.2f} → ${corrected:.2f}", flush=True)
+            wallet['balance'] = corrected
+            wallet['available_balance'] = corrected
+            save_wallet()   # persist corrected values to OS immediately
     print(f"Wallet loaded: balance=${wallet.get('balance', 0):.2f} equity=${_get_equity():.2f}", flush=True)
     return wallet
 
@@ -1224,18 +1238,24 @@ def load_active_trades():
         print("Active trades loaded: none on record", flush=True)
 
 def save_wallet():
-    """Persist wallet. Equity is ALWAYS recomputed using the immutable formula."""
+    """Persist wallet. Equity and balance are ALWAYS recomputed using immutable rules."""
     try:
         realized   = wallet.get('total_pnl', 0.0)
-        unrealized = wallet.get('unrealized_pnl', 0.0)
-        locked     = sum(t.get('margin', MARGIN) for t in active_trades)
+        # If no active trades, unrealized MUST be 0 — stale values cause equity drift
+        unrealized = 0.0 if not active_trades else wallet.get('unrealized_pnl', 0.0)
+        locked     = round(sum(t.get('margin', MARGIN) for t in active_trades), 2)
+        equity     = db.calc_equity(realized, unrealized)
+        # Reconcile: when no trades are open, available balance MUST equal equity
+        balance    = db.reconcile_balance(wallet.get('balance', STARTING_BALANCE), equity, locked)
         snapshot = {
             **wallet,
             'starting':          db.STARTING_BALANCE,
-            'locked_balance':    round(locked, 2),
-            'available_balance': round(wallet.get('balance', STARTING_BALANCE), 2),
+            'balance':           balance,
+            'locked_balance':    locked,
+            'available_balance': balance,
+            'unrealized_pnl':    round(unrealized, 2),
             # Equity recomputed every save — never trusted from in-memory value
-            'equity':            db.calc_equity(realized, unrealized),
+            'equity':            equity,
         }
         state_store.save_state('wallet', snapshot, WALLET_FILE)
     except Exception as e:

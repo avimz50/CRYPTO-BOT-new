@@ -33,6 +33,20 @@ def calc_equity(realized_pnl: float, floating_pnl: float = 0.0) -> float:
     return round(STARTING_BALANCE + realized_pnl + floating_pnl, 2)
 
 
+def reconcile_balance(balance: float, equity: float, locked: float) -> float:
+    """
+    Enforce: when no margin is locked (active_trades == 0),
+    available balance MUST equal equity.
+
+    Virtual-mode drift rule: the 'balance' field can drift due to
+    incomplete margin returns. This function is the single place that
+    corrects it. Called on every save and every API response.
+    """
+    if locked == 0.0:
+        return round(equity, 2)
+    return round(balance, 2)
+
+
 # ── Wallet ─────────────────────────────────────────────────────────────────────
 def get_wallet() -> dict:
     """Load wallet from Object Storage → disk → default. Never returns None."""
@@ -61,17 +75,21 @@ def save_wallet(wallet: dict, active_trades: list | None = None) -> None:
         active_trades = []
 
     realized   = wallet.get('total_pnl', 0.0)
-    unrealized = wallet.get('unrealized_pnl', 0.0)
-    locked     = sum(t.get('margin', 0.0) for t in active_trades)
+    # If no active trades, unrealized MUST be 0 — stale values cause equity drift
+    unrealized = calc_floating_pnl(active_trades) if active_trades else 0.0
+    locked     = round(sum(t.get('margin', 0.0) for t in active_trades), 2)
+    equity     = calc_equity(realized, unrealized)
+    balance    = reconcile_balance(wallet.get('balance', STARTING_BALANCE), equity, locked)
 
     snapshot = {
         **wallet,
         'starting':          STARTING_BALANCE,
-        'locked_balance':    round(locked, 2),
-        'available_balance': round(wallet.get('balance', STARTING_BALANCE), 2),
+        'balance':           balance,
+        'locked_balance':    locked,
+        'available_balance': balance,
         'unrealized_pnl':    round(unrealized, 2),
         # Equity is ALWAYS recomputed here — never trusted from callers
-        'equity':            calc_equity(realized, unrealized),
+        'equity':            equity,
     }
     state_store.save_state('wallet', snapshot, WALLET_FILE)
 
@@ -179,13 +197,14 @@ def get_portfolio_snapshot(trades: list | None = None) -> dict:
     realized   = wallet.get('total_pnl', 0.0)
     floating   = calc_floating_pnl(trades)
     locked     = round(sum(t.get('margin', 0.0) for t in trades), 2)
-    available  = round(wallet.get('balance', STARTING_BALANCE), 2)
+    equity     = calc_equity(realized, floating)
+    available  = reconcile_balance(wallet.get('balance', STARTING_BALANCE), equity, locked)
 
     return {
         'starting':          STARTING_BALANCE,
         'realized_pnl':      realized,
         'floating_pnl':      floating,
-        'equity':            calc_equity(realized, floating),
+        'equity':            equity,
         'locked_balance':    locked,
         'available_balance': available,
         'active_count':      len(trades),
