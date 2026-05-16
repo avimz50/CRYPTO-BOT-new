@@ -1918,6 +1918,9 @@ def get_hot_candidates():
     שלב 1: שליפת כל זוגות USDT מ-Bitget (ווליום $1M+)
     שלב 2: Top 15 Gainers (LONG) + Top 15 Losers (SHORT)
     מחזיר: (gainers_list, losers_list)
+
+    Fallback: אם percentage=None (מצב שכיח ב-Virtual/Paper mode),
+    מחשב שינוי % ידנית מ-open/last.
     """
     try:
         if VERBOSE_LOG:
@@ -1925,14 +1928,30 @@ def get_hot_candidates():
         tickers = exchange.fetch_tickers()
 
         gainers, losers = [], []
+        total_usdt   = 0
+        null_pct     = 0
+        low_vol      = 0
+
         for symbol, ticker in tickers.items():
             if not symbol.endswith('/USDT'):
                 continue
+            total_usdt += 1
+
             change_pct = ticker.get('percentage', None)
             volume_usd = ticker.get('quoteVolume', 0) or 0
             last_price = ticker.get('last', 0) or 0
 
-            if change_pct is None or volume_usd < 1_000_000 or last_price <= 0:
+            # Fallback — Virtual/Paper mode often returns percentage=None
+            if change_pct is None:
+                open_price = ticker.get('open', 0) or 0
+                if open_price > 0 and last_price > 0:
+                    change_pct = round((last_price - open_price) / open_price * 100, 2)
+                else:
+                    null_pct += 1
+                    continue
+
+            if volume_usd < 1_000_000 or last_price <= 0:
+                low_vol += 1
                 continue
 
             row = {
@@ -1945,6 +1964,9 @@ def get_hot_candidates():
                 gainers.append(row)
             elif change_pct < 0:
                 losers.append(row)
+
+        print(f"[Scan] Tickers: {total_usdt} USDT pairs → {len(gainers)}↑ {len(losers)}↓ "
+              f"(filtered: {null_pct} no-price, {low_vol} low-vol)", flush=True)
 
         gainers.sort(key=lambda x: x['change_pct'], reverse=True)
         losers.sort(key=lambda x: x['change_pct'])   # שלילי ביותר קודם
@@ -1968,7 +1990,7 @@ def get_hot_candidates():
         return top_gainers, top_losers
 
     except Exception as e:
-        print(f"Hot candidates error: {e}")
+        print(f"[Scan] Hot candidates error: {e}", flush=True)
         return [], []
 
 
