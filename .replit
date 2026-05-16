@@ -32,6 +32,6 @@ packages = ["glibcLocales"]
 
 [userenv.shared]
 GDRIVE_FOLDER_ID = "1DkapUVXvVvWydBCETazrJBOQxK-QutU4"
+BOT_URL = "https://crypto-bot-bymzrkhy.replit.app"
 
 [userenv.development]
-BOT_URL = "https://python-script-bymzrkhy.replit.app"
