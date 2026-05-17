@@ -3534,19 +3534,14 @@ def handle_addtrade(message):
             send_msg(f"⚠️ יתרה נמוכה — נדרש ${MARGIN:.0f} | יש ${wallet.get('balance',0):.2f}")
             return
 
-        # SL / TP — סטנדרטי
-        sl_pct = SL_PCT_FIXED   # 3.5%
-        tp_pct = TP_PCT_FIXED   # 10.5%
-        if direction == 'LONG':
-            sl_price  = round(entry_price * (1 - sl_pct / 100), 8)
-            tp_price  = round(entry_price * (1 + tp_pct / 100), 8)
-            tp1_price = round(entry_price * (1 + TP1_PCT_FIXED / 100), 8)
-            be_price  = round(entry_price * (1 + BE_BUFFER_PCT  / 100), 8)
-        else:
-            sl_price  = round(entry_price * (1 + sl_pct / 100), 8)
-            tp_price  = round(entry_price * (1 - tp_pct / 100), 8)
-            tp1_price = round(entry_price * (1 - TP1_PCT_FIXED / 100), 8)
-            be_price  = round(entry_price * (1 - BE_BUFFER_PCT  / 100), 8)
+        # SL / TP — קבועים מ-config
+        tgt_m     = se.calc_targets(entry_price, direction)
+        sl_pct    = tgt_m['sl_pct']
+        tp_pct    = tgt_m['tp_pct']
+        sl_price  = tgt_m['sl_price']
+        tp_price  = tgt_m['tp_price']
+        tp1_price = tgt_m['tp1_price']
+        be_price  = tgt_m['be_price']
 
         trade = {
             'symbol':          symbol,
@@ -4395,11 +4390,11 @@ def handle_fng(message):
     fng_v, fng_lbl = get_fear_greed()
     status = ""
     if fng_v < EXTREME_FEAR_THRESHOLD:
-        status = "🔴 Kill-Switch פעיל — אין עסקאות חדשות"
+        status = "😱 Extreme Fear — חוקים קבועים פעילים"
     elif fng_v <= FEAR_THRESHOLD:
-        status = "🟠 Fear — RSI<30 ל-LONG, SL+1%"
+        status = "🟠 Fear — חוקים קבועים פעילים"
     elif fng_v >= GREED_THRESHOLD:
-        status = "🟢 Greed — פוזיציה 60% + BE מוקדם"
+        status = "🟢 Greed — חוקים קבועים פעילים"
     else:
         status = "🟡 Neutral — מסחר רגיל"
 
@@ -4553,7 +4548,7 @@ def handle_home(message):
         f"⚙️ *פרמטרים*\n"
         f"  📐 סף איתות: *{MIN_SCORE}/100*\n"
         f"  💵 מרג'ין לעסקה: *${MARGIN}*  ·  מינוף: *{LEVERAGE}x*\n"
-        f"  🛡️ SL: *{SL_PCT_FIXED}%*  ·  TP1: *{TP1_PCT_FIXED}%*  ·  TP: *{TP_PCT_FIXED}%*\n"
+        f"  🛡️ SL: *{SL_PCT}%*  ·  TP1: *{TP1_PCT}%*  ·  TP2: *{TP2_PCT}%*\n"
         f"  ⏰ סריקה כל שעה  ·  מעקב כל 60 שניות"
     )
 
@@ -4862,11 +4857,7 @@ def handle_scan(message):
                            "😐" if fng_v_m < 60 else
                            "😊" if fng_v_m < 75 else "🤑")
             btc_regime_now = get_btc_regime()
-            ks_note_m = (
-                " ⚡ BTC BULL — Hunter Active" if fng_v_m < EXTREME_FEAR_THRESHOLD and btc_regime_now == 'BULL'
-                else " 🔒 Kill\\-Switch" if fng_v_m < EXTREME_FEAR_THRESHOLD and btc_regime_now != 'BULL'
-                else ""
-            )
+            ks_note_m = ""
             # Unrealized P&L בזמן אמת לסיכום הסריקה
             try:
                 unreal_m = _get_unrealized_pnl()
@@ -5397,12 +5388,7 @@ def _run_watch_check(symbol: str, entry: dict, silent: bool = False) -> int:
         if score >= MIN_SCORE:
             fng_v, _, _ = sentiment_check("watch")
             btc_r = get_btc_regime()
-            if fng_v < EXTREME_FEAR_THRESHOLD and btc_r == 'BULL':
-                msg += f"\n⚡ _BTC BULL Compass מבטל Kill\\-Switch \\(FNG\\={fng_v}\\) — בסריקה הבאה ייפתח_"
-            elif fng_v < EXTREME_FEAR_THRESHOLD:
-                msg += f"\n⚠️ _Kill\\-Switch פעיל \\(FNG\\={fng_v}\\) — Sniper Exception יבדוק בסריקה_"
-            else:
-                msg += f"\n✅ _הבוט יפתח עסקה בסריקה הבאה אם הציון יחזיק_"
+            msg += f"\n✅ _הבוט יפתח עסקה בסריקה הבאה אם הציון יחזיק_"
         elif score >= 85:
             msg += f"\n_עוד *{MIN_SCORE - score}* נקודות לעסקה_"
 
@@ -6002,32 +5988,28 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
     פותח עסקת Breakout LONG או SHORT — Breakout Strategy.
     margin   = 10% מהיתרה הפנויה (מחושב ע"י הקורא).
     pos_size = margin × LEVERAGE (10x).
-    SL=3.5% | TP1=5% | TP=10.5% (RR 1:3) | Trailing=2.5%.
+    SL=2% | TP1=2% | TP2=4% (RR 1:2) | Trailing=1.5%.
     """
     if wallet.get('balance', STARTING_BALANCE) < margin:
         print(f"[Breakout] insufficient balance for {symbol} — skip")
         return
 
     pos_size  = round(margin * LEVERAGE, 2)
-    sl_pct    = SL_PCT_FIXED    # 3.5%
-    tp_pct    = TP_PCT_FIXED    # 10.5%
-    tp1_pct   = TP1_PCT_FIXED   # 5.0%
-    be_pct    = BE_BUFFER_PCT   # 2.0%
+    tgt_b     = se.calc_targets(price, direction)
+    sl_pct    = tgt_b['sl_pct']
+    tp_pct    = tgt_b['tp_pct']
+    tp1_pct   = tgt_b['tp1_pct']
+    sl_price  = tgt_b['sl_price']
+    tp_price  = tgt_b['tp_price']
+    tp1_price = tgt_b['tp1_price']
+    be_price  = tgt_b['be_price']
 
     if direction == 'LONG':
-        sl_price  = round(price * (1 - sl_pct  / 100), 8)
-        tp_price  = round(price * (1 + tp_pct  / 100), 8)
-        tp1_price = round(price * (1 + tp1_pct / 100), 8)
-        be_price  = round(price * (1 + be_pct  / 100), 8)
         level_lbl = f"4H High `${h4_level:.6g}`"
         dir_emoji = "🚀"
         dir_label = "LONG"
         sl_sign   = "-"; tp_sign = "+"
     else:  # SHORT
-        sl_price  = round(price * (1 + sl_pct  / 100), 8)
-        tp_price  = round(price * (1 - tp_pct  / 100), 8)
-        tp1_price = round(price * (1 - tp1_pct / 100), 8)
-        be_price  = round(price * (1 - be_pct  / 100), 8)
         level_lbl = f"4H Low `${h4_level:.6g}`"
         dir_emoji = "🩸"
         dir_label = "SHORT"
