@@ -1,8 +1,8 @@
 {
-  "scan_time": "2026-05-17T13:32:04+03:00",
-  "total_scanned": 25,
+  "scan_time": "2026-05-17T18:47:20+03:00",
+  "total_scanned": 33,
   "signals_found": 0,
-  "active_trades_count": 3,
+  "active_trades_count": 0,
   "max_trades": 3,
   "min_score": 78,
   "btc_regime": "BEAR",
@@ -11,6 +11,17 @@
   "market_sentiment_factor": "Fear & Greed=27 (Fear) — Hunter Mode: RSI וSL רגילים (לא מוגבל)",
   "rejected_coins": [
     {
+      "symbol": "IRYS/USDT",
+      "direction": "SHORT",
+      "best_score": 65,
+      "reason": "ניקוד 65/100 — MACD חסר (15/25), RSI חלש (10/20)",
+      "scores": {
+        "4H": 65,
+        "1H": 0,
+        "15m": 0
+      }
+    },
+    {
       "symbol": "BSB/USDT",
       "direction": "LONG",
       "best_score": 0,
@@ -32,50 +43,36 @@
       "scores": {}
     },
     {
-      "symbol": "CHZ/USDT",
-      "direction": "LONG",
-      "best_score": 0,
-      "reason": "BTC BEAR Regime — LONGs חסומים",
-      "scores": {}
-    },
-    {
-      "symbol": "SKYAI/USDT",
+      "symbol": "HYPE/USDT",
       "direction": "LONG",
       "best_score": 0,
       "reason": "BTC BEAR Regime — LONGs חסומים",
       "scores": {}
     }
   ],
-  "system_message": "מקסימום עסקאות (3/3) — ממתין לסגירה",
-  "scan_duration_s": 3.8,
+  "system_message": "אף מטבע לא הגיע לציון 78/100. הטוב ביותר: IRYS/USDT עם 65/100",
+  "scan_duration_s": 5.0,
   "bubble_watch": [
     {
       "symbol": "BSB/USDT",
-      "change_pct": 50.1,
+      "change_pct": 47.88,
       "direction": "LONG",
-      "price": 0.56431,
-      "volume_usd": 2867284
-    },
-    {
-      "symbol": "ILY/USDT",
-      "change_pct": -29.93,
-      "direction": "SHORT",
-      "price": 0.791787,
-      "volume_usd": 3450347
+      "price": 0.58164,
+      "volume_usd": 4218409
     },
     {
       "symbol": "AIA/USDT",
-      "change_pct": 17.43,
+      "change_pct": 25.64,
       "direction": "LONG",
-      "price": 0.068797,
-      "volume_usd": 4615690
+      "price": 0.077501,
+      "volume_usd": 7157822
     },
     {
-      "symbol": "AIGENSYN/USDT",
-      "change_pct": 16.24,
-      "direction": "LONG",
-      "price": 0.038578,
-      "volume_usd": 1688835
+      "symbol": "IRYS/USDT",
+      "change_pct": -15.32,
+      "direction": "SHORT",
+      "price": 0.04422,
+      "volume_usd": 36733972
     }
   ],
   "sandbox_analysis": []
