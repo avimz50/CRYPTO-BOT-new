@@ -1,5 +1,5 @@
 """
-market_logic.py — Adaptive Sniper 2026
+market_logic.py — Clean Base Rules 2026
 Pure strategy engine: scoring, pattern detection, position sizing.
 No global bot state. All functions take data as arguments and return results.
 Imports only from config.py + pandas/pandas_ta.
@@ -841,7 +841,7 @@ def score_symbol(df_3h, df_1h, symbol: str, direction: str = 'LONG',
 
         # ── 5. Volume — 30 pts | HARD VETO <×1.5 ─────────────────────────────
         if vol_rat < 1.5:
-            return 0, f"Volume VETO: {vol_rat:.2f}× < 1.5× avg (Adaptive Sniper threshold)", atr_v
+            return 0, f"Volume VETO: {vol_rat:.2f}× < 1.5× avg (min threshold)", atr_v
 
         v_pts = 30 if vol_rat >= 2.0 else 20
         score += v_pts

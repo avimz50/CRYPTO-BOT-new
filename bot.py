@@ -84,15 +84,15 @@ print("[BOOT] Telegram bot OK.", flush=True)
 # ─── Fear & Greed Index — cache גלובלי (מתרענן כל שעה) ───────────────────────
 _fng_cache = {'value': 50, 'label': 'Neutral', 'ts': 0}
 
-# ─── Kill-Switch State Tracker ─────────────────────────────────────────────────
-# None = לא ידוע (הפעלה ראשונה) | True = פעיל | False = כבוי
-_kill_switch_active: bool | None = None
+# ─── FNG State Tracker ──────────────────────────────────────────────────────────
+# None = לא ידוע (הפעלה ראשונה) | True = Extreme Fear | False = רגיל
+_extreme_fear_active: bool | None = None
 
 # get_fear_greed() → moved to market_logic.py
 
 # ─── Global Sentiment Thresholds — loaded via config.load_fng_settings() ──────
 _fng_loaded            = load_fng_settings()   # from config import *
-EXTREME_FEAR_THRESHOLD = _fng_loaded['extreme_fear']  # Kill-Switch: אין עסקאות חדשות בכלל
+EXTREME_FEAR_THRESHOLD = _fng_loaded['extreme_fear']  # Extreme Fear: סף FNG נמוך
 FEAR_THRESHOLD         = _fng_loaded['fear']           # Fear Filter: RSI<30 ל-LONG + SL+1%
 GREED_THRESHOLD        = _fng_loaded['greed']          # Greed Filter: פוזיציה ×60% + BE@+2%
 GREED_EARLY_BE_PCT     = 2.0  # % רווח להפעלת BE מוקדם בחמדנות
@@ -136,46 +136,45 @@ _daily_circuit_notified: bool = False  # מונע ריבוי הודעות על �
 # sentiment_check / set_sentiment_thresholds → market_logic.py
 
 
-def check_kill_switch_change():
+def check_fng_state_change():
     """
-    בודק אם מצב ה-Kill-Switch השתנה מאז הבדיקה הקודמת.
+    בודק אם מצב ה-FNG השתנה מאז הבדיקה הקודמת.
     שולח התראת טלגרם רק כשיש שינוי מצב בפועל.
     """
-    global _kill_switch_active
+    global _extreme_fear_active
     fng_v, lbl = get_fear_greed()
     now_active = fng_v < EXTREME_FEAR_THRESHOLD
 
     # הפעלה ראשונה — רק מאתחל, לא שולח
-    if _kill_switch_active is None:
-        _kill_switch_active = now_active
-        print(f"[Kill-Switch] מצב ראשוני: {'ACTIVE' if now_active else 'INACTIVE'} (FNG={fng_v})")
+    if _extreme_fear_active is None:
+        _extreme_fear_active = now_active
+        print(f"[FNG Monitor] מצב ראשוני: {'EXTREME FEAR' if now_active else 'NORMAL'} (FNG={fng_v})")
         return
 
     # אין שינוי — לא עושים כלום
-    if now_active == _kill_switch_active:
+    if now_active == _extreme_fear_active:
         return
 
     # ── שינוי מצב! ──────────────────────────────────────────────────────────────
-    _kill_switch_active = now_active
+    _extreme_fear_active = now_active
 
     if now_active:
-        # FNG ירד מתחת לסף — Kill-Switch הופעל
-        print(f"[Kill-Switch] הופעל! FNG={fng_v} < {EXTREME_FEAR_THRESHOLD}")
+        # FNG ירד מתחת לסף
+        print(f"[FNG Monitor] Extreme Fear! FNG={fng_v} < {EXTREME_FEAR_THRESHOLD}")
         send_msg(
             f"⚠️ *Market Panic Detected*\n\n"
             f"📊 Fear & Greed Index: *{fng_v}* ({lbl})\n"
-            f"🛑 *Kill\\-Switch ENABLED*\n\n"
-            f"כל פתיחות עסקאות חדשות חסומות לבטיחות\\.\n"
+            f"😱 *Extreme Fear Zone*\n\n"
             f"הבוט ממשיך לנטר עסקאות פעילות קיימות כרגיל\\.\n"
-            f"_ההגבלה תבוטל אוטומטית כשה\\-FNG יעלה מעל {EXTREME_FEAR_THRESHOLD}_"
+            f"_סריקה תמשיך לפעול — חוקים קבועים פעילים_"
         )
     else:
-        # FNG עלה מעל הסף — Kill-Switch בוטל
-        print(f"[Kill-Switch] בוטל! FNG={fng_v} >= {EXTREME_FEAR_THRESHOLD}")
+        # FNG עלה מעל הסף
+        print(f"[FNG Monitor] Recovered! FNG={fng_v} >= {EXTREME_FEAR_THRESHOLD}")
         send_msg(
             f"✅ *Market Sentiment Recovered*\n\n"
             f"📊 Fear & Greed Index: *{fng_v}* ({lbl})\n"
-            f"🟢 *Kill\\-Switch DISABLED*\n\n"
+            f"🟢 *Extreme Fear Zone Exited*\n\n"
             f"סריקת שוק מלאה חזרה לפעולה\\.\n"
             f"הבוט ימשיך לחפש איתותים בסריקה הבאה\\.\n"
             f"_סריקה הבאה: עד שעה_"
@@ -248,8 +247,8 @@ def check_sector_concentration(symbol: str, direction: str) -> tuple[bool, str]:
 # ═══════════════════════════════════════════════════════════════
 # Claude AI Risk Advisor — ADVISOR MODE (לא חוסם עסקאות)
 # ═══════════════════════════════════════════════════════════════
-# Claude Filter Disabled as Judge — Technical Hunter Mode Active.
-# Claude מספק הערת סיכון בלבד. ציון ≥ 60 + BTC BULL = כניסה חובה.
+# Claude Filter Disabled as Judge — Scoring system is the sole entry gate.
+# Claude מספק הערת סיכון בלבד. ציון ≥ MIN_SCORE + BTC Regime = כניסה.
 
 def claude_filter(symbol: str, direction: str, score: int, breakdown: str,
                   price: float, timeframe: str, btc_regime: str,
@@ -492,7 +491,7 @@ def _parse_sandbox_fields(text: str) -> dict:
 def claude_sandbox_analysis(bubble_watch_list: list, btc_regime: str,
                             fng_v: int, fng_lbl: str) -> list:
     """
-    Sandbox Mode — ניתוח חינוכי בלבד כשה-Kill-Switch פעיל.
+    Sandbox Mode — ניתוח חינוכי בלבד ב-Extreme Fear.
     מנתח TOP 2 מ-Bubble Watch עם:
     - נתוני 3 TF (4H/1H/15m)
     - רמות ערך (EMA200 + Fibonacci 0.5/0.618)
@@ -553,7 +552,7 @@ def claude_sandbox_analysis(bubble_watch_list: list, btc_regime: str,
 
             prompt = (
                 f"You are a senior crypto quant analyst. This is an EDUCATIONAL sandbox — "
-                f"NO trades are being opened (Kill-Switch ACTIVE, FNG={fng_v}).\n\n"
+                f"This is an EDUCATIONAL analysis only (Extreme Fear, FNG={fng_v}).\n\n"
                 f"=== COIN ===\n"
                 f"Symbol: {symbol}  |  Direction: {direction}  |  24h Change: {change_24:+.1f}%\n"
                 f"Current Price: {price:.6g}\n"
@@ -570,7 +569,7 @@ def claude_sandbox_analysis(bubble_watch_list: list, btc_regime: str,
                 f"=== MARKET CONTEXT ===\n"
                 f"BTC Regime: {btc_regime}  |  Fear & Greed: {fng_v} ({fng_lbl})\n\n"
                 f"=== YOUR STRUCTURED RESPONSE ===\n"
-                f"Line 1: APPROVE or REJECT (single word — would you trade this if Kill-Switch was OFF?)\n"
+                f"Line 1: APPROVE or REJECT (single word — would you trade this based on technicals alone?)\n"
                 f"Line 2: 1-sentence analysis of the 3-TF RSI alignment and whether the move is overextended\n"
                 f"Line 3: ENTRY_ZONE: [low_price] - [high_price]  "
                 f"(the ideal buy/short zone using EMA200 or Fib levels; use the pre-calculated values above)\n"
@@ -809,7 +808,7 @@ def api_fng_settings_get():
         'fear':         FEAR_THRESHOLD,
         'greed':        GREED_THRESHOLD,
         'ranges': {
-            'extreme_fear': {'min': 5,  'max': 25, 'desc': 'Kill-Switch — אין עסקאות חדשות'},
+            'extreme_fear': {'min': 5,  'max': 25, 'desc': 'Extreme Fear — חוקים קבועים פעילים'},
             'fear':         {'min': 15, 'max': 45, 'desc': 'Fear — RSI<30 ל-LONG + SL+1%'},
             'greed':        {'min': 55, 'max': 85, 'desc': 'Greed — פוזיציה 60% + BE מוקדם'},
         }
@@ -1176,7 +1175,7 @@ def save_wallet():
         print(f"Wallet save error: {e}", flush=True)
 
 def wallet_deduct(amount: float = MARGIN):
-    """קיזוז מרג'ין בפתיחת עסקה. amount=MARGIN רגיל, MARGIN*0.5 ל-Sniper."""
+    """קיזוז מרג'ין בפתיחת עסקה. amount=MARGIN (ברירת מחדל $20)."""
     wallet['balance']       = round(wallet.get('balance', STARTING_BALANCE) - amount, 2)
     wallet['trades_opened'] = wallet.get('trades_opened', 0) + 1
     _append_equity_point()
@@ -2469,7 +2468,7 @@ def track_trades():
             if trade['phase'] == 'initial':
 
                 # ── 0a. STAGNATION EXIT — אם תזת המומנטום לא התממשה ב-4 שעות ──────
-                # רלוונטי רק ל-Sniper/Breakout/SOL (לא Scalp/Cliff שיש להם timeout משלהם)
+                # רלוונטי רק ל-Breakout/SOL/Main (לא Scalp/Cliff שיש להם timeout משלהם)
                 if not trade.get('scalp') and not trade.get('cliff'):
                     try:
                         opened_dt   = datetime.fromisoformat(trade.get('opened_at', now_il().isoformat()))
@@ -2650,7 +2649,7 @@ def track_trades():
                             f"75% נשאר פתוח · SL: `{trade['sl']:.6g}`"
                         )
 
-                # 2. TP1 — סגור 50%, הפעל Trailing (+ auto-BE ב-Hunter Mode)
+                # 2. TP1 — סגור 50%, הפעל Trailing
                 if tp1_hit(current_price):
                     dist_pct  = abs(current_price - entry) / entry * 100
                     tp1_pnl   = round(half * dist_pct / 100, 2)
@@ -4404,11 +4403,11 @@ def handle_fng(message):
         f"📡 *מדד נוכחי:* {fng_v} ({fng_lbl})\n"
         f"⚡ *סטטוס:* {status}\n\n"
         f"*⚙️ ספים פעילים:*\n"
-        f"  🔴 Kill-Switch: FNG < *{EXTREME_FEAR_THRESHOLD}* (טווח: 5–25)\n"
-        f"  🟠 Fear:        FNG ≤ *{FEAR_THRESHOLD}* (טווח: 15–45)\n"
-        f"  🟢 Greed:       FNG ≥ *{GREED_THRESHOLD}* (טווח: 55–85)\n\n"
+        f"  😱 Extreme Fear: FNG < *{EXTREME_FEAR_THRESHOLD}* (טווח: 5–25)\n"
+        f"  🟠 Fear:         FNG ≤ *{FEAR_THRESHOLD}* (טווח: 15–45)\n"
+        f"  🟢 Greed:        FNG ≥ *{GREED_THRESHOLD}* (טווח: 55–85)\n\n"
         f"*🔧 לשינוי:*\n"
-        f"  `/setfng extreme 15` — שנה Kill-Switch\n"
+        f"  `/setfng extreme 15` — שנה Extreme Fear\n"
         f"  `/setfng fear 25`    — שנה Fear\n"
         f"  `/setfng greed 75`   — שנה Greed"
     )
@@ -4439,7 +4438,7 @@ def handle_setfng(message):
         return
 
     ranges = {
-        'extreme': (5,  25,  'Kill-Switch'),
+        'extreme': (5,  25,  'Extreme Fear'),
         'fear':    (15, 45,  'Fear'),
         'greed':   (55, 85,  'Greed'),
     }
@@ -4471,9 +4470,9 @@ def handle_setfng(message):
         f"✅ *{label} עודכן ונשמר*\n\n"
         f"  לפני: *{old_val}* → אחרי: *{val}*\n\n"
         f"📊 *מצב נוכחי — FNG={fng_v}:*\n"
-        f"  🔴 Kill-Switch: FNG < *{EXTREME_FEAR_THRESHOLD}*\n"
-        f"  🟠 Fear:        FNG ≤ *{FEAR_THRESHOLD}*\n"
-        f"  🟢 Greed:       FNG ≥ *{GREED_THRESHOLD}*\n\n"
+        f"  😱 Extreme Fear: FNG < *{EXTREME_FEAR_THRESHOLD}*\n"
+        f"  🟠 Fear:         FNG ≤ *{FEAR_THRESHOLD}*\n"
+        f"  🟢 Greed:        FNG ≥ *{GREED_THRESHOLD}*\n\n"
         f"_ניתן לשנות שוב עם /setfng_"
     )
 
@@ -4520,7 +4519,7 @@ def handle_home(message):
         f"  /ping       — בדיקת חיות הבוט\n\n"
         f"📊 *הגדרות מדד הפחד (FNG)*\n"
         f"  /fng                  — הצג ספים נוכחיים + טווחים מותרים\n"
-        f"  /setfng extreme 15    — שנה Kill-Switch (5–25)\n"
+        f"  /setfng extreme 15    — שנה Extreme Fear (5–25)\n"
         f"  /setfng fear 25       — שנה Fear (15–45)\n"
         f"  /setfng greed 75      — שנה Greed (55–85)\n\n"
         f"📰 *חדשות וניתוח*\n"
@@ -4835,7 +4834,7 @@ def handle_scan(message):
             energy_candidates = [{'symbol': s} for s in ENERGY_GEO]
             signals_found += _scan_batch(energy_candidates, 'LONG', btc_regime, all_rejections_m)
 
-            # ── Sandbox Mode (Kill-Switch פעיל) ───────────────────────────────
+            # ── Sandbox Mode (Extreme Fear) ───────────────────────────────────
             sandbox_m = []
             if fng_v_m < EXTREME_FEAR_THRESHOLD and bubble_watch_m:
                 print(f"[Sandbox] Running educational analysis (manual scan)...")
@@ -5003,13 +5002,13 @@ def trade_monitor_loop():
     רץ בThread נפרד.
     בודק SL / TP / BE / Trailing כל 60 שניות — ללא תלות בסריקה.
     שולח Heartbeat כל 30 דקות כשיש עסקאות פעילות.
-    בודק שינוי מצב Kill-Switch (FNG) בכל איטרציה.
+    בודק שינוי מצב FNG בכל איטרציה.
     """
     print("Trade monitor started — checking every 60s")
     while True:
         try:
-            # ── Kill-Switch state change detection ──
-            check_kill_switch_change()
+            # ── FNG state change detection ──
+            check_fng_state_change()
 
             if active_trades:
                 track_trades()
@@ -5087,7 +5086,7 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
             print(f"[Slots] 🔒 {len(active_trades)}/{MAX_TRADES} slots full — scanning for priority comparison")
         symbol = candidate['symbol']
 
-        # ── Slow-Movers Blacklist — Adaptive Sniper ignores low-momentum coins ──
+        # ── Slow-Movers Blacklist — low-momentum coins skipped ──
         if symbol in SLOW_MOVERS:
             print(f"  [SLOW_MOVERS] {symbol} — blacklisted (low momentum), skipping")
             if rejected_out is not None:
@@ -5212,8 +5211,7 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                 except Exception:
                     _last_rsi = _last_ema = None
 
-                # ── Fear Filter RSI: REMOVED — Adaptive Sniper uses RSI_VETO_LONG (85) only ──
-                # FNG sentiment controlled via EXTREME_FEAR_LONG_MIN_SCORE for LONGs.
+                # ── Fear Filter RSI: REMOVED — RSI_VETO_LONG (85) only ──
 
                 # ── IG-2: Multi-TF RSI + Volume context for Claude ──────────────
                 try:
@@ -5229,8 +5227,7 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                 _change_24h = candidate.get('change', None)
 
                 # ── Claude Risk Advisor (ADVISOR MODE — אינו חוסם) ──────────────
-                # Claude Filter Disabled as Judge — Technical Hunter Mode Active.
-                # ציון ≥ MIN_SCORE + BTC Regime = כניסה. Claude = הערה בלבד.
+                # Claude = הערה בלבד. ציון ≥ MIN_SCORE + BTC Regime = כניסה.
                 _, claude_note = claude_filter(
                     symbol=symbol, direction=direction, score=score,
                     breakdown=breakdown, price=price, timeframe=chosen_tf,
@@ -5675,7 +5672,7 @@ def open_cliff_trade(symbol: str, price: float, direction: str, move_pct: float,
     """
     פותח עסקת High-Velocity (LONG "Rocket" / SHORT "Cliff"):
       SL=1.5% ראשוני · Trailing 1% מהשיא · Break-Even ב-1.5% · TP 3% · תוקף 30 דקות
-    ישיר — ללא Kill-Switch, BTC filter, או 4H/1H אישור.
+    ישיר — ללא BTC filter או 4H/1H אישור.
     """
     global active_trades
 
@@ -5772,7 +5769,7 @@ def scalp_scan_loop():
     רץ כל 5 דקות ומחפש:
       • Scalp-Short: מטבע עלה >30% ב-24h + RSI15m>82 + מחיר מתחת EMA9(5m)
       • Quick-Long:  מטבע ירד >20% ב-2h + RSI15m<18 + קפיצה 1% מהשפל
-    עוקף Kill-Switch (Mean Reversion, לא trend-following).
+    Mean Reversion — לא trend-following.
     """
     print("Thread 6 (Scalp Scanner) started.")
     time.sleep(90)   # המתן שה-bot יתייצב לפני הסריקה הראשונה
@@ -6782,10 +6779,10 @@ def scan_loop():
 
             print(f"Scan done — {signals_found} signal(s) / {total_scanned} scanned")
 
-            # ── Claude Sandbox Mode (Kill-Switch פעיל בלבד) ─────────────────
+            # ── Claude Sandbox Mode (Extreme Fear בלבד) ─────────────────────
             sandbox_results = []
             if fng_v_loop < EXTREME_FEAR_THRESHOLD and bubble_watch_list:
-                print(f"[Sandbox] Kill-Switch active (FNG={fng_v_loop}) — running educational Claude analysis...")
+                print(f"[Sandbox] Extreme Fear (FNG={fng_v_loop}) — running educational Claude analysis...")
                 sandbox_results = claude_sandbox_analysis(
                     bubble_watch_list, btc_regime, fng_v_loop, fng_lbl_loop
                 )
@@ -6835,7 +6832,7 @@ def scan_loop():
             if signals_found == 0 and len(active_trades) >= MAX_TRADES:
                 sys_msg = f"מקסימום עסקאות פעיל ({MAX_TRADES}/{MAX_TRADES}) — ממתין לסגירת עסקה לפני פתיחה חדשה"
             elif signals_found == 0 and fng_v_loop < EXTREME_FEAR_THRESHOLD:
-                sys_msg = f"Kill-Switch Sentiment: FNG={fng_v_loop} (Extreme Fear) — הסריקה בוטלה לבטיחות"
+                sys_msg = f"Extreme Fear: FNG={fng_v_loop} — חוקים קבועים פעילים, ממשיך לסרוק"
             elif signals_found == 0 and btc_regime == 'BEAR':
                 sys_msg = f"BTC BEAR Regime — כל ה-LONGs חסומים; SHORTs בלבד מאושרים"
             elif signals_found == 0 and btc_regime == 'BULL':
@@ -7051,15 +7048,15 @@ def main():
 
     if IS_DEPLOYED:
         send_msg(
-            "🟢 *SYSTEM READY — Aggressive Hunter 2026*\n"
+            "🟢 *SYSTEM READY — Clean Base Rules 2026*\n"
             f"{'─' * 30}\n\n"
-            "💰 *יתרה:* $200\\.00 \\(איפוס מלא\\)\n"
-            "📊 *P&L:* $0\\.00\n\n"
+            f"💰 *יתרה:* ${wallet.get('balance', STARTING_BALANCE):.2f}\n"
+            f"📊 *P&L ממומש:* ${wallet.get('realized_pnl', 0):.2f}\n\n"
             "⚙️ *פרמטרים:*\n"
-            "  📌 מרג'ין: *$50* | מינוף: *10×*\n"
-            "  🎯 מקסימום עסקאות: *3*\n"
-            "  🛑 SL: *2\\.5%* | TP1: *3%* \\(50%\\) | TP2: *10%*\n"
-            "  📍 Trailing: *1%* מהשיא \\(מופעל ב-\\+1\\.5%\\)\n\n"
+            f"  📌 מרג'ין: *${MARGIN}* | מינוף: *{LEVERAGE}×*\n"
+            f"  🎯 מקסימום עסקאות: *{MAX_TRADES}*\n"
+            f"  🛑 SL: *{SL_PCT}%* | TP1: *{TP1_PCT}%* \\(50%\\) | TP2: *{TP2_PCT}%*\n"
+            "  📍 Trailing: *1\\.5%* מהשיא \\(מופעל ב\\-TP1\\)\n\n"
             "⚡ *לולאות פעילות:*\n"
             "  🔍 סריקה:         כל *60 דקות* ✅\n"
             "  📡 Top20 Breakout: כל *15 דקות* ✅\n"
