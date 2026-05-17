@@ -647,20 +647,17 @@ def save_scan_results(
     # top 5 near-misses — הגבוהים ביותר שלא עברו
     near_misses = sorted(all_rejections, key=lambda x: x.get('best_score', 0), reverse=True)[:5]
 
-    # Sentiment impact sentence — Hunter Mode: BTC Regime is the master, FNG is informational only
-    btc_r_now = get_btc_regime()
-    if fng_value < 20 and btc_r_now == 'BULL':
-        sentiment_note = f"Fear & Greed={fng_value} (Extreme Fear) — ⚡ BTC BULL Compass: Kill-Switch מבוטל! סורק בחופשיות"
-    elif fng_value < 20:
-        sentiment_note = f"Fear & Greed={fng_value} (Extreme Fear) — BTC BEAR: Kill-Switch פעיל (ממתין לסיגנל BTC)"
-    elif fng_value <= 30:
-        sentiment_note = f"Fear & Greed={fng_value} (Fear) — Hunter Mode: RSI וSL רגילים (לא מוגבל)"
+    # Sentiment note — informational, no longer affects trade sizing/rules
+    if fng_value < 25:
+        sentiment_note = f"Fear & Greed={fng_value} (Extreme Fear) — Fixed rules apply"
+    elif fng_value <= 40:
+        sentiment_note = f"Fear & Greed={fng_value} (Fear) — Fixed rules apply"
     elif fng_value >= 75:
-        sentiment_note = f"Fear & Greed={fng_value} (Extreme Greed) — Greed: פוזיציה צומצמה ל-60%"
+        sentiment_note = f"Fear & Greed={fng_value} (Extreme Greed) — Fixed rules apply"
     elif fng_value >= 60:
-        sentiment_note = f"Fear & Greed={fng_value} (Greed) — זהירות קלה"
+        sentiment_note = f"Fear & Greed={fng_value} (Greed) — Fixed rules apply"
     else:
-        sentiment_note = f"Fear & Greed={fng_value} ({fng_label}) — מצב ניטרלי"
+        sentiment_note = f"Fear & Greed={fng_value} ({fng_label}) — Fixed rules apply"
 
     report = {
         'scan_time':               now_il().isoformat(timespec='seconds'),
@@ -1428,9 +1425,7 @@ def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_pric
         'fng_at_entry':    trade.get('fng_at_entry'),
         'atr':             trade.get('atr', 0.0),
         'duration_min':    duration_m,
-        'sniper':          trade.get('sniper', False),
         'scalp':           trade.get('scalp', False),
-        'hunter_mode':     trade.get('hunter_mode', False),
         # ── Auto-generated lesson ────────────────────────────────────────
         'lesson': _generate_lesson(
             close_reason, pnl_usd, duration_m,
@@ -2090,7 +2085,7 @@ def track_badge(track: str) -> str:
 
 def open_demo_trade(symbol, price, reason, df_3h=None,
                     direction='LONG', score=0, atr=0, timeframe='4H', tf_reason='',
-                    rsi=None, ema200=None, fng_v=None, sniper_mode=False,
+                    rsi=None, ema200=None, fng_v=None,
                     ob_found=None, ob_high=None, ob_low=None, df_ob=None,
                     df_1h=None):
     """
@@ -2178,13 +2173,10 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         'margin':               effective_margin,
         'leverage':             leverage,
         'fng_at_entry':         fng_v,
-        'sniper':               False,
         'track':                'Swing',
         'vol_usd':              round(vol_usd),
         'change_24h':           round(change_24h, 2),
         'slippage_pct':         0.0,
-        'hunter_mode':          False,
-        'hunter_be_on_tp1':     False,
         'ob_found':             ob_found,
         'ob_high':              ob_high,
         'ob_low':               ob_low,
@@ -2338,27 +2330,6 @@ def track_trades():
                             f"מחיר: `{current_price:.6g}` (+{be_trigger_pct}% — 50% of way to TP1)\n"
                             f"SL הועבר לכניסה: `{entry:.6g}` | {tbadge}\n"
                             f"💼 {scalp_lev}x · ההון מוגן!"
-                        )
-
-                # ── Scalp Hunter Mode: TP1 → auto-BE + go trailing ───────────
-                if trade.get('hunter_be_on_tp1') and not trade.get('tp1_triggered'):
-                    tp1_hit_s = ((direction == 'LONG' and current_price >= trade.get('tp1', float('inf'))) or
-                                 (direction == 'SHORT' and current_price <= trade.get('tp1', 0)))
-                    if tp1_hit_s:
-                        half_pnl    = round(scalp_pos / 2 * (current_price - entry) / entry, 2) if direction == 'LONG' \
-                                      else round(scalp_pos / 2 * (entry - current_price) / entry, 2)
-                        trade['tp1_triggered'] = True
-                        trade['tp1_pnl']       = half_pnl
-                        trade['sl']            = entry        # BE immediata
-                        trade['be_triggered']  = True
-                        daily_stats['total_pnl'] += half_pnl
-                        send_msg(
-                            f"🎯 *Scalp TP1 הושג — {sym.replace('/USDT','')}!* [Hunter Mode]\n"
-                            f"מחיר: `{current_price:.6g}` | {direction} | {tbadge}\n"
-                            f"50% נסגרו · ✅ *Profit at TP1: +${half_pnl}*\n"
-                            f"🔒 *SL הועבר ל-BE אוטומטית!* `{entry:.6g}`\n"
-                            f"🎯 _Precision Hunter: שאר 50% ממשיכים ל-TP 1:3_\n"
-                            f"📈 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                         )
 
                 if tp_hit_s or sl_hit_s or time_exp:
@@ -2697,9 +2668,8 @@ def track_trades():
                     # TP1 hit → always move SL to Break Even (entry price)
                     trade['sl']           = entry
                     trade['be_triggered'] = True
-                    hunter_label = " [Hunter Mode]" if trade.get('hunter_be_on_tp1') else ""
                     send_msg(
-                        f"🎯 *TP1 הושג — {sym}!*{hunter_label}\n"
+                        f"🎯 *TP1 הושג — {sym}!*\n"
                         f"מחיר: `{current_price:.6g}` | {direction} | {tbadge}\n"
                         f"50% נסגרו · ✅ *Profit at TP1: +${tp1_pnl}* (+{tp1_pct_r}%)\n"
                         f"🔒 *SL הועבר ל-BE אוטומטית!* `{entry:.6g}` — הון מוגן\n"
@@ -3604,7 +3574,6 @@ def handle_addtrade(message):
             'pos_size':        POSITION_SIZE,
             'margin':          MARGIN,
             'fng_at_entry':    None,
-            'sniper':          False,
             'scalp':           False,
             'manual':          True,
         }
@@ -4024,7 +3993,6 @@ def _register_sol_trade(price: float, sl: float, tp: float, rsi: float | None):
         'pos_size':        POSITION_SIZE,
         'margin':          MARGIN,
         'fng_at_entry':    None,
-        'sniper':          False,
         'scalp':           False,
         'sol_strategy':    True,
     }
@@ -5606,15 +5574,12 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
         'margin':          eff_margin,
         'leverage':        leverage,
         'fng_at_entry':    fng_v_now,
-        'sniper':          False,
         'scalp':           True,
         'scalp_opened_ts': time.time(),
         'track':           track,
         'vol_usd':         round(vol_usd),
         'change_24h':      round(change_24h, 2),
         'slippage_pct':    0.0,
-        'hunter_mode':     False,
-        'hunter_be_on_tp1': False,
     }
     place_order(trade, eff_margin)
 
@@ -5790,7 +5755,6 @@ def open_cliff_trade(symbol: str, price: float, direction: str, move_pct: float,
         'pos_size':        CLIFF_POS_SIZE,
         'margin':          CLIFF_MARGIN,
         'fng_at_entry':    None,
-        'sniper':          False,
         'scalp':           False,
         'cliff':           True,
         'cliff_opened_ts': time.time(),
@@ -6113,7 +6077,6 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
         'pos_size':        pos_size,
         'margin':          margin,
         'fng_at_entry':    fng_v,
-        'sniper':          False,
     }
     place_order(trade, margin)
 
@@ -6997,8 +6960,8 @@ def reconcile_with_exchange():
                 }
                 # Overlay optional metadata that only the bot tracks
                 _META_KEYS = ('sl', 'tp', 'tp1', 'score', 'strategy', 'track',
-                              'timeframe', 'open_time', 'sniper', 'scalp',
-                              'hunter_mode', 'atr', 'fng_at_entry',
+                              'timeframe', 'open_time', 'scalp',
+                              'atr', 'fng_at_entry',
                               'score_breakdown', 'imported')
                 for k in _META_KEYS:
                     if k in local:
@@ -7047,44 +7010,8 @@ BOOTSTRAP_VERSION = "v3_simplification_2026_05_17"
 
 
 def maybe_bootstrap_baseline():
-    """
-    On first boot for BOOTSTRAP_VERSION v3, clear active trades and preserve
-    $13.05 realized P&L (equity=$213.05). Subsequent boots skip this entirely.
-    """
-    marker = state_store.os_get('bootstrap_version')
-    if marker == BOOTSTRAP_VERSION:
-        print(f"[STATE] bootstrap up-to-date ({BOOTSTRAP_VERSION}) — keeping live state", flush=True)
-        return
-
-    print(
-        f"[STATE] bootstrap {marker!r} → {BOOTSTRAP_VERSION!r}: "
-        f"clearing trades, carrying forward $13.05 realized P&L",
-        flush=True,
-    )
-    carried_pnl = 13.05
-    eq = round(STARTING_BALANCE + carried_pnl, 2)
-    fresh_wallet = {
-        'balance':           eq,
-        'starting':          STARTING_BALANCE,
-        'total_pnl':         carried_pnl,
-        'trades_opened':     0,
-        'total_wins':        0,
-        'total_losses':      0,
-        'locked_balance':    0.0,
-        'available_balance': eq,
-        'unrealized_pnl':    0.0,
-        'equity':            eq,
-        'equity_history':    [{'t': now_il().strftime('%m/%d %H:%M'), 'eq': eq}],
-        'bootstrap':         BOOTSTRAP_VERSION,
-    }
-    state_store.reset_state('wallet',        fresh_wallet,
-                             WALLET_FILE)
-    state_store.reset_state('active_trades', {'updated': now_il().strftime('%H:%M:%S'), 'count': 0, 'trades': []},
-                             ACTIVE_TRADES_FILE)
-    state_store.reset_state('trade_audit',   {'updated': now_il().isoformat(timespec='seconds'), 'count': 0, 'trades': []},
-                             AUDIT_LOG_FILE)
-    state_store.os_set('bootstrap_version', BOOTSTRAP_VERSION)
-    print(f"[STATE] Bootstrap done — equity=${eq:.2f} realized_pnl=${carried_pnl:.2f}", flush=True)
+    """Delegates to database_manager.reset_to_clean_state() — single bootstrap authority."""
+    db.reset_to_clean_state()
 
 
 def main():

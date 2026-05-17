@@ -182,9 +182,12 @@ SECTOR_MAP: dict[str, str] = {
     'LINK': 'Oracle', 'BAND': 'Oracle', 'TRB': 'Oracle', 'API3': 'Oracle',
 }
 
+# ── Trade Capacity — fixed constant, runtime-adjustable via /slots ──────────────
+MAX_TRADES: int = 3          # hard cap: never more than 3 concurrent open trades
+
 # ── FNG Defaults ───────────────────────────────────────────────────────────────
 FNG_DEFAULTS = {'extreme_fear': 25, 'fear': 30, 'greed': 70}
-CONFIG_DEFAULTS = {'max_trades': 3}
+CONFIG_DEFAULTS = {'max_trades': MAX_TRADES}
 
 # ── Heartbeat / Audit ──────────────────────────────────────────────────────────
 HEARTBEAT_INTERVAL = 1800   # 30 minutes
