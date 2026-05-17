@@ -54,6 +54,36 @@ def calc_atr(df: pd.DataFrame, period: int = ATR_PERIOD) -> float:
 
 
 # ── SL / TP Level Calculator ──────────────────────────────────────────────────
+def calculate_trade_targets(entry_price: float, signal_type: str,
+                             atr_1h: float, atr_15m: float) -> dict:
+    """
+    Calculates strict risk management targets.
+    SL is based on 1H ATR for stability.
+    TP1 is based on 15m ATR for fast partial profit and Break-Even locking.
+    TP2 is strictly 1:2 Risk/Reward ratio based on the SL distance.
+    """
+    if signal_type.upper() == 'LONG':
+        sl_distance = 1.5 * atr_1h
+        sl_price    = entry_price - sl_distance
+        tp1_price   = entry_price + (1.0 * atr_15m)
+        tp2_price   = entry_price + (sl_distance * 2.0)
+
+    elif signal_type.upper() == 'SHORT':
+        sl_distance = 1.5 * atr_1h
+        sl_price    = entry_price + sl_distance
+        tp1_price   = entry_price - (1.0 * atr_15m)
+        tp2_price   = entry_price - (sl_distance * 2.0)
+
+    else:
+        raise ValueError("Invalid signal type. Must be LONG or SHORT.")
+
+    return {
+        "sl":  round(sl_price,  4),
+        "tp1": round(tp1_price, 4),
+        "tp2": round(tp2_price, 4),
+    }
+
+
 def calc_targets(
     entry: float,
     direction: str,         # 'LONG' or 'SHORT'
@@ -63,54 +93,47 @@ def calc_targets(
     hunter: bool = False,
 ) -> dict:
     """
-    Compute SL, TP1, TP2, and BE prices from ATR values.
-
-    Returns:
-        sl_price, tp1_price, tp_price (TP2), be_price,
-        sl_pct, tp1_pct, tp_pct,
-        sl_dist, tp1_dist, tp_dist,
-        atr_sl, atr_tp1  (inputs, echoed for logging)
-
-    Formula:
-        SL   dist = ATR_SL_MULT  × atr_sl       (1H ATR — stable)
-        TP1  dist = ATR_TP1_MULT × atr_tp1      (15m ATR — fast partial trigger)
-        TP2  dist = sl_dist × TARGET_RR_RATIO   (RR-based final target)
-        BE   dist = TP1 dist × 0.50             (move SL to entry at 50% of TP1)
+    Full-detail SL/TP dict used by bot.py.
+    Core math delegated to calculate_trade_targets (1.5×1H ATR SL, 1.0×15m ATR TP1, 1:2 RR TP2).
+    Hunter mode retains its own override path.
     """
     if entry <= 0:
         return {}
 
-    # Fallback: if 15m ATR unavailable, use 1H ATR for TP1 too
     _atr_tp1 = atr_tp1 if atr_tp1 > 0 else atr_sl
 
     if hunter:
-        # Hunter mode overrides: TP1 at 1:1, TP2 at HUNTER_MIN_RR
         sl_dist  = ATR_SL_MULT * atr_sl if atr_sl > 0 else entry * 0.02
         sl_pct   = round(sl_dist / entry * 100, 4)
         tp1_pct  = round(sl_pct * HUNTER_TP1_RR, 2)
         tp_pct   = round(sl_pct * HUNTER_MIN_RR, 2)
         tp1_dist = entry * tp1_pct / 100
         tp_dist  = entry * tp_pct  / 100
+        be_dist  = tp1_dist * 0.50
+        if direction == 'LONG':
+            sl_price  = round(entry - sl_dist,  8)
+            tp1_price = round(entry + tp1_dist, 8)
+            tp_price  = round(entry + tp_dist,  8)
+            be_price  = round(entry + be_dist,  8)
+        else:
+            sl_price  = round(entry + sl_dist,  8)
+            tp1_price = round(entry - tp1_dist, 8)
+            tp_price  = round(entry - tp_dist,  8)
+            be_price  = round(entry - be_dist,  8)
     else:
-        sl_dist  = ATR_SL_MULT  * atr_sl   if atr_sl  > 0 else entry * 0.02
-        tp1_dist = ATR_TP1_MULT * _atr_tp1 if _atr_tp1 > 0 else sl_dist * 1.0
-        tp_dist  = sl_dist * rr_ratio
-        sl_pct   = round(sl_dist  / entry * 100, 4)
-        tp1_pct  = round(tp1_dist / entry * 100, 4)
-        tp_pct   = round(tp_dist  / entry * 100, 4)
-
-    be_dist = tp1_dist * 0.50
-
-    if direction == 'LONG':
-        sl_price  = round(entry - sl_dist,  8)
-        tp1_price = round(entry + tp1_dist, 8)
-        tp_price  = round(entry + tp_dist,  8)
-        be_price  = round(entry + be_dist,  8)
-    else:  # SHORT
-        sl_price  = round(entry + sl_dist,  8)
-        tp1_price = round(entry - tp1_dist, 8)
-        tp_price  = round(entry - tp_dist,  8)
-        be_price  = round(entry - be_dist,  8)
+        # Delegate core math to calculate_trade_targets
+        core = calculate_trade_targets(entry, direction, atr_sl if atr_sl > 0 else entry * 0.02 / 1.5, _atr_tp1)
+        sl_price  = core['sl']
+        tp1_price = core['tp1']
+        tp_price  = core['tp2']
+        sl_dist   = abs(entry - sl_price)
+        tp1_dist  = abs(entry - tp1_price)
+        tp_dist   = abs(entry - tp_price)
+        be_dist   = tp1_dist * 0.50
+        be_price  = round(entry + be_dist, 8) if direction == 'LONG' else round(entry - be_dist, 8)
+        sl_pct    = round(sl_dist  / entry * 100, 4)
+        tp1_pct   = round(tp1_dist / entry * 100, 4)
+        tp_pct    = round(tp_dist  / entry * 100, 4)
 
     tp1_rr = round(tp1_dist / sl_dist, 3) if sl_dist > 0 else 0.0
 
