@@ -10,17 +10,11 @@ import pandas_ta as ta
 
 from config import (
     BB_SQUEEZE_RATIO, BB_SQUEEZE_LOOKBACK, BB_SQUEEZE_BREAKOUT,
-    MAX_EQUITY_RISK_PCT, MARGIN,
-    SCALP_TRACK_SL_PCT, SCALP_TRACK_TP1_PCT, SCALP_TRACK_TP_PCT, SCALP_TRACK_LEVERAGE,
-    SWING_TRACK_SL_PCT, SWING_TRACK_TP1_PCT, SWING_TRACK_TP_PCT, SWING_TRACK_LEVERAGE,
-    MAJOR_COINS, SL_BASE_MAJOR, SL_BASE_ALTCOIN, SL_FEAR_BUFFER, SL_ATR_MULT,
     VERBOSE_LOG, MIN_SCORE,
     RSI_VETO_LONG, RSI_VETO_SHORT, EMA_PROXIMITY_PCT, VOL_EMA_BYPASS_MULT,
     FNG_DEFAULTS,
     MOMENTUM_VOL_RATIO, MOMENTUM_EMA_FAST, MOMENTUM_EMA_MID, MOMENTUM_EMA_SLOW,
     MOMENTUM_MIN_VOL_SURGE,
-    TRADE_RISK_PCT, ROUND_TRIP_FEE_PCT, MIN_NET_PROFIT_USD, MIN_PROFIT_RR,
-    MAX_AUTO_LEVERAGE, MIN_AUTO_LEVERAGE,
 )
 
 # ── Fear & Greed Index — module-level cache (1h TTL) ──────────────────────────
@@ -43,39 +37,6 @@ def get_fear_greed() -> tuple[int, str]:
     except Exception as e:
         print(f"[FNG] Refresh error: {e}")
     return _fng_cache['value'], _fng_cache['label']
-
-
-def get_fng_mode(fng_v: int) -> dict:
-    """
-    Returns SL/TP/BE params for Swing track based on Fear & Greed Index.
-
-    Stages:
-      0-25  → Conservative  | SL 3%  TP1 2%  TP 4%   BE 1.0%  RR-min 1.3
-      26-45 → Careful       | SL 4%  TP1 3.5% TP 7%  BE 1.5%  RR-min 1.5
-      46-55 → Standard      | SL 5%  TP1 5%  TP 10%  BE 2.5%  RR-min 2.0
-      56-75 → Aggressive    | SL 6%  TP1 7%  TP 15%  BE 3.5%  RR-min 2.0
-      76+   → Moon          | SL 8%  TP1 10% TP 25%  BE 5.0%  RR-min 2.5 + Trailing 2%
-    """
-    if fng_v <= 25:
-        return {'name': 'Conservative', 'emoji': '🛡️',
-                'sl': 3.0, 'tp1': 2.0, 'tp': 4.0, 'be': 1.0,
-                'min_rr': 1.3, 'trailing': None}
-    elif fng_v <= 45:
-        return {'name': 'Careful', 'emoji': '⚠️',
-                'sl': 4.0, 'tp1': 3.5, 'tp': 7.0, 'be': 1.5,
-                'min_rr': 1.5, 'trailing': None}
-    elif fng_v <= 55:
-        return {'name': 'Standard', 'emoji': '⚖️',
-                'sl': 5.0, 'tp1': 5.0, 'tp': 10.0, 'be': 2.5,
-                'min_rr': 2.0, 'trailing': None}
-    elif fng_v <= 75:
-        return {'name': 'Aggressive', 'emoji': '🚀',
-                'sl': 6.0, 'tp1': 7.0, 'tp': 15.0, 'be': 3.5,
-                'min_rr': 2.0, 'trailing': None}
-    else:
-        return {'name': 'Moon', 'emoji': '🌕',
-                'sl': 8.0, 'tp1': 10.0, 'tp': 25.0, 'be': 5.0,
-                'min_rr': 2.5, 'trailing': 2.0}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -970,155 +931,6 @@ def score_symbol(df_3h, df_1h, symbol: str, direction: str = 'LONG',
     except Exception as e:
         print(f"[Score] ⚠️ {symbol} error: {e}")
         return 0, str(e), 0
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Position Sizing
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def calc_risk_position(track: str, equity: float, fng_v: int = None) -> tuple:
-    """
-    Calculates position size based on 1.5% equity risk rule.
-    max_risk_usd = equity × 1.5%
-    pos_size     = max_risk_usd / sl_pct
-    margin       = pos_size / leverage  (clamped $5–$50)
-    Returns: (margin, pos_size, leverage, sl_pct, tp1_pct, tp_pct)
-    """
-    if track == 'Scalp':
-        sl_pct   = SCALP_TRACK_SL_PCT
-        tp1_pct  = SCALP_TRACK_TP1_PCT
-        tp_pct   = SCALP_TRACK_TP_PCT
-        leverage = SCALP_TRACK_LEVERAGE
-    else:
-        if fng_v is not None:
-            _mode   = get_fng_mode(fng_v)
-            sl_pct  = _mode['sl']
-            tp1_pct = _mode['tp1']
-            tp_pct  = _mode['tp']
-        else:
-            sl_pct   = SWING_TRACK_SL_PCT
-            tp1_pct  = SWING_TRACK_TP1_PCT
-            tp_pct   = SWING_TRACK_TP_PCT
-        leverage = SWING_TRACK_LEVERAGE
-
-    max_risk = equity * (MAX_EQUITY_RISK_PCT / 100)
-    pos_size = max_risk / (sl_pct / 100)
-    margin   = pos_size / leverage
-    margin   = round(max(5.0, min(margin, MARGIN)), 2)
-    pos_size = round(margin * leverage, 2)
-    return margin, pos_size, leverage, sl_pct, tp1_pct, tp_pct
-
-
-def calculate_position_size(
-    balance: float,
-    risk_pct: float,
-    entry_price: float,
-    stop_loss_price: float,
-    margin_cap: float = 50.0,
-    risk_usd_override: float | None = None,
-    min_pos_size: float = 20.0,
-) -> tuple:
-    """
-    Risk-based position sizing: risk exactly risk_pct% of balance per trade,
-    or a fixed dollar amount when risk_usd_override is set (Feature 3).
-    Leverage is derived automatically from the SL distance so the position is
-    correctly sized regardless of how tight or wide the stop is.
-
-        risk_usd = risk_usd_override  OR  balance × risk_pct / 100
-        sl_pct   = |entry - stop_loss| / entry × 100
-        pos_size = max(risk_usd / (sl_pct / 100), min_pos_size)
-        leverage = clamp(round(pos_size / margin_cap), MIN_AUTO_LEVERAGE, MAX_AUTO_LEVERAGE)
-        margin   = pos_size / leverage
-
-    Returns: (pos_size, margin, leverage, risk_usd)
-    """
-    if risk_usd_override is not None:
-        risk_usd = round(risk_usd_override, 2)
-    else:
-        risk_usd = round(balance * risk_pct / 100, 2)
-
-    sl_dist  = abs(entry_price - stop_loss_price)
-    if sl_dist <= 0 or entry_price <= 0:
-        return 0.0, 0.0, MIN_AUTO_LEVERAGE, risk_usd
-
-    sl_pct   = sl_dist / entry_price * 100
-    pos_size = max(risk_usd / (sl_pct / 100), min_pos_size)
-
-    raw_lev  = pos_size / margin_cap
-    leverage = int(max(MIN_AUTO_LEVERAGE, min(round(raw_lev), MAX_AUTO_LEVERAGE)))
-    margin   = round(pos_size / leverage, 2)
-    pos_size = round(margin * leverage, 2)
-    return pos_size, margin, leverage, risk_usd
-
-
-def check_trade_viability(
-    pos_size: float,
-    entry_price: float,
-    tp1_price: float,
-    sl_price: float,
-    direction: str,
-    min_net_profit: float = MIN_NET_PROFIT_USD,
-    fee_pct: float = ROUND_TRIP_FEE_PCT,
-    min_rr: float = MIN_PROFIT_RR,
-) -> tuple:
-    """
-    Pre-trade profitability gate — filters trades that don't justify exchange fees
-    or fail the minimum risk-reward requirement.
-
-    Filter A — RR:         gross_profit(TP1) / gross_loss(SL) ≥ min_rr
-    Filter B — Net Profit: gross_profit(TP1) − round_trip_fee ≥ min_net_profit
-
-    Fee model: Bitget taker 0.06% per side → 0.12% round-trip on pos_size.
-
-    Returns: (viable: bool, net_profit_usd: float, rr_ratio: float, reason: str)
-    """
-    tp1_dist = abs(tp1_price - entry_price)
-    sl_dist  = abs(sl_price  - entry_price)
-
-    if sl_dist <= 0 or entry_price <= 0 or pos_size <= 0:
-        return False, 0.0, 0.0, "Invalid trade geometry (zero SL or position)"
-
-    gross_profit = pos_size * (tp1_dist / entry_price)
-    gross_loss   = pos_size * (sl_dist  / entry_price)
-    fee_cost     = pos_size * (fee_pct  / 100)          # round-trip on full notional
-    net_profit   = round(gross_profit - fee_cost, 2)
-    rr_ratio     = round(gross_profit / gross_loss, 2) if gross_loss > 0 else 0.0
-
-    if rr_ratio < min_rr:
-        return (
-            False, net_profit, rr_ratio,
-            f"RR(TP1) {rr_ratio:.2f} < min {min_rr:.1f} "
-            f"(profit=${gross_profit:.2f} / risk=${gross_loss:.2f})",
-        )
-
-    if net_profit < min_net_profit:
-        return (
-            False, net_profit, rr_ratio,
-            f"Net profit ${net_profit:.2f} < min ${min_net_profit:.0f} "
-            f"(fee=${fee_cost:.2f}, gross=${gross_profit:.2f}, pos=${pos_size:.0f})",
-        )
-
-    return True, net_profit, rr_ratio, ""
-
-
-def get_dynamic_sl(symbol: str, price: float, atr: float, fng_v: int) -> float:
-    """
-    Calculates dynamic SL in three layers:
-      1. Base SL by asset type: Major (BTC/ETH/SOL) = 3%, Altcoin = 5%
-      2. Fear Buffer: FNG < 25 → +1%
-      3. ATR Floor: SL ≥ 1.5 × ATR%
-    Returns: sl_pct (float, %)
-    """
-    ticker_base = symbol.split('/')[0].upper()
-    base_sl     = SL_BASE_MAJOR if ticker_base in MAJOR_COINS else SL_BASE_ALTCOIN
-    fear_buffer = SL_FEAR_BUFFER if (fng_v is not None and fng_v < 25) else 0.0
-    sl_candidate = base_sl + fear_buffer
-    atr_pct  = (atr / price * 100) if (price > 0 and atr > 0) else 0.0
-    atr_floor = round(SL_ATR_MULT * atr_pct, 2)
-    final_sl  = round(max(sl_candidate, atr_floor), 2)
-    print(f"  [DynSL] {ticker_base}: base={base_sl}% + fear={fear_buffer}% | "
-          f"ATR={atr_pct:.2f}% × {SL_ATR_MULT} = {atr_floor}% → SL={final_sl}%")
-    return final_sl
 
 
 # ── Sentiment Check ────────────────────────────────────────────────────────────

@@ -22,13 +22,11 @@ from flask import jsonify as flask_jsonify, request as flask_request
 import gdrive_reporter
 from config import *
 from market_logic import (
-    get_fear_greed, get_fng_mode,
+    get_fear_greed,
     sentiment_check, set_sentiment_thresholds,
     score_symbol, detect_fvg, detect_order_blocks,
     detect_flag, detect_bb_squeeze, detect_volume_buildup,
     detect_rsi_divergence, score_candles,
-    calc_risk_position, get_dynamic_sl,
-    calculate_position_size, check_trade_viability,
     momentum_gate,
 )
 
@@ -318,97 +316,6 @@ def claude_filter(symbol: str, direction: str, score: int, breakdown: str,
         return True, f"Advisor error (GO): {str(e)[:50]}"
 
 
-def sniper_claude_check(symbol: str, score: int, direction: str,
-                        df_4h, df_1h, vol_ratio: float,
-                        price: float, fng_v: int,
-                        btc_regime: str) -> tuple[bool, str, str]:
-    """
-    Sniper Exception — מאמת 4 תנאים לחריגה מ-Kill-Switch ב-Extreme Fear:
-      1. ציון ≥ SNIPER_MIN_SCORE (95)
-      2. מחיר תוך SNIPER_EMA_PCT (5%) מ-EMA200 בגרף 4H
-      3. Volume לפחות SNIPER_VOL_MIN (2.5×) הממוצע
-      4. Claude מחזיר STRONG BUY
-
-    מחזיר (ok: bool, verdict: str, reason: str)
-    """
-    # ── תנאי 1: ציון מינימום ─────────────────────────────────────────────────
-    if score < SNIPER_MIN_SCORE:
-        return False, "SCORE TOO LOW", f"Score={score} < {SNIPER_MIN_SCORE} required"
-
-    # ── תנאי 2: מרחק EMA200 ≤ 5% ────────────────────────────────────────────
-    try:
-        ema200_s = ta.ema(df_4h['close'], length=200)
-        if ema200_s is None or ema200_s.dropna().empty:
-            return False, "EMA200 ERROR", "EMA200 calculation failed"
-        ema200 = float(ema200_s.iloc[-1])
-        ema_dist = abs(price - ema200) / ema200 * 100
-    except Exception as e:
-        return False, "EMA200 ERROR", f"EMA200 error: {str(e)[:40]}"
-
-    if ema_dist > SNIPER_EMA_PCT:
-        return False, "OVEREXTENDED", f"EMA200 dist {ema_dist:.1f}% > {SNIPER_EMA_PCT}% (chasing pump)"
-
-    # ── תנאי 3: Volume ≥ 2.5× ───────────────────────────────────────────────
-    if vol_ratio < SNIPER_VOL_MIN:
-        return False, "LOW VOLUME", f"Volume {vol_ratio:.2f}x < {SNIPER_VOL_MIN}x required"
-
-    # ── תנאי 4: Claude → STRONG BUY ─────────────────────────────────────────
-    api_key = os.environ.get('ANTHROPIC_API_KEY', '')
-    if not api_key:
-        return False, "NO API KEY", "Anthropic key not set — cannot confirm Sniper"
-
-    try:
-        rsi_4h = float(ta.rsi(df_4h['close'], length=14).iloc[-1])
-        rsi_1h_str = ""
-        if df_1h is not None:
-            try:
-                rsi_1h = float(ta.rsi(df_1h['close'], length=14).iloc[-1])
-                rsi_1h_str = f" | RSI 1H: {rsi_1h:.1f}"
-            except Exception:
-                pass
-
-        prompt = (
-            f"SNIPER EXCEPTION — Extreme Fear Market (FNG={fng_v})\n"
-            f"This trade bypasses the Kill-Switch (FNG<{SNIPER_MIN_SCORE}) only on STRONG BUY.\n\n"
-            f"Symbol: {symbol} | Direction: {direction} | BTC Regime: {btc_regime}\n"
-            f"Technical Score: {score}/100 (threshold ≥ {SNIPER_MIN_SCORE})\n"
-            f"Price: {price:.6g} | EMA200 (4H): {ema200:.6g} | Distance: {ema_dist:.1f}%\n"
-            f"RSI 4H: {rsi_4h:.1f}{rsi_1h_str}\n"
-            f"Volume vs avg: {vol_ratio:.2f}x (threshold ≥ {SNIPER_VOL_MIN}x)\n\n"
-            f"RESPOND WITH EXACTLY ONE LINE — choose one:\n"
-            f"STRONG BUY — genuinely exceptional setup, all technicals align, safe to trade in Extreme Fear\n"
-            f"APPROVE — setup is good but not exceptional enough to override Extreme Fear Kill-Switch\n"
-            f"REJECT — do NOT trade this in Extreme Fear conditions\n\n"
-            f"Criteria for STRONG BUY (ALL must be true):\n"
-            f"- Price near EMA200 (confirmed dynamic support, not a pump)\n"
-            f"- RSI not overbought (LONG: RSI<60, SHORT: RSI>40)\n"
-            f"- Volume surge confirms real institutional participation\n"
-            f"- Score breakdown shows trend + momentum + volume alignment\n"
-            f"Be EXTREMELY conservative — Extreme Fear means systemic risk. "
-            f"STRONG BUY is reserved for once-in-a-cycle setups only."
-        )
-
-        import anthropic as _anthropic
-        client = _anthropic.Anthropic(api_key=api_key)
-        resp = client.messages.create(
-            model="claude-3-5-haiku-20241022",
-            max_tokens=40,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        verdict_raw = resp.content[0].text.strip().upper()
-        print(f"  [Sniper] Claude raw: {verdict_raw}")
-
-        if verdict_raw.startswith("STRONG BUY"):
-            reason = f"Score={score}, EMA dist={ema_dist:.1f}%, Vol={vol_ratio:.2f}x"
-            return True, "STRONG BUY", reason
-        elif verdict_raw.startswith("APPROVE"):
-            return False, "APPROVE (not STRONG BUY)", "Claude approved but not exceptional enough for Kill-Switch bypass"
-        else:
-            return False, "REJECT", "Claude rejected — not suitable for Extreme Fear"
-
-    except Exception as e:
-        print(f"  [Sniper] Claude error: {e} — conservative fallback: REJECT")
-        return False, "ERROR", f"Claude error — conservative REJECT: {str(e)[:50]}"
 
 
 # IS_DEPLOYED / GEMINI_URL / GEMINI_KEY → config.py (from config import *)
@@ -2104,7 +2011,7 @@ def is_btc_strong_uptrend() -> tuple[bool, float, float]:
             'ema200_1h': ema200_1h, 'ema200_4h': ema200_4h, 'price': price
         }
         if result:
-            print(f"[BTC Trend] 🟢 STRONG UPTREND — ${price:,.0f} > EMA200_1H={ema200_1h:,.0f} & EMA200_4H={ema200_4h:,.0f} → SHORTs מוגבלים (Score>{STRONG_UPTREND_SHORT_MIN_SCORE})")
+            print(f"[BTC Trend] 🟢 STRONG UPTREND — ${price:,.0f} > EMA200_1H={ema200_1h:,.0f} & EMA200_4H={ema200_4h:,.0f}")
         else:
             above_1h = price > ema200_1h
             above_4h = price > ema200_4h
@@ -2174,22 +2081,6 @@ def fetch_symbol_ticker_info(symbol: str) -> tuple:
         return 0.0, 0.0
 
 
-def is_hunter_mode(fng_v: int, change_24h: float = 0.0) -> tuple:
-    """
-    🎯 Precision Hunter — מזהה מתח שוק גבוה:
-      • FNG ≥ 70 (Greed/Extreme Greed)
-      • OR נכס עלה/ירד >15% ב-24h
-    מחזיר: (is_hunter: bool, reason: str)
-    """
-    if fng_v >= HUNTER_FNG_THRESHOLD:
-        return True, f"FNG={fng_v} ≥ {HUNTER_FNG_THRESHOLD} (Greed)"
-    if abs(change_24h) >= HUNTER_PUMP_PCT_24H:
-        sign = "⬆️" if change_24h > 0 else "⬇️"
-        return True, f"24h שינוי {sign}{abs(change_24h):.1f}% > {HUNTER_PUMP_PCT_24H}%"
-    return False, ""
-
-
-# calc_risk_position, get_dynamic_sl → moved to market_logic.py
 
 
 def track_badge(track: str) -> str:
@@ -2203,19 +2094,10 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
                     ob_found=None, ob_high=None, ob_low=None, df_ob=None,
                     df_1h=None):
     """
-    פותח עסקת דמו — 🌊 מסלול Swing.
-    ATR-based targets (1H): SL = 2×ATR | TP1 = 1.5×ATR (→ BE auto) | TP2 = 3×ATR
-    Dynamic position sizing: risk TRADE_RISK_PCT% of balance per trade.
-    timeframe: '4H' / '1H' — גרף הכניסה שנבחר אדפטיבית
-    fng_v: ערך FNG שכבר חושב ב-scan (כדי לא לשאול שוב)
-    sniper_mode: True → Half-Size Entry (50% מגודל הפוזיציה הרגיל)
-    ob_found/ob_high/ob_low: pre-computed OB zone (pass from scan to align with scoring df)
-    df_ob: fallback df for OB detection if ob_found not pre-supplied (uses df_3h if None)
-    df_1h: 1H OHLCV dataframe used to compute ATR-based targets
+    פותח עסקת Swing — גודל קבוע: $20 מרג'ין, 10x, $200 נשלט.
+    SL=2% | TP1=2% (→ BE אוטומטי) | TP2=4% (RR 1:2).
     """
-    track = 'Swing'
-
-    # ── נפח + שינוי 24h (קריאה אחת) ─────────────────────────────────────────
+    # ── נפח + שינוי 24h ───────────────────────────────────────────────────────
     vol_usd, change_24h = fetch_symbol_ticker_info(symbol)
     if vol_usd > 0 and vol_usd < SWING_TRACK_VOL_MIN:
         print(f"[SWING] נפח נמוך עבור {symbol}: ${vol_usd/1e6:.1f}M < $10M — מדלג")
@@ -2226,184 +2108,32 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         )
         return
 
-    # ── FNG + גודל פוזיציה לפי 1.5% סיכון ─────────────────────────────────
     if fng_v is None:
         fng_v, _, _ = sentiment_check("open_trade")
 
-    # ── 🎯 Hunter Mode Detection ──────────────────────────────────────────────
-    hunter, hunter_reason = is_hunter_mode(fng_v, change_24h)
-    if hunter:
-        send_msg(
-            f"🎯 *Hunter Mode פעיל — {symbol.replace('/USDT','')}*\n"
-            f"⚠️ מתח שוק גבוה: _{hunter_reason}_\n"
-            f"עובר למצב Precision Hunter — מקבל רק עסקאות עם RR 1:3 ומעלה."
-        )
-        print(f"  [HUNTER MODE] {symbol}: {hunter_reason} → RR min={HUNTER_MIN_RR}")
+    # ── Fixed Sizing ──────────────────────────────────────────────────────────
+    effective_margin = MARGIN        # $20
+    pos_size         = POSITION_SIZE  # $200
+    leverage         = LEVERAGE       # 10x
 
-    equity       = _get_equity()
+    # ── Fixed SL/TP Targets ───────────────────────────────────────────────────
+    tgt       = se.calc_targets(price, direction)
+    sl_price  = tgt['sl_price']
+    tp1_price = tgt['tp1_price']
+    tp_price  = tgt['tp_price']
+    be_price  = tgt['be_price']   # = entry (SL moves here when TP1 hit)
+    sl_pct    = tgt['sl_pct']
+    tp1_pct   = tgt['tp1_pct']
+    tp_pct    = tgt['tp_pct']
+
+    # ── Wallet balance check ───────────────────────────────────────────────────
     balance_snap = wallet.get('balance', STARTING_BALANCE)
-
-    # ── Get SL/TP percentages from FNG Mode (ignore old margin/pos/lev values) ─
-    _, _, _, sl_pct, tp1_pct, tp_pct = calc_risk_position('Swing', equity, fng_v=fng_v)
-
-    # ── SL דינמי — לפי סוג נכס / FNG / ATR ──────────────────────────────────
-    dyn_sl = get_dynamic_sl(symbol, price, atr, fng_v)
-    if dyn_sl != sl_pct:
-        # TP ו-TP1 מתכוונן יחסית לשינוי ב-SL כדי לשמור RR
-        ratio = dyn_sl / sl_pct if sl_pct > 0 else 1.0
-        tp1_pct = round(tp1_pct * ratio, 2)
-        tp_pct  = round(tp_pct  * ratio, 2)
-        sl_pct  = dyn_sl
-
-    # FNG Mode — min_rr דינמי (BE נחשב מ-TP1 עכשיו)
-    fng_mode = get_fng_mode(fng_v)
-    print(f"  [FNG MODE] {fng_mode['emoji']} {fng_mode['name']} (FNG={fng_v}) "
-          f"| SL={sl_pct}% TP1={tp1_pct}% TP={tp_pct}% | BE@50%→TP1")
-
-    # ── ATR-Based Dynamic Targets (via strategy_engine — pure math, no wallet access) ──
-    # SL  = ATR_SL_MULT  × ATR(1H)   — slow timeframe → stable stop
-    # TP1 = ATR_TP1_MULT × ATR(15m)  — fast timeframe → quicker partial + BE
-    # TP2 = SL_dist × TARGET_RR_RATIO (RR-based final target, default 1:2)
-    atr_1h = 0.0
-    if df_1h is not None and USE_ATR_TARGETS:
-        try:
-            atr_1h = se.calc_atr(df_1h, period=ATR_PERIOD)
-            if atr_1h > 0:
-                # Fetch 15m ATR for faster TP1 trigger
-                atr_15m = 0.0
-                try:
-                    df_15m = get_data(symbol, timeframe=ATR_TP1_TF, limit=ATR_PERIOD * 4)
-                    atr_15m = se.calc_atr(df_15m, period=ATR_PERIOD)
-                except Exception as _atr15_e:
-                    print(f"  [ATR Targets] 15m fetch failed, using 1H for TP1: {_atr15_e}")
-
-                tgt = se.calc_targets(price, direction, atr_sl=atr_1h, atr_tp1=atr_15m,
-                                      rr_ratio=TARGET_RR_RATIO, hunter=hunter and atr_1h > 0)
-                if tgt:
-                    sl_dist  = tgt['sl_dist']
-                    tp1_dist = tgt['tp1_dist']
-                    tp_dist  = tgt['tp_dist']
-                    sl_pct   = tgt['sl_pct']
-                    tp1_pct  = tgt['tp1_pct']
-                    tp_pct   = tgt['tp_pct']
-                    print(f"  [ATR Targets] 1H ATR={atr_1h:.6g} 15m ATR={tgt['atr_tp1']:.6g} | "
-                          f"SL={sl_pct:.2f}% TP1={tp1_pct:.2f}%(1:{tgt['tp1_rr']:.2f}×ATR15m) "
-                          f"TP2={tp_pct:.2f}%(1:{TARGET_RR_RATIO:.0f})")
-        except Exception as _atr_e:
-            print(f"  [ATR Targets] fallback to FNG%: {_atr_e}")
-
-    # Hunter Mode — RR multiples only when ATR is unavailable
-    if hunter and atr_1h == 0.0:
-        tp1_pct = round(sl_pct * HUNTER_TP1_RR, 2)
-        tp_pct  = round(sl_pct * HUNTER_MIN_RR, 2)
-        print(f"  [HUNTER] Swing TP1={tp1_pct}% TP={tp_pct}% (SL={sl_pct}%)")
-
-    # ── SL / TP / BE price levels ─────────────────────────────────────────────
-    if atr_1h == 0.0:                # fallback: compute distances from %
-        sl_dist  = price * sl_pct  / 100
-        tp_dist  = price * tp_pct  / 100
-        tp1_dist = price * tp1_pct / 100
-    # Feature 4: Auto BE at 50% of the way to TP1 (risk-free trade when price moves halfway)
-    be_dist = tp1_dist * 0.50
-
-    if direction == 'LONG':
-        sl_price  = price - sl_dist
-        tp_price  = price + tp_dist
-        be_price  = price + be_dist
-        tp1_price = price + tp1_dist
-    else:   # SHORT
-        sl_price  = price + sl_dist
-        tp_price  = price - tp_dist
-        be_price  = price - be_dist
-        tp1_price = price - tp1_dist
-
-    # ── Dynamic Position Sizing — fixed $RISK_PER_TRADE_USD at risk on actual SL ─
-    pos_size, effective_margin, leverage, risk_usd = calculate_position_size(
-        balance=balance_snap,
-        risk_pct=TRADE_RISK_PCT,
-        entry_price=price,
-        stop_loss_price=sl_price,
-        margin_cap=MARGIN,
-        risk_usd_override=RISK_PER_TRADE_USD,
-        min_pos_size=MIN_POSITION_USD,
-    )
-    print(f"  [RiskSizing] balance=${balance_snap:.2f} | risk_fixed=${RISK_PER_TRADE_USD:.2f} | "
-          f"pos=${pos_size:.2f} | margin=${effective_margin:.2f} | {leverage}x | SL={sl_pct:.2f}%")
-
-    # Size adjustments: Sniper (half-size) and Sentiment (60% in greed)
-    if sniper_mode:
-        pos_size         = round(pos_size         * SNIPER_MARGIN_MULT, 2)
-        effective_margin = round(effective_margin  * SNIPER_MARGIN_MULT, 2)
-        risk_usd         = round(risk_usd          * SNIPER_MARGIN_MULT, 2)
-        print(f"  [SNIPER] Half-size → pos=${pos_size:.2f} margin=${effective_margin:.2f}")
-
-    if fng_v >= GREED_THRESHOLD and not sniper_mode:
-        pos_size         = round(pos_size * 0.60, 2)
-        effective_margin = round(pos_size / leverage, 2)
-        risk_usd         = round(risk_usd * 0.60, 2)
-        print(f"  [SENTIMENT] GREED ({fng_v}) → Swing פוזיציה צומצמה ל-${pos_size:.2f}")
-
-    # ── Wallet balance check ──────────────────────────────────────────────────
     if balance_snap < effective_margin:
         print(f"WALLET: insufficient balance (${balance_snap:.2f}) — skipping {symbol}")
-        send_msg(f"⚠️ *יתרה נמוכה* — אין מספיק להפקדת מרג'ין\nנדרש: ${effective_margin:.0f} | יש: ${balance_snap:.2f}")
+        send_msg(f"⚠️ *יתרה נמוכה* — נדרש: ${effective_margin:.0f} | יש: ${balance_snap:.2f}")
         return
 
-    # ── Profitability Gate: Net Profit at final TP after round-trip fees ────────
-    # With dynamic RR (TP1=1:1, TP2=TARGET_RR_RATIO), check viability against TP2
-    trade_ok, net_profit_usd, rr_ratio, veto_reason = check_trade_viability(
-        pos_size=pos_size,
-        entry_price=price,
-        tp1_price=tp_price,   # Check against final TP (1:2 RR), not TP1 (1:1)
-        sl_price=sl_price,
-        direction=direction,
-        min_net_profit=MIN_NET_PROFIT_USD,
-        fee_pct=ROUND_TRIP_FEE_PCT,
-        min_rr=MIN_PROFIT_RR,
-    )
-    if not trade_ok:
-        print(f"[VIABILITY] ❌ {symbol} {direction} — {veto_reason}")
-        send_msg(
-            f"⚠️ *Trade Rejected — {symbol.replace('/USDT','')}*\n\n"
-            f"🚫 {veto_reason}\n"
-            f"Pos=${pos_size:.0f} | SL={sl_pct:.1f}% | TP={tp_pct:.1f}%(1:{TARGET_RR_RATIO:.0f})"
-        )
-        return
-
-    # ── Hunter / FNG full-TP RR check (hard guard on final TP, not TP1) ──────
-    est_profit_tp  = round(abs(tp_price  - price) / price * pos_size, 2)
-    est_profit_tp1 = round(abs(tp1_price - price) / price * pos_size, 2)
-    est_loss_sl    = round(abs(sl_price  - price) / price * pos_size, 2)
-    rr_full       = round(est_profit_tp / est_loss_sl, 2) if est_loss_sl > 0 else 0
-    required_rr   = HUNTER_MIN_RR if hunter else fng_mode['min_rr']
-
-    if rr_full < required_rr:
-        _rr_mode_label = '(Hunter)' if hunter else f'({fng_mode["name"]})'
-        print(f"[SWING] RR_full={rr_full:.2f} < {required_rr} {_rr_mode_label} — {symbol} נדחה")
-        if hunter:
-            send_msg(
-                f"❌ *Trade Rejected: {symbol.replace('/USDT','')}*\n"
-                f"Full-TP RR: 1:{rr_full} | Min (Hunter): 1:{int(HUNTER_MIN_RR)}\n"
-                f"🎯 _Hunter Mode Active — Precision entries only_"
-            )
-        else:
-            send_msg(
-                f"⚠️ *RR נמוך — {symbol.replace('/USDT','')}*\n"
-                f"RR: {rr_full:.2f} | מינימום: {required_rr:.0f}\n"
-                f"_העסקה נדחתה — יחס סיכון/תשואה לא מספיק_"
-            )
-        return
-
-    max_risk_usd = round(risk_usd, 2)
-    risk_pct_eq  = round(risk_usd / equity * 100, 2)
-
-    # Hunter Mode: TP1 hit → auto-BE (flag stored in trade)
-    hunter_be_on_tp1 = hunter   # בעסקות Hunter, TP1 מפעיל BE אוטומטית
-
-    # ── Order Block — use pre-supplied values if available, else detect ───────
-    # Pre-supplied values (ob_found not None) come from the scan site using df_1h,
-    # matching the same dataframe that score_symbol used — so the zone shown on
-    # the dashboard is exactly the one that contributed +3 to the score.
+    # ── Order Block ───────────────────────────────────────────────────────────
     if ob_found is None:
         ob_found = False
         _ob_df = df_ob if df_ob is not None else df_3h
@@ -2420,14 +2150,14 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         if ob_low  is not None: ob_low  = round(ob_low,  8)
 
     trade = {
-        'symbol':          symbol,
-        'entry':           price,
-        'sl':              sl_price,
-        'tp':              tp_price,
-        'tp1':             tp1_price,
-        'be_lvl':          be_price,
-        'sl_pct':          sl_pct,
-        'tp_pct':          tp_pct,
+        'symbol':               symbol,
+        'entry':                price,
+        'sl':                   sl_price,
+        'tp':                   tp_price,
+        'tp1':                  tp1_price,
+        'be_lvl':               be_price,
+        'sl_pct':               sl_pct,
+        'tp_pct':               tp_pct,
         'direction':            direction,
         'phase':                'initial',
         'be_triggered':         False,
@@ -2438,86 +2168,73 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         'trailing_sl':          None,
         'score':                score,
         'atr':                  round(atr, 6),
-        'atr_1h':               round(atr_1h, 8),
-        'timeframe':       timeframe,
-        'rsi':             round(rsi, 2) if rsi is not None else None,
-        'ema200':          round(ema200, 6) if ema200 is not None else None,
-        'score_breakdown': reason,
-        'opened_at':       now_il().isoformat(timespec='seconds'),
-        'pos_size':        pos_size,
-        'margin':          effective_margin,
-        'leverage':        leverage,
-        'fng_at_entry':    fng_v,
-        'sniper':          sniper_mode,
-        'track':           track,            # 🌊 Swing
-        'vol_usd':         round(vol_usd),
-        'change_24h':      round(change_24h, 2),
-        'slippage_pct':    0.0,
-        'hunter_mode':     hunter,           # 🎯 Precision Hunter
-        'hunter_be_on_tp1': hunter_be_on_tp1,
-        'ob_found':        ob_found,
-        'ob_high':         ob_high,
-        'ob_low':          ob_low,
-        'ob_type':         ('Bullish' if direction == 'LONG' else 'Bearish') if ob_found else None,
+        'atr_1h':               0.0,
+        'timeframe':            timeframe,
+        'rsi':                  round(rsi, 2) if rsi is not None else None,
+        'ema200':               round(ema200, 6) if ema200 is not None else None,
+        'score_breakdown':      reason,
+        'opened_at':            now_il().isoformat(timespec='seconds'),
+        'pos_size':             pos_size,
+        'margin':               effective_margin,
+        'leverage':             leverage,
+        'fng_at_entry':         fng_v,
+        'sniper':               False,
+        'track':                'Swing',
+        'vol_usd':              round(vol_usd),
+        'change_24h':           round(change_24h, 2),
+        'slippage_pct':         0.0,
+        'hunter_mode':          False,
+        'hunter_be_on_tp1':     False,
+        'ob_found':             ob_found,
+        'ob_high':              ob_high,
+        'ob_low':               ob_low,
+        'ob_type':              ('Bullish' if direction == 'LONG' else 'Bearish') if ob_found else None,
     }
-    # ── Risk/Reward Summary Log — printed before every opened trade ──────────
-    print(f"  [Trade] Risking ${risk_usd:.2f} to make ${net_profit_usd:.2f}. "
-          f"Expected Net Profit: ${net_profit_usd:.2f}. RR (TP1): 1:{rr_ratio:.2f}")
+
+    est_profit_tp  = round(abs(tp_price  - price) / price * pos_size, 2)
+    est_profit_tp1 = round(abs(tp1_price - price) / price * pos_size, 2)
+    est_loss_sl    = round(abs(sl_price  - price) / price * pos_size, 2)
+
     place_order(trade, effective_margin)
 
-    dir_header = get_direction_header(direction)
-    tip        = get_momentum_tip(direction)
-    emoji      = "🟢" if direction == 'LONG' else "🔴"
-    score_bar  = "█" * (score // 10) + "░" * (10 - score // 10)
+    # ── Telegram Notification ─────────────────────────────────────────────────
+    ticker_base   = symbol.split('/')[0].upper()
+    symbol_spaced = " ".join(list(ticker_base))
+    dir_icon      = "🟢 L O N G" if direction == 'LONG' else "🔴 S H O R T"
+    free_cash     = round(wallet.get('balance', 0) - effective_margin, 2)
+    asset_class   = "Major" if ticker_base in MAJOR_COINS else "Altcoin"
 
     if not tf_reason:
-        tf_reason = f"טרנד חזק ב-{timeframe}" if timeframe == '4H' else f"פריצה ב-{timeframe} (4H חלש)"
-    tf_icon = "📊" if timeframe == '4H' else ("⏱️" if timeframe == '1H' else "⚡")
+        tf_reason = f"טרנד חזק ב-{timeframe}" if timeframe == '4H' else f"פריצה ב-{timeframe}"
 
-    hunter_tag = "🎯 *PRECISION HUNTER MODE* | " if hunter else ""
-    rr_label   = f"RR 1:{int(HUNTER_MIN_RR)}" if hunter else f"RR 1:{rr_ratio}"
-    be_note    = " ← TP1 מפעיל BE אוטומטי!" if hunter else " ← אחרי מבנה ברור"
-    mode_tag   = f"{fng_mode['emoji']} *Mode: {fng_mode['name']}* (FNG={fng_v})"
-
-    ticker_base  = symbol.split('/')[0].upper()
-    symbol_spaced = " ".join(list(ticker_base))
-    dir_icon     = "🟢 L O N G" if direction == 'LONG' else "🔴 S H O R T"
-    sniper_tag   = "🎯 Sniper · " if sniper_mode else ""
-    hunter_line  = f"⚠️ _{hunter_reason}_\n" if hunter else ""
-    free_cash    = round(wallet.get('balance', 0) - effective_margin, 2)
-    asset_class  = "Major" if ticker_base in MAJOR_COINS else "Altcoin"
-
-    atr_tag = f" | 📐 ATR={atr_1h:.4g}" if atr_1h > 0 else ""
     msg = (
         f"*{dir_icon}  |  {symbol_spaced}*\n"
-        f"{hunter_line}"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"📊 *ניקוד:* `{score}/100` | {sniper_tag}{fng_mode['emoji']} {fng_mode['name']} | {asset_class}{atr_tag}\n"
+        f"📊 *ניקוד:* `{score}/100` | {asset_class} | FNG={fng_v}\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"💵 כניסה:  `{price:.6g}`\n"
-        f"🛑 SL:     `{sl_price:.6g}` (-{sl_pct:.2f}%)\n"
-        f"🎯 TP1:    `{tp1_price:.6g}` (+{tp1_pct:.2f}%) → 🔒 BE auto\n"
-        f"🎯 TP2:    `{tp_price:.6g}` (+{tp_pct:.2f}%)\n"
+        f"🛑 SL:     `{sl_price:.6g}` (-{sl_pct:.1f}%)\n"
+        f"🎯 TP1:    `{tp1_price:.6g}` (+{tp1_pct:.1f}%) → 🔒 BE auto\n"
+        f"🎯 TP2:    `{tp_price:.6g}` (+{tp_pct:.1f}%)\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"🛡️ סיכון: `${est_loss_sl}` | 💰 רווח(TP1): `${est_profit_tp1}` | (TP2): `${est_profit_tp}`\n"
+        f"💼 {leverage}x · ${effective_margin:.0f} מרג'ין · ${pos_size:.0f} נשלט\n"
         f"💵 פנוי בארנק: `${free_cash:.2f}`"
     )
 
-    # אם df_3h לא סופק — שולפים 1H בעצמנו (למשל Major Watch מעביר None)
-    # limit=250 כדי ש-EMA200 יהיה מחושב נכון (צריך לפחות 200 נרות)
     if df_3h is None:
         try:
             df_3h = get_data(symbol, timeframe='1h', limit=250)
         except Exception as _fe:
-            print(f"[SWING] chart fetch fallback failed: {_fe}")
+            print(f"[SWING] chart fetch fallback: {_fe}")
             df_3h = None
 
     chart_buf = generate_chart(df_3h, symbol, price, sl_price, tp_price, direction) \
                 if df_3h is not None else None
     send_chart_alert(chart_buf, symbol, msg)
-    print(f"[SWING] Trade opened: {symbol} {direction} @ {price:.6g} | SL={sl_pct}% TP={tp_pct}% | "
-          f"{leverage}x | margin=${effective_margin:.2f} | Risk=${max_risk_usd:.2f} ({risk_pct_eq:.2f}%) | "
-          f"NetProfit@TP1=${net_profit_usd:.2f}")
+    print(f"[SWING] Trade opened: {symbol} {direction} @ {price:.6g} | "
+          f"SL={sl_pct:.1f}% TP1={tp1_pct:.1f}% TP2={tp_pct:.1f}% | "
+          f"{leverage}x margin=${effective_margin:.0f} pos=${pos_size:.0f}")
 
 
 def track_trades():
@@ -3354,14 +3071,12 @@ def send_heartbeat():
     realized   = round(wallet.get('total_pnl', 0.0), 2)
     total_bal  = round(wallet.get('starting', STARTING_BALANCE) + realized + total_floating, 2)
 
-    # ── FNG Mode summary ──
+    # ── FNG Sentiment summary ──
     try:
         _fng_hb, _lbl_hb = get_fear_greed()
-        _mode_hb = get_fng_mode(_fng_hb)
         mode_line = (
             f"🧭 Sentiment: *{_lbl_hb}* ({_fng_hb}) — "
-            f"{_mode_hb['emoji']} Mode: *{_mode_hb['name']}*\n"
-            f"   SL {_mode_hb['sl']}% · TP1 {_mode_hb['tp1']}% · TP {_mode_hb['tp']}% · BE {_mode_hb['be']}%"
+            f"Fixed: SL {SL_PCT}% · TP1 {TP1_PCT}% · TP2 {TP2_PCT}%"
         )
     except Exception:
         mode_line = ""
@@ -5358,18 +5073,8 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
     if rejected_out is None:
         rejected_out = []
 
-    # ── Sentiment Kill-Switch (Extreme Fear < EXTREME_FEAR_THRESHOLD) ────────
+    # ── Sentiment ─────────────────────────────────────────────────────────────
     fng_v_scan, fng_lbl_scan, fng_action = sentiment_check("scan")
-
-    # BTC COMPASS OVERRIDE: אם ה-BTC Regime הוא BULL — הקומפס ינצח את ה-Kill-Switch.
-    # "הזדמנויות הטובות ביותר קורות בזמן פחד קיצוני + BTC בשבירה"
-    btc_overrides_killswitch = (btc_regime == 'BULL')
-    kill_switch_active = (fng_v_scan < EXTREME_FEAR_THRESHOLD) and not btc_overrides_killswitch
-
-    if btc_overrides_killswitch and fng_v_scan < EXTREME_FEAR_THRESHOLD:
-        print(f"⚡ BTC COMPASS OVERRIDE: FNG={fng_v_scan} (Extreme Fear) אך BTC BULL — Kill-Switch מבוטל! ממשיך לסרוק...")
-    if kill_switch_active:
-        print(f"SENTIMENT KILL-SWITCH: FNG={fng_v_scan} < {EXTREME_FEAR_THRESHOLD} — בודק Sniper Exception לכל מועמד...")
 
     # ── BTC Market Regime Safety Switch ──
     if direction == 'LONG' and btc_regime == 'BEAR':
@@ -5489,51 +5194,6 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
             chosen_df = df_4h
             tf_reason = 'טרנד חזק בגרף 4H'
 
-            # ── Sniper Exception — Kill-Switch פעיל בלבד ─────────────────────
-            if kill_switch_active:
-                _vol_avg_s   = df_4h['volume'].iloc[-12:-2].mean()
-                _vol_ratio_s = float(df_4h['volume'].iloc[-2] / _vol_avg_s) if _vol_avg_s > 0 else 0.0
-                sniper_ok, sniper_verdict, sniper_reason = sniper_claude_check(
-                    symbol=symbol, score=score_4h, direction=direction,
-                    df_4h=df_4h, df_1h=df_1h, vol_ratio=_vol_ratio_s,
-                    price=price, fng_v=fng_v_scan, btc_regime=btc_regime,
-                )
-                if sniper_ok:
-                    print(f"  🎯 SNIPER EXCEPTION: {symbol} — bypassing Kill-Switch! ({sniper_reason})")
-                    _sniper_notif = (
-                        f"🎯 *Sniper Entry \\— Kill\\-Switch Override\\!*\n\n"
-                        f"{'🟢' if direction == 'LONG' else '🔴'} `{symbol}` {direction} · 4H\n"
-                        f"📊 ציון: *{score_4h}/100* \\(≥ {SNIPER_MIN_SCORE}\\)\n"
-                        f"📐 {sniper_reason.replace('-', '\\-').replace('.', '\\.').replace('(', '\\(').replace(')', '\\)').replace('=', '\\=')}\n\n"
-                        f"⚠️ _Extreme Fear Market — FNG\\={fng_v_scan}_\n"
-                        f"💰 _Half\\-Size Entry: מרג'ין \\${MARGIN * SNIPER_MARGIN_MULT:.0f} במקום \\${MARGIN:.0f}_"
-                    )
-                    send_msg(_sniper_notif)
-                    _s_ob_f, _s_ob_h, _s_ob_l = False, None, None
-                    try:
-                        _s_ob_f, _s_ob_h, _s_ob_l, _ = detect_order_blocks(df_1h, direction, lookback=50)
-                        if not (_s_ob_f and _s_ob_h and _s_ob_h > 0 and _s_ob_l > 0):
-                            _s_ob_f, _s_ob_h, _s_ob_l = False, None, None
-                    except Exception:
-                        pass
-                    open_demo_trade(
-                        symbol, price, f"Sniper Exception: {sniper_reason}",
-                        df_4h, direction=direction,
-                        score=score_4h, atr=atr,
-                        timeframe='4H', tf_reason='Sniper Kill-Switch Override',
-                        fng_v=fng_v_scan, sniper_mode=True,
-                        ob_found=_s_ob_f, ob_high=_s_ob_h, ob_low=_s_ob_l,
-                    )
-                    found += 1
-                else:
-                    print(f"  [Sniper] ❌ {symbol}: {sniper_verdict} — {sniper_reason}")
-                    rejected_out.append({
-                        'symbol': symbol, 'direction': direction, 'best_score': score_4h,
-                        'reason': f'Kill-Switch + Sniper failed: {sniper_verdict}',
-                        'scores': {'4H': score_4h, '1H': 0, '15m': 0},
-                    })
-                continue  # skip normal flow when Kill-Switch active
-
             # ── שלב 2: אם 4H לא מספיק — נסה 1H ──
             if score < MIN_SCORE:
                 df_15m = get_data_cached(symbol, timeframe='15m', limit=250)
@@ -5586,36 +5246,6 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                 continue  # never open new trades when at capacity
 
             if score >= MIN_SCORE:
-                # ── Extreme Fear: LONG מותנה — Adaptive Sniper ────────────────────
-                # בפחד קיצוני (FNG < EXTREME_FEAR_THRESHOLD) ו-BTC לא BULL:
-                # LONG דורש ציון > EXTREME_FEAR_LONG_MIN_SCORE (95) — מאוד סלקטיבי
-                # SHORT — מועדף ולא מוגבל
-                if (direction == 'LONG'
-                        and fng_v_scan < EXTREME_FEAR_THRESHOLD
-                        and not btc_overrides_killswitch
-                        and score < EXTREME_FEAR_LONG_MIN_SCORE):
-                    print(f"  [EXTREME_FEAR_FILTER] {symbol} LONG rejected: "
-                          f"FNG={fng_v_scan}<{EXTREME_FEAR_THRESHOLD}, "
-                          f"Score={score}<{EXTREME_FEAR_LONG_MIN_SCORE} (need >{EXTREME_FEAR_LONG_MIN_SCORE} in fear)")
-                    rejected_out.append({
-                        'symbol': symbol, 'direction': direction, 'best_score': score,
-                        'reason': f'Extreme Fear Filter: LONG requires score>{EXTREME_FEAR_LONG_MIN_SCORE} (FNG={fng_v_scan})',
-                        'scores': {'4H': score_4h, '1H': score_1h, '15m': score_15m},
-                    })
-                    continue
-
-                # ── Strong Uptrend Bias — BTC > EMA200 על 1H+4H: SHORT דורש ציון גבוה ────
-                if direction == 'SHORT':
-                    _sup, _ema1h, _ema4h = is_btc_strong_uptrend()
-                    if _sup and score < STRONG_UPTREND_SHORT_MIN_SCORE:
-                        print(f"  [TREND BIAS] {symbol} SHORT rejected — BTC Strong Uptrend (1H+4H>EMA200), score={score}<{STRONG_UPTREND_SHORT_MIN_SCORE}")
-                        rejected_out.append({
-                            'symbol': symbol, 'direction': 'SHORT', 'best_score': score,
-                            'reason': f'Trend Bias: BTC Strong Uptrend — SHORT requires score>{STRONG_UPTREND_SHORT_MIN_SCORE} (got {score})',
-                            'scores': {'4H': score_4h, '1H': score_1h, '15m': score_15m},
-                        })
-                        continue
-
                 # חישוב RSI ו-EMA200 רגע לפני פתיחה לשמירה בדוח
                 try:
                     _last_rsi   = ta.rsi(chosen_df['close'], length=14).iloc[-1]
@@ -5779,8 +5409,8 @@ def _run_watch_check(symbol: str, entry: dict, silent: bool = False) -> int:
         rsi_str   = f"RSI 4H: `{rsi_4h:.1f}`" + (f" | 1H: `{rsi_1h:.1f}`" if rsi_1h else "")
         ema_str   = f"`{ema_dist:.1f}%` {ema_dir}EMA200" if ema_dist is not None else "N/A"
         vol_str   = f"`{vol_ratio:.2f}×`" if vol_ratio else "N/A"
-        ema_ok    = "✅" if ema_dist is not None and ema_dist <= SNIPER_EMA_PCT else "⚠️"
-        vol_ok    = "✅" if vol_ratio and vol_ratio >= SNIPER_VOL_MIN else "—"
+        ema_ok    = "✅" if ema_dist is not None and ema_dist <= 5.0 else "⚠️"
+        vol_ok    = "✅" if vol_ratio and vol_ratio >= 2.5 else "—"
 
         score_bar = "█" * (score // 10) + "░" * (10 - score // 10)
 
@@ -5927,65 +5557,27 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
         )
         return
 
-    # ── 🎯 Hunter Mode Detection ──────────────────────────────────────────────
-    fng_v_now, _, _ = sentiment_check("scalp_hunter")
-    hunter, hunter_reason = is_hunter_mode(fng_v_now, change_24h)
-    if hunter:
-        send_msg(
-            f"🎯 *Hunter Mode פעיל — {symbol.replace('/USDT','')} (Scalp)*\n"
-            f"⚠️ מתח שוק גבוה: _{hunter_reason}_\n"
-            f"Precision Hunter — מקבל רק עסקאות RR 1:3 ומעלה."
-        )
-        print(f"  [HUNTER SCALP] {symbol}: {hunter_reason} → RR min={HUNTER_MIN_RR}")
-
-    # ── גודל פוזיציה לפי 1.5% סיכון מהון ────────────────────────────────────
-    equity = _get_equity()
-    eff_margin, pos_size, leverage, sl_pct, tp1_pct, tp_pct = calc_risk_position('Scalp', equity)
+    # ── Fixed Sizing ──────────────────────────────────────────────────────────
+    fng_v_now, _, _ = sentiment_check("scalp_open")
+    eff_margin = MARGIN        # $20
+    pos_size   = POSITION_SIZE  # $200
+    leverage   = LEVERAGE       # 10x
+    sl_pct     = SL_PCT         # 2%
+    tp1_pct    = TP1_PCT        # 2%
+    tp_pct     = TP2_PCT        # 4%
 
     if wallet.get('balance', 0) < eff_margin:
         print(f"SCALP: insufficient balance (${wallet.get('balance', 0):.2f}) — skip {symbol}")
         return
 
-    # Hunter Mode: TP1 = 1:1 RR, TP = 1:3 RR
-    if hunter:
-        tp1_pct = round(sl_pct * HUNTER_TP1_RR, 2)
-        tp_pct  = round(sl_pct * HUNTER_MIN_RR, 2)
-        print(f"  [HUNTER] Scalp TP1={tp1_pct}% TP={tp_pct}% (SL={sl_pct}%)")
-
     # ── מחירי SL / TP1 / TP ──────────────────────────────────────────────────
-    sl_dist  = price * sl_pct  / 100
-    tp1_dist = price * tp1_pct / 100
-    tp_dist  = price * tp_pct  / 100
-
-    if direction == 'LONG':
-        sl_price  = round(price - sl_dist,  8)
-        tp1_price = round(price + tp1_dist, 8)
-        tp_price  = round(price + tp_dist,  8)
-        be_price  = round(price + tp1_dist * SCALP_TRACK_BE_TRIGGER, 8)
-    else:
-        sl_price  = round(price + sl_dist,  8)
-        tp1_price = round(price - tp1_dist, 8)
-        tp_price  = round(price - tp_dist,  8)
-        be_price  = round(price - tp1_dist * SCALP_TRACK_BE_TRIGGER, 8)
-
-    # ── בדיקת RR (מינימום 1:2 רגיל / 1:3 ב-Hunter Mode) ────────────────────
-    est_profit = round(abs(tp_price  - price) / price * pos_size, 2)
-    est_loss   = round(abs(sl_price  - price) / price * pos_size, 2)
-    rr_ratio   = round(est_profit / est_loss, 2) if est_loss > 0 else 0
-
-    required_rr = HUNTER_MIN_RR if hunter else MIN_RR_RATIO
-    if rr_ratio < required_rr:
-        print(f"[SCALP] RR={rr_ratio:.2f} < {required_rr} {'(Hunter)' if hunter else ''} — {symbol} נדחה")
-        if hunter:
-            send_msg(
-                f"❌ *Trade Rejected: {symbol.replace('/USDT','')} (Scalp)*\n"
-                f"Current RR: 1:{rr_ratio} | Min requirement in tense market: 1:{int(HUNTER_MIN_RR)}\n"
-                f"🎯 _Hunter Mode Active — Precision entries only_"
-            )
-        return
+    tgt = se.calc_targets(price, direction)
+    sl_price  = tgt['sl_price']
+    tp1_price = tgt['tp1_price']
+    tp_price  = tgt['tp_price']
+    be_price  = tp1_price   # BE triggers at TP1
 
     max_risk_usd = round(pos_size * sl_pct / 100, 2)
-    risk_pct_eq  = round(max_risk_usd / equity * 100, 2)
 
     trade = {
         'symbol':          symbol,
@@ -6021,24 +5613,23 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
         'vol_usd':         round(vol_usd),
         'change_24h':      round(change_24h, 2),
         'slippage_pct':    0.0,
-        'hunter_mode':     hunter,
-        'hunter_be_on_tp1': hunter,
+        'hunter_mode':     False,
+        'hunter_be_on_tp1': False,
     }
     place_order(trade, eff_margin)
 
-    be_trigger_pct = round(tp1_pct * SCALP_TRACK_BE_TRIGGER, 2)
     emoji     = "🟢" if direction == 'LONG' else "🔴"
     dir_label = "Quick-Long (Dip Buy)" if direction == 'LONG' else "Scalp-Short (Bubble)"
     scalp_msg = (
         f"⚡ *{dir_label}: {symbol.replace('/USDT', '')} {emoji}*\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"💵 כניסה: `{price:.6g}`\n"
-        f"🛑 SL:    `{sl_price:.6g}` (-{sl_pct}%)\n"
-        f"🔒 BE:    `{be_price:.6g}` (+{be_trigger_pct}%)\n"
-        f"🎯 TP1:   `{tp1_price:.6g}` (+{tp1_pct}%)\n"
-        f"🎯 TP:    `{tp_price:.6g}` (+{tp_pct}%)\n"
+        f"🛑 SL:    `{sl_price:.6g}` (-{sl_pct:.1f}%)\n"
+        f"🔒 BE:    `{be_price:.6g}` (≡ TP1)\n"
+        f"🎯 TP1:   `{tp1_price:.6g}` (+{tp1_pct:.1f}%)\n"
+        f"🎯 TP:    `{tp_price:.6g}` (+{tp_pct:.1f}%)\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"💼 {leverage}x · ${eff_margin:.0f} · ⚖️ RR 1:{rr_ratio} · ⏱ {SCALP_MAX_DURATION_MIN}m"
+        f"💼 {leverage}x · ${eff_margin:.0f} מרג'ין · ${pos_size:.0f} נשלט · ⏱ {SCALP_MAX_DURATION_MIN}m"
     )
     try:
         df_scalp = get_data(symbol, timeframe='1h', limit=80)
@@ -6047,7 +5638,7 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
     except Exception:
         chart_buf = None
     send_chart_alert(chart_buf, symbol, scalp_msg)
-    print(f"[SCALP] {direction}: {symbol} @ {price:.6g} | SL={sl_pct}% TP={tp_pct}% BE@{be_trigger_pct}% | {leverage}x margin=${eff_margin} risk=${max_risk_usd} ({risk_pct_eq}%)")
+    print(f"[SCALP] {direction}: {symbol} @ {price:.6g} | SL={sl_pct:.1f}% TP1={tp1_pct:.1f}% TP2={tp_pct:.1f}% | {leverage}x margin=${eff_margin:.0f} risk=${max_risk_usd}")
 
 
 def _cliff_detect(symbol: str) -> tuple[bool, str, float, float, bool]:
@@ -7449,18 +7040,16 @@ def reconcile_with_exchange():
         print(f"[SYNC] dropped stale local symbols: {dropped}", flush=True)
 
 
-# Bumping BOOTSTRAP_VERSION forces a one-time reset of wallet/trades/audit to the
-# baseline below on the next startup. Increment manually whenever you want to wipe
-# durable state (e.g. fresh capital, schema change). Stored in Object Storage so
-# each version only ever resets once across all deploys.
-BOOTSTRAP_VERSION = "v2_200usd_2026_05_15"
+# Bumping BOOTSTRAP_VERSION forces a one-time reset on next startup.
+# v3: Task-38 simplification — clear active trades, carry $13.05 realized P&L forward.
+# Stored in Object Storage so each version only ever resets once across all deploys.
+BOOTSTRAP_VERSION = "v3_simplification_2026_05_17"
 
 
 def maybe_bootstrap_baseline():
     """
-    On first boot for a given BOOTSTRAP_VERSION, force the durable store to a
-    fresh $200 / zero-trades / zero-audit baseline. Subsequent boots see the
-    version marker and skip the reset, so live state is preserved.
+    On first boot for BOOTSTRAP_VERSION v3, clear active trades and preserve
+    $13.05 realized P&L (equity=$213.05). Subsequent boots skip this entirely.
     """
     marker = state_store.os_get('bootstrap_version')
     if marker == BOOTSTRAP_VERSION:
@@ -7468,25 +7057,34 @@ def maybe_bootstrap_baseline():
         return
 
     print(
-        f"[STATE] bootstrap {marker!r} → {BOOTSTRAP_VERSION!r}: forcing $200 baseline reset",
+        f"[STATE] bootstrap {marker!r} → {BOOTSTRAP_VERSION!r}: "
+        f"clearing trades, carrying forward $13.05 realized P&L",
         flush=True,
     )
+    carried_pnl = 13.05
+    eq = round(STARTING_BALANCE + carried_pnl, 2)
     fresh_wallet = {
-        'balance':         STARTING_BALANCE,
-        'starting':        STARTING_BALANCE,
-        'total_pnl':       0.0,
-        'trades_opened':   0,
-        'total_wins':      0,
-        'total_losses':    0,
-        'locked_balance':  0.0,
-        'available_balance': STARTING_BALANCE,
-        'unrealized_pnl':  0.0,
-        'equity_history':  [{'t': now_il().strftime('%m/%d %H:%M'), 'eq': STARTING_BALANCE}],
+        'balance':           eq,
+        'starting':          STARTING_BALANCE,
+        'total_pnl':         carried_pnl,
+        'trades_opened':     0,
+        'total_wins':        0,
+        'total_losses':      0,
+        'locked_balance':    0.0,
+        'available_balance': eq,
+        'unrealized_pnl':    0.0,
+        'equity':            eq,
+        'equity_history':    [{'t': now_il().strftime('%m/%d %H:%M'), 'eq': eq}],
+        'bootstrap':         BOOTSTRAP_VERSION,
     }
-    state_store.reset_state('wallet',         fresh_wallet,                                          WALLET_FILE)
-    state_store.reset_state('active_trades',  {'updated': now_il().strftime('%H:%M:%S'), 'count': 0, 'trades': []}, ACTIVE_TRADES_FILE)
-    state_store.reset_state('trade_audit',    {'updated': now_il().isoformat(timespec='seconds'), 'count': 0, 'trades': []}, AUDIT_LOG_FILE)
+    state_store.reset_state('wallet',        fresh_wallet,
+                             WALLET_FILE)
+    state_store.reset_state('active_trades', {'updated': now_il().strftime('%H:%M:%S'), 'count': 0, 'trades': []},
+                             ACTIVE_TRADES_FILE)
+    state_store.reset_state('trade_audit',   {'updated': now_il().isoformat(timespec='seconds'), 'count': 0, 'trades': []},
+                             AUDIT_LOG_FILE)
     state_store.os_set('bootstrap_version', BOOTSTRAP_VERSION)
+    print(f"[STATE] Bootstrap done — equity=${eq:.2f} realized_pnl=${carried_pnl:.2f}", flush=True)
 
 
 def main():

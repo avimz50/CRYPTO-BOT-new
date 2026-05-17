@@ -95,6 +95,55 @@ def save_wallet(wallet: dict, active_trades: list | None = None) -> None:
     state_store.save_state('wallet', snapshot, WALLET_FILE)
 
 
+BOOTSTRAP_VERSION = "v3_simplification_2026_05_17"
+
+def reset_to_clean_state() -> dict:
+    """
+    One-time bootstrap for Task-38 simplification.
+    Gated on BOOTSTRAP_VERSION so it runs exactly once.
+    Sets realized_pnl=+$13.05 (carryover), equity=$213.05, no active trades.
+    Returns the new wallet if reset was performed, or None if skipped.
+    """
+    _version_key = 'bootstrap_version'
+    current = state_store.os_get(_version_key)
+    if current == BOOTSTRAP_VERSION:
+        print(f"[Bootstrap] Already at {BOOTSTRAP_VERSION} — skipping reset", flush=True)
+        return None
+
+    print(f"[Bootstrap] Resetting state → {BOOTSTRAP_VERSION}", flush=True)
+
+    # ── Clear active trades ────────────────────────────────────────────────────
+    state_store.reset_state(
+        'active_trades',
+        {'updated': None, 'count': 0, 'trades': []},
+        TRADES_FILE,
+    )
+
+    # ── Fresh wallet with carryover realized P&L ───────────────────────────────
+    carried_pnl = 13.05   # existing realized profit to preserve
+    fresh_wallet = {
+        'balance':           round(STARTING_BALANCE + carried_pnl, 2),
+        'starting':          STARTING_BALANCE,
+        'total_pnl':         carried_pnl,
+        'trades_opened':     0,
+        'total_wins':        0,
+        'total_losses':      0,
+        'locked_balance':    0.0,
+        'available_balance': round(STARTING_BALANCE + carried_pnl, 2),
+        'unrealized_pnl':    0.0,
+        'equity':            round(STARTING_BALANCE + carried_pnl, 2),
+        'equity_history':    [],
+        'bootstrap':         BOOTSTRAP_VERSION,
+    }
+    state_store.reset_state('wallet', fresh_wallet, WALLET_FILE)
+
+    # ── Mark bootstrap done ────────────────────────────────────────────────────
+    state_store.os_set(_version_key, BOOTSTRAP_VERSION)
+    print(f"[Bootstrap] Done. Equity=${fresh_wallet['equity']:.2f} "
+          f"realized_pnl=${carried_pnl:.2f}", flush=True)
+    return fresh_wallet
+
+
 def reset_wallet() -> dict:
     """Hard-reset wallet to $200 baseline. Returns the fresh wallet."""
     fresh = {

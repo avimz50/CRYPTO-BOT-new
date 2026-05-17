@@ -1,5 +1,5 @@
 """
-config.py — Adaptive Sniper 2026
+config.py — Clean Base 2026
 All static constants, environment-sourced values, and JSON settings loaders.
 Dynamic runtime state (MAX_TRADES, FNG thresholds) is initialised in bot.py
 from the loaders below and mutated there at runtime via Telegram / API.
@@ -25,10 +25,15 @@ IS_DEPLOYED = bool(os.environ.get('REPLIT_DEPLOYMENT', ''))
 GEMINI_URL  = os.environ.get('AI_INTEGRATIONS_GEMINI_BASE_URL', '')
 GEMINI_KEY  = os.environ.get('AI_INTEGRATIONS_GEMINI_API_KEY', '')
 
-# ── Position Sizing ────────────────────────────────────────────────────────────
+# ── Position Sizing — Fixed ────────────────────────────────────────────────────
 LEVERAGE      = 10
-MARGIN        = 50           # $50 margin per trade
-POSITION_SIZE = MARGIN * LEVERAGE  # $500 controlled
+MARGIN        = 20.0         # $20 margin per trade
+POSITION_SIZE = MARGIN * LEVERAGE  # $200 controlled
+
+# ── Fixed SL / TP Percentages ──────────────────────────────────────────────────
+SL_PCT  = 2.0   # Stop Loss   = 2% from entry
+TP1_PCT = 2.0   # Take Profit 1 = 2% (triggers Break-Even + 50% close)
+TP2_PCT = 4.0   # Take Profit 2 = 4% (final target, 1:2 RR)
 
 # ── Circuit Breaker ────────────────────────────────────────────────────────────
 DAILY_LOSS_LIMIT = -30.0     # -$30 = 15% of $200 starting balance
@@ -36,8 +41,8 @@ DAILY_LOSS_LIMIT = -30.0     # -$30 = 15% of $200 starting balance
 # ── Scoring Thresholds ─────────────────────────────────────────────────────────
 MIN_SCORE           = 78     # Entry threshold
 RSI_VETO_LONG       = 65     # Hard veto — extreme overbought
-RSI_VETO_SHORT      = 15     # Hard veto — extreme oversold (lowered: allow shorts in high-momentum sells)
-EMA_PROXIMITY_PCT   = 10.0   # Anti-chase: max % above EMA200 (increased: don't miss breakouts far from EMA)
+RSI_VETO_SHORT      = 15     # Hard veto — extreme oversold
+EMA_PROXIMITY_PCT   = 10.0   # Anti-chase: max % above EMA200
 VOL_EMA_BYPASS_MULT = 1.5    # Volume ≥ ×1.5 bypasses EMA proximity veto
 
 # ── Trade Lifecycle ────────────────────────────────────────────────────────────
@@ -48,55 +53,15 @@ TRAIL_PCT            = 1.5
 ATR_TRAIL_MULT       = 1.5
 PARTIAL_25_TRIGGER   = 5.0
 PARTIAL_25_DROP      = 1.0
-SL_PCT_FIXED         = 3.5
-TP1_PCT_FIXED        = 5.0
-TP_PCT_FIXED         = 15.0
 
-# ── Dynamic SL Parameters ─────────────────────────────────────────────────────
-MAJOR_COINS     = {'BTC', 'ETH', 'SOL'}
-SL_BASE_MAJOR   = 3.0   # % SL for major coins
-SL_BASE_ALTCOIN = 5.0   # % SL for altcoins
-SL_FEAR_BUFFER  = 1.0   # Extra % when FNG < 25
-SL_ATR_MULT     = 1.5   # SL must be at least 1.5 × ATR%
+# ── ATR Period (scoring only) ──────────────────────────────────────────────────
+ATR_PERIOD = 14
 
-# ── Regime Filters ─────────────────────────────────────────────────────────────
-EXTREME_FEAR_LONG_MIN_SCORE    = 95   # LONG in extreme fear: score > 95 only
-STRONG_UPTREND_SHORT_MIN_SCORE = 90   # BTC strong uptrend: SHORT score > 90
+# ── Coins Classification ───────────────────────────────────────────────────────
+MAJOR_COINS = {'BTC', 'ETH', 'SOL'}
 
-# ── Sniper Exception ───────────────────────────────────────────────────────────
-SNIPER_MIN_SCORE   = 92
-SNIPER_EMA_PCT     = 5.0
-SNIPER_VOL_MIN     = 2.5
-SNIPER_MARGIN_MULT = 0.5   # Half-size entry during Kill-Switch
-
-# ── Hunter / Risk ──────────────────────────────────────────────────────────────
-MAX_EQUITY_RISK_PCT  = 1.5    # Max 1.5% equity risk per trade
-MIN_RR_RATIO         = 2.0    # Minimum 1:2 R:R
-HUNTER_FNG_THRESHOLD = 70
-HUNTER_PUMP_PCT_24H  = 15.0
-HUNTER_MIN_RR        = 3.0
-HUNTER_TP1_RR        = 1.0
+# ── Weekly Target ──────────────────────────────────────────────────────────────
 WEEKLY_PROFIT_TARGET = 50.0
-
-# ── Risk & Position Sizing Engine ─────────────────────────────────────────────
-TRADE_RISK_PCT       = 1.0    # % of total balance to risk per trade (fallback)
-RISK_PER_TRADE_USD   = 2.0    # Fixed dollar risk per trade (overrides TRADE_RISK_PCT)
-MIN_POSITION_USD     = 20.0   # Minimum position size to cover exchange fees
-TARGET_RR_RATIO      = 2.0    # TP = Entry ± (SL_dist × TARGET_RR_RATIO); TP1 at 1:1
-ROUND_TRIP_FEE_PCT   = 0.12   # Bitget round-trip taker fee: 0.06% entry + 0.06% exit
-MIN_NET_PROFIT_USD   = 1.50   # Minimum net profit at final TP (after fees) to open trade
-MIN_PROFIT_RR        = 1.8    # Minimum RR at final TP (gross profit / gross loss)
-MAX_AUTO_LEVERAGE    = 20     # Cap on auto-calculated leverage
-MIN_AUTO_LEVERAGE    = 2      # Floor on auto-calculated leverage
-
-# ── ATR-Based Dynamic Targets ──────────────────────────────────────────────────
-USE_ATR_TARGETS = True   # Use ATR to set SL/TP1/TP2 instead of fixed %
-ATR_PERIOD      = 14     # ATR calculation period
-ATR_SL_TF       = '1h'   # Timeframe for SL ATR (kept on 1H for stability)
-ATR_TP1_TF      = '15m'  # Timeframe for TP1 ATR (faster — 15m for quicker partial+BE)
-ATR_SL_MULT     = 2.0    # SL  = Entry ∓ (ATR_SL_MULT  × ATR_1H)
-ATR_TP1_MULT    = 1.0    # TP1 = Entry ± (ATR_TP1_MULT × ATR_15M)  → BE trigger + partial close
-ATR_TP2_MULT    = 3.0    # TP2 = Entry ± (ATR_TP2_MULT × ATR_1H)  (final target uses TARGET_RR_RATIO)
 
 # ── Bollinger Band Squeeze ─────────────────────────────────────────────────────
 BB_SQUEEZE_RATIO    = 0.50
