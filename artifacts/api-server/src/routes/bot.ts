@@ -133,10 +133,9 @@ router.get("/status", async (_req, res) => {
   ]);
   const w = walletRaw as Record<string, number>;
   const t = tradesRaw as Record<string, number>;
-  // Flask has no /api/fng route — use the api-server's own FNG cache (fetched
-  // from alternative.me every 15 min by the /fng endpoint). _fngCache starts
-  // at value=50 until first successful fetch; the /fng endpoint is called on
-  // dashboard load so by the time /status is polled the cache is usually warm.
+  // FNG: use cache; if stale (>15 min) kick off a background refresh so next
+  // /status call gets the updated value. Cache is also warmed up on server start.
+  if (Date.now() / 1000 - _fngCache.ts >= 900) _refreshFngCache();
   res.json({
     connected:    true,
     exchange:     "Bitget",
@@ -391,7 +390,40 @@ let _fngCache: { value: number; label: string; ts: number; updated_at: number; t
   value: 50, label: "Neutral", ts: 0, updated_at: 0, time_until_update: 0
 };
 
-router.get("/fng", (_req, res) => {
+/** Fetches FNG from alternative.me and updates _fngCache. Resolves when done. */
+function _refreshFngCache(): Promise<void> {
+  return new Promise((resolve) => {
+    const now = Date.now() / 1000;
+    const url = "https://api.alternative.me/fng/?limit=1";
+    https.get(url, (r) => {
+      let body = "";
+      r.on("data", (c) => (body += c));
+      r.on("end", () => {
+        try {
+          const d = JSON.parse(body).data[0];
+          _fngCache = {
+            value: parseInt(d.value),
+            label: d.value_classification,
+            ts: now,
+            updated_at: parseInt(d.timestamp),
+            time_until_update: parseInt(d.time_until_update),
+          };
+        } catch {
+          if (_fngCache.ts === 0) _fngCache = { value: 50, label: "Neutral", ts: now - 800, updated_at: now, time_until_update: 0 };
+        }
+        resolve();
+      });
+    }).on("error", () => {
+      if (_fngCache.ts === 0) _fngCache = { value: 50, label: "Neutral", ts: now - 800, updated_at: now, time_until_update: 0 };
+      resolve();
+    });
+  });
+}
+
+// Warm up FNG cache immediately on server start (so /status never shows 50 on first load)
+_refreshFngCache();
+
+router.get("/fng", async (_req, res) => {
   const now = Date.now() / 1000;
   if (now - _fngCache.ts < 900) {
     res.json({
@@ -402,38 +434,12 @@ router.get("/fng", (_req, res) => {
     });
     return;
   }
-  const url = "https://api.alternative.me/fng/?limit=1";
-  https.get(url, (r) => {
-    let body = "";
-    r.on("data", (c) => (body += c));
-    r.on("end", () => {
-      try {
-        const d = JSON.parse(body).data[0];
-        _fngCache = {
-          value: parseInt(d.value),
-          label: d.value_classification,
-          ts: now,
-          updated_at: parseInt(d.timestamp),
-          time_until_update: parseInt(d.time_until_update),
-        };
-      } catch {
-        if (_fngCache.ts === 0) _fngCache = { value: 50, label: "Neutral", ts: now - 800, updated_at: now, time_until_update: 0 };
-      }
-      res.json({
-        value: _fngCache.value,
-        label: _fngCache.label,
-        updated_at: _fngCache.updated_at,
-        time_until_update: _fngCache.time_until_update,
-      });
-    });
-  }).on("error", () => {
-    if (_fngCache.ts === 0) _fngCache = { value: 50, label: "Neutral", ts: now - 800, updated_at: now, time_until_update: 0 };
-    res.json({
-      value: _fngCache.value,
-      label: _fngCache.label,
-      updated_at: _fngCache.updated_at,
-      time_until_update: _fngCache.time_until_update,
-    });
+  await _refreshFngCache();
+  res.json({
+    value: _fngCache.value,
+    label: _fngCache.label,
+    updated_at: _fngCache.updated_at,
+    time_until_update: _fngCache.time_until_update,
   });
 });
 

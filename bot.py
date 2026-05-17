@@ -302,7 +302,7 @@ def claude_filter(symbol: str, direction: str, score: int, breakdown: str,
 
         client = _anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
-            model="claude-3-haiku-20240307",
+            model="claude-3-5-haiku-20241022",
             max_tokens=80,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -391,7 +391,7 @@ def sniper_claude_check(symbol: str, score: int, direction: str,
         import anthropic as _anthropic
         client = _anthropic.Anthropic(api_key=api_key)
         resp = client.messages.create(
-            model="claude-3-haiku-20240307",
+            model="claude-3-5-haiku-20241022",
             max_tokens=40,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -674,7 +674,7 @@ def claude_sandbox_analysis(bubble_watch_list: list, btc_regime: str,
 
             client   = _anthropic.Anthropic(api_key=api_key)
             response = client.messages.create(
-                model="claude-3-haiku-20240307",
+                model="claude-3-5-haiku-20241022",
                 max_tokens=200,
                 messages=[{"role": "user", "content": prompt}]
             )
@@ -3961,7 +3961,7 @@ def _claude_news_analysis(news_text: str, active_symbols: list) -> dict | None:
         import anthropic as _anthropic
         client = _anthropic.Anthropic(api_key=api_key)
         resp = client.messages.create(
-            model="claude-3-haiku-20240307",
+            model="claude-3-5-haiku-20241022",
             max_tokens=600,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -5280,79 +5280,46 @@ def _tg_api_call(token: str, method: str, payload: dict, timeout: int = 12) -> d
 
 def start_telegram_polling():
     """
-    PROD: רושם Telegram Webhook — Telegram שולח updates ל-/api/tg_hook.
-          לא צריך polling; מחסל את בעיית ה-long-polling ב-Replit production.
-    DEV:  infinity_polling רגיל (webhook לא זמין מ-localhost).
+    מצב אחיד — infinity_polling עם watchdog בין PROD ל-DEV.
+    Webhook הוכח כבלתי-אמין ב-Replit (Telegram לא מצליח להגיע ל-domain);
+    polling עובד בכל סביבה וה-watchdog מטפל בהקפאות.
     """
     is_deployed = bool(os.environ.get('REPLIT_DEPLOYMENT', ''))
     mode_label  = "PROD" if is_deployed else "DEV"
     token       = os.environ.get('TELEGRAM_TOKEN', '')
+    wait_sec    = 35 if is_deployed else 10
 
-    if is_deployed:
-        # ── PROD: WEBHOOK MODE ──────────────────────────────────────────────
-        print(f"[PROD] Webhook mode — ממתין 35s לסיום boot...", flush=True)
-        time.sleep(35)
+    print(f"[{mode_label}] Polling mode — ממתין {wait_sec}s לסיום boot...", flush=True)
+    time.sleep(wait_sec)
 
-        # בנה את ה-URL מ-REPLIT_DOMAINS (Replit מגדיר אוטומטית בפרודקשן)
-        domains = os.environ.get('REPLIT_DOMAINS', '')
-        if domains:
-            first_domain = domains.split(',')[0].strip()
-            webhook_url = f"https://{first_domain}/api/tg_hook"
-        else:
-            webhook_url = "https://crypto-bot-bymzrkhy.replit.app/api/tg_hook"
-
-        print(f"[PROD] Setting webhook → {webhook_url}", flush=True)
-
-        # מחק webhook קיים
-        r1 = _tg_api_call(token, "deleteWebhook", {"drop_pending_updates": True})
-        print(f"[PROD] deleteWebhook: {r1}", flush=True)
-        time.sleep(2)
-
-        # רשום webhook חדש
-        r2 = _tg_api_call(token, "setWebhook", {
-            "url": webhook_url,
-            "drop_pending_updates": True,
-            "allowed_updates": ["message", "callback_query"],
-        })
-        print(f"[PROD] setWebhook: {r2}", flush=True)
-
-        if r2.get('ok'):
-            print(f"[PROD] ✅ Webhook active — Telegram יישלח updates ל-{webhook_url}", flush=True)
-        else:
-            print(f"[PROD] ❌ setWebhook failed: {r2}", flush=True)
-        return  # no polling loop — updates arrive via /api/tg_hook
-
-    # ── DEV: POLLING MODE ───────────────────────────────────────────────────
-    print(f"[DEV] Polling mode — ממתין 10s...", flush=True)
-    time.sleep(10)
-
-    # נקה webhook קודם (עם timeout מפורש)
+    # נקה webhook קודם — מונע 409 Conflict
     r = _tg_api_call(token, "deleteWebhook", {"drop_pending_updates": True})
-    print(f"[DEV] deleteWebhook: {r}", flush=True)
+    print(f"[{mode_label}] deleteWebhook: {r}", flush=True)
+    time.sleep(2)
 
     while True:
         global _polling_last_activity
         _polling_last_activity = time.time()
         try:
-            print(f"[DEV] infinity_polling starting...", flush=True)
+            print(f"[{mode_label}] infinity_polling starting...", flush=True)
             bot.infinity_polling(
                 timeout=20,
                 long_polling_timeout=5,
                 logger_level=None,
             )
-            print(f"[DEV] infinity_polling returned — restarting loop", flush=True)
+            print(f"[{mode_label}] infinity_polling returned — restarting loop", flush=True)
         except Exception as e:
             err_str = str(e)
-            print(f"[DEV] Polling exception: {err_str[:200]}", flush=True)
+            print(f"[{mode_label}] Polling exception: {err_str[:200]}", flush=True)
             if '409' in err_str:
-                print(f"⚠️  [DEV] 409 Conflict — ממתין 30s...", flush=True)
+                print(f"⚠️  [{mode_label}] 409 Conflict — ממתין 30s...", flush=True)
                 time.sleep(30)
                 _tg_api_call(token, "deleteWebhook", {"drop_pending_updates": True})
             elif '401' in err_str:
-                print(f"❌  [DEV] 401 Unauthorized — TELEGRAM_TOKEN שגוי?", flush=True)
+                print(f"❌  [{mode_label}] 401 Unauthorized — TELEGRAM_TOKEN שגוי?", flush=True)
                 time.sleep(60)
             else:
-                print(f"[DEV] Polling error — restart in 5s: {e}", flush=True)
+                print(f"[{mode_label}] Polling error — restart in 5s: {e}", flush=True)
                 time.sleep(5)
 
 # --- לולאת מעקב עסקאות — Thread נפרד ---
