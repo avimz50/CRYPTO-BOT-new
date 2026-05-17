@@ -7051,7 +7051,7 @@ def main():
             "🟢 *SYSTEM READY — Clean Base Rules 2026*\n"
             f"{'─' * 30}\n\n"
             f"💰 *יתרה:* ${wallet.get('balance', STARTING_BALANCE):.2f}\n"
-            f"📊 *P&L ממומש:* ${wallet.get('realized_pnl', 0):.2f}\n\n"
+            f"📊 *P&L ממומש:* ${wallet.get('total_pnl', 0):.2f}\n\n"
             "⚙️ *פרמטרים:*\n"
             f"  📌 מרג'ין: *${MARGIN}* | מינוף: *{LEVERAGE}×*\n"
             f"  🎯 מקסימום עסקאות: *{MAX_TRADES}*\n"
