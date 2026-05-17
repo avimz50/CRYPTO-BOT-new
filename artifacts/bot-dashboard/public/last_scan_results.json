@@ -1,26 +1,15 @@
 {
-  "scan_time": "2026-05-17T18:47:20+03:00",
+  "scan_time": "2026-05-17T20:13:53+03:00",
   "total_scanned": 33,
-  "signals_found": 0,
-  "active_trades_count": 0,
+  "signals_found": 6,
+  "active_trades_count": 1,
   "max_trades": 3,
   "min_score": 78,
   "btc_regime": "BEAR",
   "fng_value": 27,
   "fng_label": "Fear",
-  "market_sentiment_factor": "Fear & Greed=27 (Fear) — Hunter Mode: RSI וSL רגילים (לא מוגבל)",
+  "market_sentiment_factor": "Fear & Greed=27 (Fear) — Fixed rules apply",
   "rejected_coins": [
-    {
-      "symbol": "IRYS/USDT",
-      "direction": "SHORT",
-      "best_score": 65,
-      "reason": "ניקוד 65/100 — MACD חסר (15/25), RSI חלש (10/20)",
-      "scores": {
-        "4H": 65,
-        "1H": 0,
-        "15m": 0
-      }
-    },
     {
       "symbol": "BSB/USDT",
       "direction": "LONG",
@@ -30,13 +19,6 @@
     },
     {
       "symbol": "AIA/USDT",
-      "direction": "LONG",
-      "best_score": 0,
-      "reason": "BTC BEAR Regime — LONGs חסומים",
-      "scores": {}
-    },
-    {
-      "symbol": "AIGENSYN/USDT",
       "direction": "LONG",
       "best_score": 0,
       "reason": "BTC BEAR Regime — LONGs חסומים",
@@ -48,31 +30,45 @@
       "best_score": 0,
       "reason": "BTC BEAR Regime — LONGs חסומים",
       "scores": {}
+    },
+    {
+      "symbol": "SKYAI/USDT",
+      "direction": "LONG",
+      "best_score": 0,
+      "reason": "BTC BEAR Regime — LONGs חסומים",
+      "scores": {}
+    },
+    {
+      "symbol": "UMXM/USDT",
+      "direction": "LONG",
+      "best_score": 0,
+      "reason": "BTC BEAR Regime — LONGs חסומים",
+      "scores": {}
     }
   ],
-  "system_message": "אף מטבע לא הגיע לציון 78/100. הטוב ביותר: IRYS/USDT עם 65/100",
-  "scan_duration_s": 5.0,
+  "system_message": "6 עסקה/ות נפתחו — סריקה ידנית",
+  "scan_duration_s": 9.8,
   "bubble_watch": [
     {
       "symbol": "BSB/USDT",
-      "change_pct": 47.88,
+      "change_pct": 24.64,
       "direction": "LONG",
-      "price": 0.58164,
-      "volume_usd": 4218409
+      "price": 0.57135,
+      "volume_usd": 3755430
     },
     {
       "symbol": "AIA/USDT",
-      "change_pct": 25.64,
+      "change_pct": 22.42,
       "direction": "LONG",
-      "price": 0.077501,
-      "volume_usd": 7157822
+      "price": 0.075894,
+      "volume_usd": 7525457
     },
     {
       "symbol": "IRYS/USDT",
-      "change_pct": -15.32,
+      "change_pct": -17.92,
       "direction": "SHORT",
-      "price": 0.04422,
-      "volume_usd": 36733972
+      "price": 0.04329,
+      "volume_usd": 35231842
     }
   ],
   "sandbox_analysis": []
