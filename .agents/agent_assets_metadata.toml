@@ -30,3 +30,9 @@ id = "7cZibxQjHJ2SWrI89I25J"
 uri = "file://trade_report_today.csv"
 type = "table"
 title = "דוח עסקאות — 14 אפריל 2026"
+
+[[outputs]]
+id = "qSH85TJFdd4Lcj7x0H_vS"
+uri = "file://trading_rules_summary.md"
+type = "text"
+title = "Trading Rules Summary"
