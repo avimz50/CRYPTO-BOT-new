@@ -2584,35 +2584,31 @@ def track_trades():
                     save_active_trades()
                     continue
 
-                # ── חישוב רמת BE (Entry + 0.1% לLONG / Entry - 0.1% לSHORT) ──
-                be_lock_price = round(entry * (1 + BE_LOCK_BUFFER_PCT / 100), 8) \
+                # ── רמת BE lock: Entry+0.1% לLONG (מתחת), Entry+0.1% לSHORT (מעל) ──
+                # LONG:  SL → entry*(1-buffer) → מתחת לכניסה → sl_hit כשמחיר יורד לשם ✓
+                # SHORT: SL → entry*(1+buffer) → מעל לכניסה  → sl_hit כשמחיר עולה לשם ✓
+                be_lock_price = round(entry * (1 - BE_LOCK_BUFFER_PCT / 100), 8) \
                                 if direction == 'LONG' \
-                                else round(entry * (1 - BE_LOCK_BUFFER_PCT / 100), 8)
+                                else round(entry * (1 + BE_LOCK_BUFFER_PCT / 100), 8)
 
-                # 1a. Greed Early BE — FNG≥70: BE at +2% (immediately, before TP1)
+                # 1a. Greed Early BE — FNG≥70: BE מוקדם לפני TP1 (רק בחמדנות)
                 if not trade['be_triggered'] and fng_v_mgr >= GREED_THRESHOLD:
                     greed_profit_pct = abs(current_price - entry) / entry * 100
                     if profit_dir(current_price) and greed_profit_pct >= GREED_EARLY_BE_PCT:
                         trade['sl']           = be_lock_price
                         trade['be_triggered'] = True
+                        dir_label = "מעל" if direction == 'SHORT' else "מתחת"
                         print(f"  [SENTIMENT] GREED EARLY BE: {sym} SL→{be_lock_price:.6g} @ {current_price:.6g} (+{greed_profit_pct:.2f}%, FNG={fng_v_mgr})")
                         send_msg(
                             f"🔒 *Greed Early BE — {sym}*\n"
                             f"מחיר: `{current_price:.6g}` (+{greed_profit_pct:.2f}% רווח)\n"
-                            f"SL הועבר ל: `{be_lock_price:.6g}` (+{BE_LOCK_BUFFER_PCT}% מעל כניסה) 🛡️\n"
+                            f"SL הועבר ל: `{be_lock_price:.6g}` ({BE_LOCK_BUFFER_PCT}% {dir_label} כניסה) 🛡️\n"
                             f"(FNG={fng_v_mgr} — מצב חמדנות) | ההון מוגן!"
                         )
 
-                # 1b. Break Even סטנדרטי — ב-+2% רווח, SL → Entry+0.1%
-                if not trade['be_triggered'] and be_hit(current_price):
-                    trade['sl']           = be_lock_price
-                    trade['be_triggered'] = True
-                    send_msg(
-                        f"🔒 *Break Even מופעל — {sym}*\n"
-                        f"מחיר: `{current_price:.6g}` (+{BE_BUFFER_PCT}% מהכניסה)\n"
-                        f"SL הועבר ל: `{be_lock_price:.6g}` (+{BE_LOCK_BUFFER_PCT}% מעל כניסה)\n"
-                        f"💼 {LEVERAGE}x Isolated · ההון מוגן ✅"
-                    )
+                # 1b. Break Even סטנדרטי — BE מופעל אוטומטית כשTP1 נגע (ראה בלוק TP1 למטה)
+                # [הוסר] הבדיקה הישנה be_hit() השתמשה ב-be_lvl=entry כ-trigger
+                # וגרמה לסגירה מיידית: לSHORT כל מחיר < entry הפעיל BE לפני TP1.
 
                 # 1c. Partial 25% Close — הגיע ל-+3%, עכשיו יורד מהשיא ב-0.8%+
                 if (not trade.get('partial_25_triggered')
