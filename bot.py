@@ -4954,14 +4954,20 @@ def _tg_api_call(token: str, method: str, payload: dict, timeout: int = 12) -> d
 
 def start_telegram_polling():
     """
-    מצב אחיד — infinity_polling עם watchdog בין PROD ל-DEV.
-    Webhook הוכח כבלתי-אמין ב-Replit (Telegram לא מצליח להגיע ל-domain);
-    polling עובד בכל סביבה וה-watchdog מטפל בהקפאות.
+    PROD only — infinity_polling רץ רק כשהבוט פרוס (REPLIT_DEPLOYMENT=1).
+    בסביבת DEV מדלגים על polling לחלוטין כדי למנוע קונפליקט 409 עם ה-PROD.
+    send_msg() עובד תמיד (HTTP POST ישיר — לא תלוי ב-polling).
     """
     is_deployed = bool(os.environ.get('REPLIT_DEPLOYMENT', ''))
-    mode_label  = "PROD" if is_deployed else "DEV"
     token       = os.environ.get('TELEGRAM_TOKEN', '')
-    wait_sec    = 35 if is_deployed else 10
+
+    if not is_deployed:
+        print("[DEV] Telegram polling SKIPPED — Production bot handles commands. "
+              "send_msg() still works (direct HTTP POST).", flush=True)
+        return
+
+    mode_label = "PROD"
+    wait_sec   = 35
 
     print(f"[{mode_label}] Polling mode — ממתין {wait_sec}s לסיום boot...", flush=True)
     time.sleep(wait_sec)
