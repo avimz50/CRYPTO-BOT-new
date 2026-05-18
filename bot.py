@@ -299,7 +299,7 @@ def claude_filter(symbol: str, direction: str, score: int, breakdown: str,
 
         client = _anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
-            model="claude-3-5-haiku-20241022",
+            model="claude-haiku-4-5",
             max_tokens=80,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -580,7 +580,7 @@ def claude_sandbox_analysis(bubble_watch_list: list, btc_regime: str,
 
             client   = _anthropic.Anthropic(api_key=api_key)
             response = client.messages.create(
-                model="claude-3-5-haiku-20241022",
+                model="claude-haiku-4-5",
                 max_tokens=200,
                 messages=[{"role": "user", "content": prompt}]
             )
@@ -3639,7 +3639,7 @@ def _claude_news_analysis(news_text: str, active_symbols: list) -> dict | None:
         import anthropic as _anthropic
         client = _anthropic.Anthropic(api_key=api_key)
         resp = client.messages.create(
-            model="claude-3-5-haiku-20241022",
+            model="claude-haiku-4-5",
             max_tokens=600,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -4970,30 +4970,52 @@ def start_telegram_polling():
     print(f"[{mode_label}] deleteWebhook: {r}", flush=True)
     time.sleep(2)
 
+    _last_restart_ts = 0.0
+    _rapid_restart_count = 0
+
     while True:
         global _polling_last_activity
         _polling_last_activity = time.time()
+
+        # מניעת לופ מהיר — אם אנחנו מאתחלים מהר מדי, ממתינים
+        now_ts = time.time()
+        if now_ts - _last_restart_ts < 15:
+            _rapid_restart_count += 1
+        else:
+            _rapid_restart_count = 0
+        _last_restart_ts = now_ts
+
+        if _rapid_restart_count > 3:
+            wait = min(60, 10 * _rapid_restart_count)
+            print(f"[{mode_label}] ⚠️  Rapid restarts detected ({_rapid_restart_count}×) — cooling down {wait}s", flush=True)
+            _tg_api_call(token, "deleteWebhook", {"drop_pending_updates": True})
+            time.sleep(wait)
+            _rapid_restart_count = 0
+
         try:
             print(f"[{mode_label}] infinity_polling starting...", flush=True)
             bot.infinity_polling(
                 timeout=20,
                 long_polling_timeout=5,
                 logger_level=None,
+                allowed_updates=None,
             )
-            print(f"[{mode_label}] infinity_polling returned — restarting loop", flush=True)
+            print(f"[{mode_label}] infinity_polling returned — restarting in 10s", flush=True)
+            time.sleep(10)
         except Exception as e:
             err_str = str(e)
             print(f"[{mode_label}] Polling exception: {err_str[:200]}", flush=True)
             if '409' in err_str:
-                print(f"⚠️  [{mode_label}] 409 Conflict — ממתין 30s...", flush=True)
-                time.sleep(30)
+                print(f"⚠️  [{mode_label}] 409 Conflict — ממתין 45s...", flush=True)
+                time.sleep(45)
                 _tg_api_call(token, "deleteWebhook", {"drop_pending_updates": True})
+                time.sleep(5)
             elif '401' in err_str:
                 print(f"❌  [{mode_label}] 401 Unauthorized — TELEGRAM_TOKEN שגוי?", flush=True)
                 time.sleep(60)
             else:
-                print(f"[{mode_label}] Polling error — restart in 5s: {e}", flush=True)
-                time.sleep(5)
+                print(f"[{mode_label}] Polling error — restart in 10s: {e}", flush=True)
+                time.sleep(10)
 
 # --- לולאת מעקב עסקאות — Thread נפרד ---
 
