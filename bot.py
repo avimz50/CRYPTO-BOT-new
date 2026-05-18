@@ -4967,62 +4967,49 @@ def start_telegram_polling():
         return
 
     mode_label = "PROD"
-    wait_sec   = 35
 
-    print(f"[{mode_label}] Polling mode — ממתין {wait_sec}s לסיום boot...", flush=True)
-    time.sleep(wait_sec)
+    print(f"[{mode_label}] Polling mode — ממתין 35s לסיום boot...", flush=True)
+    time.sleep(35)
 
-    # נקה webhook קודם — מונע 409 Conflict
+    # נקה webhook — מונע 409 Conflict בהפעלה ראשונה
     r = _tg_api_call(token, "deleteWebhook", {"drop_pending_updates": True})
     print(f"[{mode_label}] deleteWebhook: {r}", flush=True)
-    time.sleep(2)
+    time.sleep(3)
 
-    _last_restart_ts = 0.0
-    _rapid_restart_count = 0
+    _backoff = 3   # זמן המתנה בין restarts — מתחיל ב-3s, עולה עד 15s
 
     while True:
         global _polling_last_activity
         _polling_last_activity = time.time()
-
-        # מניעת לופ מהיר — אם אנחנו מאתחלים מהר מדי, ממתינים
-        now_ts = time.time()
-        if now_ts - _last_restart_ts < 15:
-            _rapid_restart_count += 1
-        else:
-            _rapid_restart_count = 0
-        _last_restart_ts = now_ts
-
-        if _rapid_restart_count > 3:
-            wait = min(60, 10 * _rapid_restart_count)
-            print(f"[{mode_label}] ⚠️  Rapid restarts detected ({_rapid_restart_count}×) — cooling down {wait}s", flush=True)
-            _tg_api_call(token, "deleteWebhook", {"drop_pending_updates": True})
-            time.sleep(wait)
-            _rapid_restart_count = 0
-
         try:
-            print(f"[{mode_label}] infinity_polling starting...", flush=True)
-            bot.infinity_polling(
-                timeout=20,
-                long_polling_timeout=5,
+            print(f"[{mode_label}] polling starting (backoff={_backoff}s)...", flush=True)
+            bot.polling(
+                non_stop=True,
+                timeout=25,
+                long_polling_timeout=15,
                 logger_level=None,
-                allowed_updates=None,
             )
-            print(f"[{mode_label}] infinity_polling returned — restarting in 10s", flush=True)
-            time.sleep(10)
+            # הגענו לכאן רק אם polling() חזר בלי exception — מצב נדיר
+            print(f"[{mode_label}] polling returned normally — restart in {_backoff}s", flush=True)
+            time.sleep(_backoff)
+            _backoff = min(_backoff + 2, 15)   # backoff רך: 3→5→7→…→15
+
         except Exception as e:
             err_str = str(e)
-            print(f"[{mode_label}] Polling exception: {err_str[:200]}", flush=True)
+            print(f"[{mode_label}] polling exception: {err_str[:300]}", flush=True)
             if '409' in err_str:
-                print(f"⚠️  [{mode_label}] 409 Conflict — ממתין 45s...", flush=True)
-                time.sleep(45)
+                # 409 = עוד בוט מחובר — מנקה ומנסה שוב
+                print(f"[{mode_label}] 409 Conflict — deleteWebhook + restart in 15s", flush=True)
                 _tg_api_call(token, "deleteWebhook", {"drop_pending_updates": True})
-                time.sleep(5)
+                time.sleep(15)
+                _backoff = 3
             elif '401' in err_str:
-                print(f"❌  [{mode_label}] 401 Unauthorized — TELEGRAM_TOKEN שגוי?", flush=True)
+                print(f"[{mode_label}] 401 Unauthorized — TELEGRAM_TOKEN שגוי!", flush=True)
                 time.sleep(60)
             else:
-                print(f"[{mode_label}] Polling error — restart in 10s: {e}", flush=True)
-                time.sleep(10)
+                print(f"[{mode_label}] polling error — restart in {_backoff}s", flush=True)
+                time.sleep(_backoff)
+                _backoff = min(_backoff + 2, 15)
 
 # --- לולאת מעקב עסקאות — Thread נפרד ---
 
