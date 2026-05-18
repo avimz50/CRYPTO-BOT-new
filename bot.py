@@ -2046,8 +2046,8 @@ def get_momentum_tip(direction):
     return "🌊 _המומנטום חיובי — רוכבים על הגל._"
 
 def _pnl_on_half(dist_pct):
-    """P&L ($) על חצי פוזיציה ($250) לפי % מרחק מהכניסה."""
-    return round(POSITION_SIZE / 2 * dist_pct / 100, 2)
+    """P&L ($) על 75% פוזיציה ($187.50) לפי % מרחק מהכניסה (TP1 close)."""
+    return round(POSITION_SIZE * 0.75 * dist_pct / 100, 2)
 
 
 def fetch_symbol_volume_usd(symbol: str) -> float:
@@ -2273,7 +2273,8 @@ def track_trades():
             sym           = trade['symbol']
             direction     = trade.get('direction', 'LONG')
             pos_size      = trade.get('pos_size', POSITION_SIZE)  # per-trade position size
-            half          = pos_size / 2                          # חצי פוזיציה
+            tp1_close     = pos_size * 0.75                        # 75% נסגר ב-TP1
+            remaining     = pos_size * 0.25                        # 25% נשאר לאחר TP1
             tbadge        = track_badge(trade.get('track', 'Swing'))  # ⚡ Scalp / 🌊 Swing
             t_leverage    = trade.get('leverage', LEVERAGE)
 
@@ -2649,10 +2650,10 @@ def track_trades():
                             f"75% נשאר פתוח · SL: `{trade['sl']:.6g}`"
                         )
 
-                # 2. TP1 — סגור 50%, הפעל Trailing
+                # 2. TP1 — סגור 75%, הפעל Trailing על 25% נותרים
                 if tp1_hit(current_price):
                     dist_pct  = abs(current_price - entry) / entry * 100
-                    tp1_pnl   = round(half * dist_pct / 100, 2)
+                    tp1_pnl   = round(tp1_close * dist_pct / 100, 2)
                     tp1_pct_r = round(tp1_pnl / MARGIN * 100, 1)
                     trade['tp1_triggered'] = True
                     trade['tp1_pnl']       = tp1_pnl
@@ -2670,9 +2671,9 @@ def track_trades():
                     send_msg(
                         f"🎯 *TP1 הושג — {sym}!*\n"
                         f"מחיר: `{current_price:.6g}` | {direction} | {tbadge}\n"
-                        f"50% נסגרו · ✅ *Profit at TP1: +${tp1_pnl}* (+{tp1_pct_r}%)\n"
+                        f"75% נסגרו · ✅ *Profit at TP1: +${tp1_pnl}* (+{tp1_pct_r}%)\n"
                         f"🔒 *SL הועבר ל-BE אוטומטית!* `{entry:.6g}` — הון מוגן\n"
-                        f"📍 Trailing SL: `{trade['trailing_sl']:.6g}` | שאר 50% ממשיכים ל-TP2\n"
+                        f"📍 Trailing SL: `{trade['trailing_sl']:.6g}` | שאר 25% ממשיכים ל-TP2\n"
                         f"📈 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
                     )
                     continue
@@ -2719,7 +2720,7 @@ def track_trades():
                     save_active_trades()
 
             # ════════════════════════════════════════════
-            # שלב TRAILING — 50% פוזיציה נותרת ($250)
+            # שלב TRAILING — 25% פוזיציה נותרת ($62.50)
             # ════════════════════════════════════════════
             elif trade['phase'] == 'trailing':
 
@@ -2733,10 +2734,10 @@ def track_trades():
                         trade['peak_price']  = current_price
                         trade['trailing_sl'] = round(current_price * (1 + TRAIL_PCT / 100), 8)
 
-                # TP מלא — סגור שאר 50%
+                # TP מלא — סגור שאר 25%
                 if tp_full_hit(current_price):
                     dist_pct = abs(current_price - entry) / entry * 100
-                    tp_pnl   = round(half * dist_pct / 100, 2)
+                    tp_pnl   = round(remaining * dist_pct / 100, 2)
                     total    = round(trade['tp1_pnl'] + tp_pnl, 2)
                     daily_stats['wins']      += 1
                     daily_stats['total_pnl'] += tp_pnl
@@ -2744,12 +2745,12 @@ def track_trades():
                     wallet_credit(total, trade.get('margin', MARGIN))
                     _log_closed_trade(trade, 'TP', total, current_price)
                     eq = _get_equity()
-                    est_tp_full = round(abs(current_price - entry) / entry * half, 2)
+                    est_tp_full = round(abs(current_price - entry) / entry * remaining, 2)
                     slip = trade.get('slippage_pct', 0.0)
                     send_msg(
                         f"✅ *TP מלא הושג — {sym}!* 🎉\n"
                         f"מחיר: `{current_price:.6g}` | {direction} | {tbadge}\n"
-                        f"שאר 50% נסגרו · ✅ *Profit at TP: +${est_tp_full}*\n"
+                        f"שאר 25% נסגרו · ✅ *Profit at TP: +${est_tp_full}*\n"
                         f"TP1 + TP סה\"כ: 📈 *+${total}*\n"
                         f"💼 {t_leverage}x Isolated\n"
                         f"📊 Slippage: {slip:.2f}% (Demo)\n"
@@ -2764,11 +2765,11 @@ def track_trades():
                 elif sl_hit(current_price) or \
                      (direction == 'LONG' and trade['trailing_sl'] and current_price <= trade['trailing_sl']) or \
                      (direction == 'SHORT' and trade['trailing_sl'] and current_price >= trade['trailing_sl']):
-                    dist_pct = abs(current_price - entry) / entry * 100
-                    sign     = 1 if profit_dir(current_price) else -1
-                    half_pnl = round(sign * half * dist_pct / 100, 2)
-                    total    = round(trade['tp1_pnl'] + half_pnl, 2)
-                    icon     = "📈" if half_pnl >= 0 else "📉"
+                    dist_pct  = abs(current_price - entry) / entry * 100
+                    sign      = 1 if profit_dir(current_price) else -1
+                    half_pnl  = round(sign * remaining * dist_pct / 100, 2)
+                    total     = round(trade['tp1_pnl'] + half_pnl, 2)
+                    icon      = "📈" if half_pnl >= 0 else "📉"
                     if half_pnl >= 0:
                         daily_stats['wins'] += 1
                     else:
@@ -2783,7 +2784,7 @@ def track_trades():
                     send_msg(
                         f"📍 *Trailing Stop נגע — {sym}*\n"
                         f"{'שיא' if direction=='LONG' else 'שפל'}: `{ref_price:.6g}` → יציאה: `{current_price:.6g}`\n"
-                        f"50% נסגרו: {icon} *{half_pnl:+}$* | {tbadge}\n"
+                        f"25% נסגרו: {icon} *{half_pnl:+}$* | {tbadge}\n"
                         f"TP1 + Trailing סה\"כ: {icon} *{total:+}$*\n"
                         f"💼 {t_leverage}x Isolated\n"
                         f"📊 Slippage: {slip:.2f}% (Demo)\n"
@@ -2984,7 +2985,7 @@ def send_heartbeat():
         raw_pct = (price - entry) / entry * 100
         pnl_pct = raw_pct if direction == 'LONG' else -raw_pct
         if t.get('tp1_triggered'):
-            half_pnl = round(_ps / 2 * pnl_pct / 100, 2)
+            half_pnl = round(_ps * 0.25 * pnl_pct / 100, 2)
             pnl_usd  = round(t.get('tp1_pnl', 0) + half_pnl, 2)
         else:
             pnl_usd = round(_ps * pnl_pct / 100, 2)
@@ -3374,9 +3375,9 @@ def handle_close(message):
         # חישוב P&L בפועל
         _ps_m = trade.get('pos_size', POSITION_SIZE)   # per-trade position size
         if trade.get('tp1_triggered'):
-            # חצי פוזיציה נסגרת עכשיו, חצי כבר נסגר ב-TP1
-            half_m   = _ps_m / 2
-            half_pnl = round(half_m * (current_price - entry) / entry * 100 / 100, 2)
+            # 25% פוזיציה נסגרת עכשיו, 75% כבר נסגר ב-TP1
+            rem_m    = _ps_m * 0.25
+            half_pnl = round(rem_m * (current_price - entry) / entry * 100 / 100, 2)
             total    = round(trade.get('tp1_pnl', 0) + half_pnl, 2)
             pnl_str  = f"TP1 + יציאה: *{'+' if total>=0 else ''}${total}*"
         else:
@@ -3386,7 +3387,7 @@ def handle_close(message):
 
         # חישוב P&L נטו לארנק
         if trade.get('tp1_triggered'):
-            net_pnl = round(trade.get('tp1_pnl', 0) + round(_ps_m / 2 * (current_price - entry) / entry, 2), 2)
+            net_pnl = round(trade.get('tp1_pnl', 0) + round(_ps_m * 0.25 * (current_price - entry) / entry, 2), 2)
         else:
             direction_m = trade.get('direction', 'LONG')
             raw_pct     = (current_price - entry) / entry * 100
@@ -3444,8 +3445,8 @@ def handle_close_button(call):
 
         # P&L נטו
         if trade.get('tp1_triggered'):
-            raw_pct_cb = (current_price - entry) / entry * 100
-            half_pnl_cb = round(_ps_cb / 2 * (raw_pct_cb if direction_cb == 'LONG' else -raw_pct_cb) / 100, 2)
+            raw_pct_cb  = (current_price - entry) / entry * 100
+            half_pnl_cb = round(_ps_cb * 0.25 * (raw_pct_cb if direction_cb == 'LONG' else -raw_pct_cb) / 100, 2)
             net_pnl_cb  = round(trade.get('tp1_pnl', 0) + half_pnl_cb, 2)
         else:
             raw_pct_cb = (current_price - entry) / entry * 100
@@ -7077,7 +7078,7 @@ def main():
             "⚙️ *פרמטרים:*\n"
             f"  📌 מרג'ין: *${MARGIN}* | מינוף: *{LEVERAGE}×*\n"
             f"  🎯 מקסימום עסקאות: *{MAX_TRADES}*\n"
-            f"  🛑 SL: *{SL_PCT}%* | TP1: *{TP1_PCT}%* \\(50%\\) | TP2: *{TP2_PCT}%*\n"
+            f"  🛑 SL: *{SL_PCT}%* | TP1: *{TP1_PCT}%* \\(75%\\) | TP2: *{TP2_PCT}%*\n"
             "  📍 Trailing: *1\\.5%* מהשיא \\(מופעל ב\\-TP1\\)\n\n"
             "⚡ *לולאות פעילות:*\n"
             "  🔍 סריקה:         כל *60 דקות* ✅\n"
