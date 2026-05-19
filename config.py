@@ -40,8 +40,8 @@ DAILY_LOSS_LIMIT = -30.0     # -$30 = 15% of $200 starting balance
 
 # ── Scoring Thresholds ─────────────────────────────────────────────────────────
 MIN_SCORE           = 78     # Entry threshold
-RSI_VETO_LONG       = 65     # Hard veto — extreme overbought
-RSI_VETO_SHORT      = 15     # Hard veto — extreme oversold
+RSI_VETO_LONG       = 55     # Hard veto — LONG forbidden if RSI > 55 (overbought)
+RSI_VETO_SHORT      = 45     # Hard veto — SHORT forbidden if RSI < 45 (oversold)
 EMA_PROXIMITY_PCT   = 10.0   # Anti-chase: max % above EMA200
 VOL_EMA_BYPASS_MULT = 1.5    # Volume ≥ ×1.5 bypasses EMA proximity veto
 

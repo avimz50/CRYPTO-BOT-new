@@ -776,43 +776,20 @@ def score_symbol(df_3h, df_1h, symbol: str, direction: str = 'LONG',
         score += m_pts
         parts.append(f"MACD={m_pts}/15")
 
-        # ── 3. RSI — 10 pts ───────────────────────────────────────────────────
+        # ── 3. RSI Safety Gate + Scoring — 10 pts ────────────────────────────
+        # STRICT: LONG forbidden if RSI > 55 | SHORT forbidden if RSI < 45
         if direction == 'LONG' and rsi_v > RSI_VETO_LONG:
-            return 0, f"RSI veto ({rsi_v:.1f} > {RSI_VETO_LONG} extreme overbought)", atr_v
+            return 0, f"RSI Safety Gate: LONG אסור (RSI={rsi_v:.1f} > {RSI_VETO_LONG} — overbought)", atr_v
         if direction == 'SHORT' and rsi_v < RSI_VETO_SHORT:
-            return 0, f"RSI veto ({rsi_v:.1f} < {RSI_VETO_SHORT} extreme oversold)", atr_v
+            return 0, f"RSI Safety Gate: SHORT אסור (RSI={rsi_v:.1f} < {RSI_VETO_SHORT} — oversold)", atr_v
 
-        rsi_bb_override = False
-        if direction == 'LONG' and rsi_v > 70:
-            try:
-                _bbu_col = next(c for c in bb_df.columns if 'BBU_' in c)
-                _bbu_val = float(bb_df[_bbu_col].iloc[-1])
-                if price >= _bbu_val * 0.985:
-                    rsi_bb_override = True
-                    parts.append(f"RSI_BB_override(RSI={rsi_v:.0f}@UBB)")
-                else:
-                    return 0, (f"RSI overbought ({rsi_v:.1f}>70) — "
-                               f"not at Upper BB (price={price:.4g} BB={_bbu_val:.4g})"), atr_v
-            except Exception:
-                pass
-        if direction == 'SHORT' and rsi_v < 30:
-            try:
-                _bbl_col = next(c for c in bb_df.columns if 'BBL_' in c)
-                _bbl_val = float(bb_df[_bbl_col].iloc[-1])
-                if price <= _bbl_val * 1.015:
-                    rsi_bb_override = True
-                    parts.append(f"RSI_BB_override(RSI={rsi_v:.0f}@LBB)")
-                else:
-                    return 0, f"RSI oversold ({rsi_v:.1f}<30) — not at Lower BB", atr_v
-            except Exception:
-                pass
-
+        # Scoring — within the allowed RSI window
         if direction == 'LONG':
-            rsi_ideal = 50 <= rsi_v <= 70
-            rsi_ok    = 45 <= rsi_v <= 80
+            rsi_ideal = 25 <= rsi_v <= 45   # classic oversold = best LONG setup
+            rsi_ok    = 20 <= rsi_v <= 55   # full allowed window
         else:
-            rsi_ideal = 30 <= rsi_v <= 50
-            rsi_ok    = 20 <= rsi_v <= 55
+            rsi_ideal = 55 <= rsi_v <= 75   # overbought zone = best SHORT setup
+            rsi_ok    = 45 <= rsi_v <= 80   # full allowed window
 
         r_pts = 10 if rsi_ideal else (5 if rsi_ok else 0)
         score += r_pts
