@@ -27,8 +27,8 @@ GEMINI_KEY  = os.environ.get('AI_INTEGRATIONS_GEMINI_API_KEY', '')
 
 # ── Position Sizing — Fixed ────────────────────────────────────────────────────
 LEVERAGE      = 10
-MARGIN        = 25.0         # $25 margin per trade
-POSITION_SIZE = MARGIN * LEVERAGE  # $250 controlled
+MARGIN        = 50.0         # $50 margin per trade
+POSITION_SIZE = MARGIN * LEVERAGE  # $500 controlled
 
 # ── Fixed SL / TP Percentages ──────────────────────────────────────────────────
 SL_PCT  = 2.0   # Stop Loss   = 2% from entry
