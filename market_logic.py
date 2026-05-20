@@ -13,6 +13,7 @@ from config import (
     VERBOSE_LOG, MIN_SCORE,
     RSI_VETO_LONG, RSI_VETO_SHORT, EMA_PROXIMITY_PCT, VOL_EMA_BYPASS_MULT,
     FNG_DEFAULTS,
+    FNG_FEAR_THRESHOLD, FNG_GREED_THRESHOLD, FNG_PENALTY, FNG_BONUS,
     MOMENTUM_VOL_RATIO, MOMENTUM_EMA_FAST, MOMENTUM_EMA_MID, MOMENTUM_EMA_SLOW,
     MOMENTUM_MIN_VOL_SURGE,
 )
@@ -691,7 +692,7 @@ def score_symbol(df_3h, df_1h, symbol: str, direction: str = 'LONG',
       BB Squeeze(12): Pre-breakout squeeze on 1H
       Vol Build  (8): Smart Money volume accumulation
       RSI Div   (10): RSI divergence on 1H
-      FNG       (±5): Fear & Greed adjustment
+      FNG  (-10/+5): trend-aligned filter (Fear→LONG-10/SHORT+5, Greed→LONG+5/SHORT-10)
 
     Returns: (score: int, breakdown: str, atr: float)
     """
@@ -877,22 +878,22 @@ def score_symbol(df_3h, df_1h, symbol: str, direction: str = 'LONG',
         else:
             parts.append(f"RSIDiv=0({rd_desc[:25]})")
 
-        # ── 8. Fear & Greed — ±5 pts ─────────────────────────────────────────
+        # ── 8. Fear & Greed — trend-aligned filter ───────────────────────────
+        # Fear  (FNG < FNG_FEAR_THRESHOLD=35):  LONG -10, SHORT +5
+        # Greed (FNG > FNG_GREED_THRESHOLD=65): LONG +5,  SHORT -10
+        # Neutral (35–65): no adjustment
+        # Position sizing is NEVER touched here — score only.
         if fng_v is None:
             fng_v, _ = get_fear_greed()
 
         if direction == 'LONG':
-            if   fng_v < 25: fng_adj = +5
-            elif fng_v < 45: fng_adj = +2
-            elif fng_v > 75: fng_adj = -5
-            elif fng_v > 55: fng_adj = -2
-            else:            fng_adj =  0
-        else:
-            if   fng_v > 75: fng_adj = +5
-            elif fng_v > 55: fng_adj = +2
-            elif fng_v < 25: fng_adj = -5
-            elif fng_v < 45: fng_adj = -2
-            else:            fng_adj =  0
+            if   fng_v < FNG_FEAR_THRESHOLD:  fng_adj = FNG_PENALTY  # Fear  → discourage LONG
+            elif fng_v > FNG_GREED_THRESHOLD: fng_adj = FNG_BONUS    # Greed → reward LONG
+            else:                             fng_adj = 0
+        else:  # SHORT
+            if   fng_v < FNG_FEAR_THRESHOLD:  fng_adj = FNG_BONUS    # Fear  → reward SHORT
+            elif fng_v > FNG_GREED_THRESHOLD: fng_adj = FNG_PENALTY  # Greed → discourage SHORT
+            else:                             fng_adj = 0
 
         score = max(0, min(100, score + fng_adj))
         sign  = f"+{fng_adj}" if fng_adj >= 0 else str(fng_adj)

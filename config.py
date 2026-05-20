@@ -187,6 +187,12 @@ MAX_TRADES: int = 3          # hard cap: never more than 3 concurrent open trade
 
 # ── FNG Defaults ───────────────────────────────────────────────────────────────
 FNG_DEFAULTS = {'extreme_fear': 25, 'fear': 30, 'greed': 70}
+
+# ── FNG Score Filter — trend-aligned penalty/bonus (never touches sizing) ───────
+FNG_FEAR_THRESHOLD  = 35    # FNG < 35 → Fear market: penalise LONGs, reward SHORTs
+FNG_GREED_THRESHOLD = 65    # FNG > 65 → Greed market: penalise SHORTs, reward LONGs
+FNG_PENALTY         = -10   # Points removed from counter-sentiment direction
+FNG_BONUS           = +5    # Points added to with-sentiment direction
 CONFIG_DEFAULTS = {'max_trades': MAX_TRADES}
 
 # ── Heartbeat / Audit ──────────────────────────────────────────────────────────
