@@ -5940,9 +5940,9 @@ def _coin_1h_breakout_above_4h_high(symbol: str) -> tuple[bool, float, float, fl
 # ── Breakout Strategy Constants ───────────────────────────────────────────────
 BREAKOUT_FNG_LONG_MIN         = 0    # FNG מינימום ל-LONG — BTC BULL + כל FNG → קונים!
 BREAKOUT_FNG_SHORT_MAX        = 65   # FNG מקסימום ל-SHORT (מעל = חמדנות, לא שורטים)
-RSI_VETO_SHORT                = 45   # RSI מינימום ל-SHORT — SHORT אסור אם RSI < 45 (oversold)
+RSI_VETO_SHORT                = 40   # RSI מינימום ל-SHORT — SHORT אסור אם RSI < 40 (oversold)
 BREAKOUT_MIN_VOL              = 1.5  # volume ratio מינימלי (150% מהממוצע = 50% מעל)
-RSI_VETO_BREAKOUT_LONG        = 55   # RSI מקסימום ל-LONG בפריצה — אסור אם RSI > 55 (overbought)
+RSI_VETO_BREAKOUT_LONG        = 62   # RSI מקסימום ל-LONG בפריצה — אסור אם RSI > 62 (overbought)
 BREAKOUT_FNG_REDUCED_MARGIN_MAX  = 20    # FNG ≤ 20 → מרג'ין מוקטן ב-20%
 BREAKOUT_FNG_REDUCED_MARGIN_MULT = 0.80  # מכפיל מרג'ין בפחד קיצוני (FNG 10-20)
 MAJOR_PRIORITY_SYMBOLS        = {'BTC/USDT', 'ETH/USDT'}  # תמיד ראשונים בתור המועמדים
