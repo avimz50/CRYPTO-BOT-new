@@ -6979,19 +6979,32 @@ def reconcile_with_exchange():
             })
             imported.append(sym)
 
+        # ── VIRTUAL / PAPER trading: never drop local trades ─────────────────
+        # Bitget returns 0 real positions for paper trades, so "dropped" would
+        # wipe all valid virtual positions on every bot restart / deployment.
+        # Local state is the source of truth; trades close only via SL/TP/BE/Manual.
+        # We only ADD newly-imported positions from the exchange (e.g. manual orders).
         dropped = [s for s in local_by_sym if s not in live]
+        if dropped:
+            print(
+                f"[SYNC] ⚠️  virtual trading — keeping {len(dropped)} local trade(s) "
+                f"not found on exchange: {dropped}",
+                flush=True,
+            )
+        # Re-add any local trades that weren't matched to a live position
+        for sym in dropped:
+            rebuilt.append(local_by_sym[sym])
+
         active_trades = rebuilt
 
     save_active_trades()
     print(
         f"[SYNC] reconciled {len(live)} positions from Bitget "
-        f"(kept={len(live) - len(imported)}, imported={len(imported)}, dropped={len(dropped)})",
+        f"(kept={len(rebuilt) - len(imported)}, imported={len(imported)}, preserved_virtual={len(dropped)})",
         flush=True,
     )
     if imported:
         print(f"[SYNC] imported symbols: {imported}", flush=True)
-    if dropped:
-        print(f"[SYNC] dropped stale local symbols: {dropped}", flush=True)
 
 
 # Bumping BOOTSTRAP_VERSION forces a one-time reset on next startup.
