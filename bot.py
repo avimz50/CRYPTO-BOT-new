@@ -2106,8 +2106,8 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         fng_v, _, _ = sentiment_check("open_trade")
 
     # ── Fixed Sizing ──────────────────────────────────────────────────────────
-    effective_margin = MARGIN        # $20
-    pos_size         = POSITION_SIZE  # $200
+    effective_margin = MARGIN        # $50
+    pos_size         = POSITION_SIZE  # $500 (MARGIN × LEVERAGE)
     leverage         = LEVERAGE       # 10x
 
     # ── Fixed SL/TP Targets ───────────────────────────────────────────────────
@@ -3940,12 +3940,15 @@ def _register_sol_trade(price: float, sl: float, tp: float, rsi: float | None):
         send_msg(f"⚠️ *יתרה נמוכה* — נדרש ${MARGIN} | יש ${wallet.get('balance', 0):.2f}")
         return
 
-    # SL/TP על-פי Evening SOL Strategy
-    sl_pct  = round(abs(price - sl) / price * 100, 2)   # ~3.5%
-    tp_pct  = round(abs(tp - price) / price * 100, 2)   # ~5.0%
-    tp1_pct = tp_pct                                      # SOL: אין split — TP = TP1
-    tp1_price = tp
-    be_price  = round(price * 1.02, 6)                   # BE at +2%
+    # ── Fixed SL/TP (2% / 2% / 4%) — same rule as all other strategies ────────
+    tgt_sol   = se.calc_targets(price, 'LONG')
+    sl        = tgt_sol['sl_price']    # entry × 0.98
+    tp        = tgt_sol['tp_price']    # entry × 1.04
+    tp1_price = tgt_sol['tp1_price']   # entry × 1.02
+    be_price  = tgt_sol['be_price']    # = entry (SL moves here on TP1)
+    sl_pct    = tgt_sol['sl_pct']      # 2.0
+    tp_pct    = tgt_sol['tp_pct']      # 4.0
+    tp1_pct   = tgt_sol['tp1_pct']     # 2.0
 
     # ── ATR חישוב + נתונים לגרף ─────────────────────────────────────────
     sol_atr = 0.0
@@ -4126,9 +4129,7 @@ def handle_fillslots(message):
                 send_msg(f"⚠️ *יתרה נמוכה מדי* (${avail:.2f}) — לא ניתן לפתוח עסקאות.")
                 return
 
-            # margin: 10% מהיתרה, או 7% אם יתרה < $30
-            margin_pct = 0.07 if avail < 30 else 0.10
-            margin     = max(round(avail * margin_pct, 2), 5.0)
+            margin = MARGIN  # always $50 — fixed for all strategies
 
             # קביעת כיוון
             btc_above_ema     = _btc_above_ema20_15m()
@@ -4164,7 +4165,7 @@ def handle_fillslots(message):
 
             send_msg(
                 f"{dir_emoji} *FillSlots — {direction}* — {now_str}\n"
-                f"💰 יתרה: ${avail:.2f} | מרג'ין: ${margin:.0f} ({margin_pct*100:.0f}%) | Slots: {open_slots}\n"
+                f"💰 יתרה: ${avail:.2f} | מרג'ין: ${margin:.0f} (קבוע) | Slots: {open_slots}\n"
                 f"😨 FNG: {fng_v} | ₿ BTC: {'מעל' if btc_above_ema else 'מתחת'} EMA20\n"
                 f"_סורק {len(symbols)} מטבעות..._"
             )
@@ -4203,12 +4204,10 @@ def handle_fillslots(message):
                     continue
 
                 # פתיחת עסקה
-                current_avail = wallet.get('balance', STARTING_BALANCE)
-                current_margin = max(round(current_avail * margin_pct, 2), 5.0)
                 open_breakout_trade(
                     symbol    = sym,
                     price     = price,
-                    margin    = current_margin,
+                    margin    = MARGIN,  # fixed — open_breakout_trade overrides anyway
                     rsi       = rsi,
                     vol_ratio = vol_ratio,
                     h4_level  = h4_level,
@@ -5522,8 +5521,8 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
 
     # ── Fixed Sizing ──────────────────────────────────────────────────────────
     fng_v_now, _, _ = sentiment_check("scalp_open")
-    eff_margin = MARGIN        # $20
-    pos_size   = POSITION_SIZE  # $200
+    eff_margin = MARGIN        # $50
+    pos_size   = POSITION_SIZE  # $500 (MARGIN × LEVERAGE)
     leverage   = LEVERAGE       # 10x
     sl_pct     = SL_PCT         # 2%
     tp1_pct    = TP1_PCT        # 2%
@@ -5995,15 +5994,16 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
                         direction: str = 'LONG'):
     """
     פותח עסקת Breakout LONG או SHORT — Breakout Strategy.
-    margin   = 10% מהיתרה הפנויה (מחושב ע"י הקורא).
-    pos_size = margin × LEVERAGE (10x).
-    SL=2% | TP1=2% | TP2=4% (RR 1:2) | Trailing=1.5%.
+    margin   = MARGIN ($50 fixed — caller value is ignored).
+    pos_size = POSITION_SIZE ($500 = MARGIN × LEVERAGE).
+    SL=2% | TP1=2% | TP2=4% (RR 1:2).
     """
+    margin   = MARGIN        # always $50 — ignore caller-provided value
+    pos_size = POSITION_SIZE  # always $500
+
     if wallet.get('balance', STARTING_BALANCE) < margin:
         print(f"[Breakout] insufficient balance for {symbol} — skip")
         return
-
-    pos_size  = round(margin * LEVERAGE, 2)
     tgt_b     = se.calc_targets(price, direction)
     sl_pct    = tgt_b['sl_pct']
     tp_pct    = tgt_b['tp_pct']
@@ -6240,15 +6240,10 @@ def top10_breakout_loop():
                 if avail < 5:
                     print("[Top10 Breakout] Balance too low — stop")
                     break
-                margin = max(round(avail * 0.10, 2), 5.0)
-                # FNG Awareness: FNG 10-20 + LONG → מרג'ין מוקטן ב-20% (Extreme Fear caution)
-                if direction == 'LONG' and fng_v is not None and fng_v <= BREAKOUT_FNG_REDUCED_MARGIN_MAX:
-                    margin = max(round(margin * BREAKOUT_FNG_REDUCED_MARGIN_MULT, 2), 5.0)
-                    print(f"[Top10 Breakout] FNG={fng_v} ≤ {BREAKOUT_FNG_REDUCED_MARGIN_MAX} → margin reduced to ${margin:.2f}")
                 open_breakout_trade(
                     symbol    = c['symbol'],
                     price     = c['price'],
-                    margin    = margin,
+                    margin    = MARGIN,  # fixed — open_breakout_trade overrides anyway
                     rsi       = c['rsi'],
                     vol_ratio = c['vol_ratio'],
                     h4_level  = c['h4_level'],
