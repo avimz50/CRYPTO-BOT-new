@@ -785,11 +785,11 @@ def score_symbol(df_3h, df_1h, symbol: str, direction: str = 'LONG',
 
         # Scoring — within the allowed RSI window
         if direction == 'LONG':
-            rsi_ideal = 25 <= rsi_v <= 48   # oversold zone = best LONG setup
-            rsi_ok    = 20 <= rsi_v <= 62   # full allowed window
+            rsi_ideal = 25 <= rsi_v <= 45   # oversold zone = best LONG setup
+            rsi_ok    = 20 <= rsi_v <= 55   # full allowed window
         else:
             rsi_ideal = 55 <= rsi_v <= 75   # overbought zone = best SHORT setup
-            rsi_ok    = 40 <= rsi_v <= 80   # full allowed window
+            rsi_ok    = 45 <= rsi_v <= 80   # full allowed window
 
         r_pts = 10 if rsi_ideal else (5 if rsi_ok else 0)
         score += r_pts
