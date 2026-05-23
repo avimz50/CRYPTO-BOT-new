@@ -52,10 +52,10 @@ def build_audit_report(active_trades, wallet, closed_trades_log, starting=200.0,
     total_balance = round(starting + total_pnl + floating_pnl, 2)
 
     if date_filter:
+        # סינון לפי closed_at בלבד — מה נסגר באותו יום (לא opened_at שגורם לכפילויות)
         recent_closed = [
             t for t in closed_trades_log
             if t.get('closed_at', '').startswith(date_filter)
-            or t.get('opened_at', '').startswith(date_filter)
         ]
     else:
         cutoff = now.timestamp() - 24 * 3600
