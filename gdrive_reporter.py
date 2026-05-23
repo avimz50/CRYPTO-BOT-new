@@ -24,11 +24,15 @@ GEMINI_KEY     = os.environ.get('AI_INTEGRATIONS_GEMINI_API_KEY', '')
 # 1. REPORT BUILDER
 # ─────────────────────────────────────────────────────────────
 
-def build_audit_report(active_trades, wallet, closed_trades_log, starting=200.0):
-    """Builds a structured JSON audit report from current bot state."""
+def build_audit_report(active_trades, wallet, closed_trades_log, starting=200.0,
+                       date_filter=None):
+    """Builds a structured JSON audit report from current bot state.
+
+    date_filter: 'YYYY-MM-DD' string — if provided, filters trades by that date
+                 instead of the default 24h window.
+    """
 
     now    = datetime.now()
-    cutoff = now.timestamp() - 24 * 3600   # last 24h for closed trades
 
     balance     = wallet.get('balance', starting)
     total_pnl   = wallet.get('total_pnl', 0.0)
@@ -47,10 +51,18 @@ def build_audit_report(active_trades, wallet, closed_trades_log, starting=200.0)
     free_cash     = max(0.0, balance - margin_used)
     total_balance = round(starting + total_pnl + floating_pnl, 2)
 
-    recent_closed = [
-        t for t in closed_trades_log
-        if datetime.fromisoformat(t['closed_at']).timestamp() >= cutoff
-    ]
+    if date_filter:
+        recent_closed = [
+            t for t in closed_trades_log
+            if t.get('closed_at', '').startswith(date_filter)
+            or t.get('opened_at', '').startswith(date_filter)
+        ]
+    else:
+        cutoff = now.timestamp() - 24 * 3600
+        recent_closed = [
+            t for t in closed_trades_log
+            if datetime.fromisoformat(t['closed_at']).timestamp() >= cutoff
+        ]
     wins_24h   = sum(1 for t in recent_closed if t['pnl_usd'] > 0)
     losses_24h = sum(1 for t in recent_closed if t['pnl_usd'] <= 0)
     pnl_24h    = round(sum(t['pnl_usd'] for t in recent_closed), 2)
@@ -405,13 +417,18 @@ def upload_to_gdrive(report_data):
 # ─────────────────────────────────────────────────────────────
 
 def run_audit_upload(active_trades, wallet, closed_trades_log,
-                     starting=200.0, send_telegram=None):
+                     starting=200.0, send_telegram=None,
+                     date_filter=None, date_label="24 שעות אחרונות"):
     """
     Builds the audit report, saves locally, sends via Telegram (file),
     and attempts Google Shared Drive upload if configured.
+
+    date_filter: 'YYYY-MM-DD' — filter trades by specific date (None = last 24h)
+    date_label:  human-readable label shown in Telegram messages
     Returns True on success.
     """
-    report     = build_audit_report(active_trades, wallet, closed_trades_log, starting)
+    report     = build_audit_report(active_trades, wallet, closed_trades_log, starting,
+                                    date_filter=date_filter)
     ok_local, err_local = save_report_locally(report)
 
     # ניתוח AI מ-Gemini
@@ -462,7 +479,7 @@ def run_audit_upload(active_trades, wallet, closed_trades_log,
             wr = (s['wins_24h'] / s['closed_count'] * 100) if s['closed_count'] > 0 else 0
 
             send_telegram(
-                f"📊 *דוח יומי — 24 שעות אחרונות*\n"
+                f"📊 *דוח יומי — {date_label}*\n"
                 f"🕛 {report['generated_at']}\n"
                 f"{'─'*28}\n\n"
 

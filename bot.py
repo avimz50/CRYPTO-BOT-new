@@ -3595,13 +3595,45 @@ def handle_report(message):
 
 @bot.message_handler(commands=['audit'])
 def handle_audit(message):
-    """שולח דוח ניתוח AI מלא (Gemini) — פירוט עסקאות + המלצות."""
-    send_msg("🤖 _מריץ ניתוח Gemini... עד 30 שניות_")
+    """שולח דוח ניתוח AI מלא (Gemini) — פירוט עסקאות + המלצות.
+
+    שימוש:
+      /audit           — 24 שעות אחרונות (ברירת מחדל)
+      /audit DD.MM     — יום ספציפי, שנה נוכחית  (למשל /audit 21.5)
+      /audit DD.MM.YYYY — יום + שנה מלאה         (למשל /audit 21.5.2026)
+    """
+    date_filter = None
+    date_label  = "24 שעות אחרונות"
+
+    parts = message.text.strip().split()
+    if len(parts) > 1:
+        raw = parts[1]
+        try:
+            segments = raw.split('.')
+            day   = int(segments[0])
+            month = int(segments[1])
+            year  = int(segments[2]) if len(segments) > 2 else now_il().year
+            from datetime import date as _date
+            date_filter = _date(year, month, day).strftime('%Y-%m-%d')
+            date_label  = f"{day:02d}/{month:02d}/{year}"
+        except Exception:
+            send_msg(
+                f"⚠️ תאריך לא תקין: `{raw}`\n"
+                f"שימוש: `/audit DD.MM` — למשל `/audit 21.5`"
+            )
+            return
+
+    send_msg(f"🤖 _מריץ ניתוח Gemini עבור {date_label}\\.\\.\\. עד 30 שניות_")
     try:
         from gdrive_reporter import run_audit_upload
+        # כשמסננים לפי תאריך — משתמשים ב-trade_audit_log (היסטורי מלא, 100 עסקאות)
+        # כשמסננים 24h — משתמשים ב-closed_trades_log (in-memory, מהיר)
+        source_trades = trade_audit_log if date_filter else closed_trades_log
         run_audit_upload(
-            active_trades, wallet, closed_trades_log,
-            send_telegram=send_msg
+            active_trades, wallet, source_trades,
+            send_telegram=send_msg,
+            date_filter=date_filter,
+            date_label=date_label,
         )
     except Exception as e:
         send_msg(f"⚠️ שגיאה בדוח AI: `{str(e)[:100]}`")
@@ -4510,7 +4542,7 @@ def handle_home(message):
         f"  /status     — עסקאות פעילות + SL/TP\n"
         f"  /wallet     — סיכום ארנק מלא (יתרה, equity, win rate)\n"
         f"  /report     — דוח יומי מלא (סטטיסטיקות)\n"
-        f"  /audit      — דוח ניתוח AI מלא (Gemini)\n"
+        f"  /audit      — דוח ניתוח AI מלא (Gemini) | /audit DD.MM לתאריך ספציפי\n"
         f"  /scanreport — דוח סריקה אחרון\n"
         f"  /ping       — בדיקת חיות הבוט\n\n"
         f"📊 *הגדרות מדד הפחד (FNG)*\n"
