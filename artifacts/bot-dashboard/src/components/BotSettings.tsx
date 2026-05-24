@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { saveSlots, saveBotSettings, lsReadSettings, SlotsData, FngSettings } from "@/hooks/useBotData";
+import { saveSlots, saveBotSettings, SlotsData, FngSettings } from "@/hooks/useBotData";
 
 interface BotSettingsProps {
   slots: SlotsData | null;
@@ -56,11 +56,10 @@ const BTN_META = {
 };
 
 export function BotSettings({ slots, fngSettings, onSaved }: BotSettingsProps) {
-  // Initialize from localStorage cache (GET /api/fng_settings doesn't return these fields)
-  const cached = lsReadSettings();
+  // amount & leverage are locked in config.py — always $50 / 10x
   const [maxTrades, setMaxTrades] = useState(slots?.max_trades ?? 3);
-  const [amount,    setAmount]    = useState(cached.amount_per_trade);
-  const [leverage,  setLeverage]  = useState(cached.default_leverage);
+  const amount   = 50;   // locked — MARGIN in config.py
+  const leverage = 10;   // locked — LEVERAGE in config.py
   const [status,    setStatus]    = useState<SaveStatus>({ phase: "idle", slotsOk: null, fngOk: null });
 
   // Sync max_trades from live /api/slots
@@ -112,16 +111,29 @@ export function BotSettings({ slots, fngSettings, onSaved }: BotSettingsProps) {
         value={maxTrades} min={slotMin} max={slotMax} unit=""
         onChange={setMaxTrades}
       />
-      <SliderRow
-        label="Amount per Trade ($)"
-        value={amount} min={10} max={200} unit="$"
-        onChange={setAmount}
-      />
-      <SliderRow
-        label="Default Leverage (x)"
-        value={leverage} min={1} max={20} unit="x"
-        onChange={setLeverage}
-      />
+      {/* Amount & Leverage — locked by config, display-only */}
+      <div className="mb-4">
+        <div className="flex justify-between mb-1">
+          <span className="text-xs" style={{ color: "#94a3b8" }}>Amount per Trade ($)</span>
+          <span className="text-xs font-mono font-semibold" style={{ color: "#4ade80" }}>
+            ${amount} 🔒
+          </span>
+        </div>
+        <div className="text-xs rounded px-2 py-1.5" style={{ background: "#0f2040", color: "#475569", border: "1px solid #1e3a5f" }}>
+          נעול — $50 מרג'ין קבוע לכל עסקה (config.py)
+        </div>
+      </div>
+      <div className="mb-4">
+        <div className="flex justify-between mb-1">
+          <span className="text-xs" style={{ color: "#94a3b8" }}>Default Leverage (x)</span>
+          <span className="text-xs font-mono font-semibold" style={{ color: "#4ade80" }}>
+            {leverage}x 🔒
+          </span>
+        </div>
+        <div className="text-xs rounded px-2 py-1.5" style={{ background: "#0f2040", color: "#475569", border: "1px solid #1e3a5f" }}>
+          נעול — 10x מינוף קבוע לכל עסקה (config.py)
+        </div>
+      </div>
 
       <button
         onClick={handleSave}
