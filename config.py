@@ -81,13 +81,13 @@ SWING_TRACK_VOL_MIN  = 10_000_000
 SWING_TRACK_SL_PCT   = 6.0
 SWING_TRACK_TP1_PCT  = 6.0
 SWING_TRACK_TP_PCT   = 12.0
-SWING_TRACK_LEVERAGE = 3
+SWING_TRACK_LEVERAGE = 10
 SWING_TRACK_BE_PCT   = 4.0
 
 # ── Scalp Mode (Mean-Reversion) ────────────────────────────────────────────────
-SCALP_LEVERAGE         = 5
-SCALP_MARGIN           = 15.0
-SCALP_POS_SIZE         = SCALP_MARGIN * SCALP_LEVERAGE
+SCALP_LEVERAGE         = 10        # locked — same as LEVERAGE
+SCALP_MARGIN           = 50.0      # locked — same as MARGIN
+SCALP_POS_SIZE         = SCALP_MARGIN * SCALP_LEVERAGE   # = $500
 SCALP_TP_PCT           = 3.0
 SCALP_SL_PCT           = 1.5
 SCALP_MAX_DURATION_MIN = 60

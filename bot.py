@@ -2298,9 +2298,9 @@ def track_trades():
             # SCALP PHASE — SL / TP / Time exit
             # ════════════════════════════════════════════
             if trade.get('phase') == 'scalp':
-                scalp_pos   = trade.get('pos_size', SCALP_POS_SIZE)   # גודל מהעסקה
-                scalp_mar   = trade.get('margin',   SCALP_MARGIN)     # מרג'ין מהעסקה
-                scalp_lev   = trade.get('leverage', SCALP_LEVERAGE)
+                scalp_pos   = trade.get('pos_size', POSITION_SIZE)   # גודל מהעסקה ($500)
+                scalp_mar   = trade.get('margin',   MARGIN)           # מרג'ין ($50)
+                scalp_lev   = trade.get('leverage', LEVERAGE)         # מינוף (10x)
                 scalp_sl_p  = trade.get('sl_pct',   SCALP_SL_PCT)
                 scalp_tp_p  = trade.get('tp_pct',   SCALP_TP_PCT)
 
@@ -5974,8 +5974,7 @@ BREAKOUT_FNG_SHORT_MAX        = 65   # FNG מקסימום ל-SHORT (מעל = ח�
 RSI_VETO_SHORT                = 52   # RSI מינימום ל-SHORT — SHORT אסור אם RSI < 52 (oversold)
 BREAKOUT_MIN_VOL              = 1.5  # volume ratio מינימלי (150% מהממוצע = 50% מעל)
 RSI_VETO_BREAKOUT_LONG        = 62   # RSI מקסימום ל-LONG בפריצה — אסור אם RSI > 62 (overbought)
-BREAKOUT_FNG_REDUCED_MARGIN_MAX  = 20    # FNG ≤ 20 → מרג'ין מוקטן ב-20%
-BREAKOUT_FNG_REDUCED_MARGIN_MULT = 0.80  # מכפיל מרג'ין בפחד קיצוני (FNG 10-20)
+# BREAKOUT_FNG_REDUCED_MARGIN — REMOVED: margin is always $50, no dynamic reduction
 MAJOR_PRIORITY_SYMBOLS        = {'BTC/USDT', 'ETH/USDT'}  # תמיד ראשונים בתור המועמדים
 
 
