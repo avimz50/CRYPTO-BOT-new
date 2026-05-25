@@ -890,11 +890,22 @@ def api_make_command():
         if not trade:
             return flask_jsonify({'ok': False, 'error': f'{symbol} לא נמצא בעסקאות פעילות'})
         try:
-            price = exchange.fetch_ticker(symbol)['last']
-            close_trade(trade, reason='Manual', close_price=price)
-            send_msg(f"✋ *Make סגר עסקה* — `{symbol}` @ `{price:.6g}`")
-            print(f"[Make→Bot] close_trade: {symbol} @ {price}")
-            return flask_jsonify({'ok': True, 'action': 'trade_closed', 'price': price})
+            price      = exchange.fetch_ticker(symbol)['last']
+            entry      = trade['entry']
+            _ps        = trade.get('pos_size', POSITION_SIZE)
+            direction  = trade.get('direction', 'LONG')
+            raw_pct    = (price - entry) / entry * 100
+            pnl_pct    = raw_pct if direction == 'LONG' else -raw_pct
+            net_pnl    = round(_ps * pnl_pct / 100, 2)
+            with trades_lock:
+                if trade in active_trades:
+                    active_trades.remove(trade)
+            wallet_credit(net_pnl, trade.get('margin', MARGIN))
+            _log_closed_trade(trade, 'Manual', net_pnl, price)
+            save_active_trades()
+            send_msg(f"✋ *Make סגר עסקה* — `{symbol}` @ `{price:.6g}` | P&L: `{net_pnl:+.2f}$`")
+            print(f"[Make→Bot] close_trade: {symbol} @ {price} pnl={net_pnl:+.2f}")
+            return flask_jsonify({'ok': True, 'action': 'trade_closed', 'price': price, 'pnl': net_pnl})
         except Exception as e:
             return flask_jsonify({'ok': False, 'error': str(e)}), 500
 
@@ -965,6 +976,38 @@ def api_fng_settings_post():
         'fear':         FEAR_THRESHOLD,
         'greed':        GREED_THRESHOLD,
     })
+
+@flask_app.route('/api/close', methods=['POST'])
+def api_close_trade():
+    """סגירה ידנית מהירה — POST {"symbol":"BNB"} ללא אימות (internal only)."""
+    data   = flask_request.get_json(force=True, silent=True) or {}
+    raw    = data.get('symbol', '').upper().replace('USDT', '').strip()
+    symbol = f"{raw}/USDT" if raw and '/USDT' not in raw else raw
+    if not symbol:
+        return flask_jsonify({'ok': False, 'error': 'symbol required'}), 400
+    with trades_lock:
+        trade = next((t for t in active_trades if t['symbol'] == symbol), None)
+    if not trade:
+        return flask_jsonify({'ok': False, 'error': f'{symbol} לא נמצא'}), 404
+    try:
+        price     = exchange.fetch_ticker(symbol)['last']
+        entry     = trade['entry']
+        _ps       = trade.get('pos_size', POSITION_SIZE)
+        direction = trade.get('direction', 'LONG')
+        raw_pct   = (price - entry) / entry * 100
+        pnl_pct   = raw_pct if direction == 'LONG' else -raw_pct
+        net_pnl   = round(_ps * pnl_pct / 100, 2)
+        with trades_lock:
+            if trade in active_trades:
+                active_trades.remove(trade)
+        wallet_credit(net_pnl, trade.get('margin', MARGIN))
+        _log_closed_trade(trade, 'Manual', net_pnl, price)
+        save_active_trades()
+        send_msg(f"🚪 *סגירה ידנית* — `{symbol}` @ `{price:.6g}`\nP&L: `{net_pnl:+.2f}$`")
+        print(f"[API/close] {symbol} @ {price} dir={direction} pnl={net_pnl:+.2f}", flush=True)
+        return flask_jsonify({'ok': True, 'symbol': symbol, 'price': price, 'pnl': net_pnl})
+    except Exception as e:
+        return flask_jsonify({'ok': False, 'error': str(e)}), 500
 
 @flask_app.route('/api/tg_hook', methods=['POST'])
 def api_tg_hook():
