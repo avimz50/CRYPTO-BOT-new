@@ -2561,6 +2561,60 @@ def track_trades():
                     except Exception as _e:
                         print(f"[Stagnation] error {sym}: {_e}")
 
+                # ── 0a-2. SMART TIMEOUT — 4h ללא רווח >= +1% ─────────────────
+                # משלים Stagnation: מטפל בעסקאות בהפסד ריאלי (drift > 0.5%)
+                # שה-Stagnation לא תפס. Scalp/Cliff מוחרגים (timeout משלהם).
+                if not trade.get('scalp') and not trade.get('cliff'):
+                    try:
+                        _to_opened  = datetime.fromisoformat(trade.get('opened_at', now_il().isoformat()))
+                        _to_elapsed = (now_il() - _to_opened).total_seconds() / 3600
+                        _to_profit  = (current_price - entry) / entry * 100 \
+                                      if direction == 'LONG' \
+                                      else (entry - current_price) / entry * 100
+                        if _to_elapsed >= SMART_TIMEOUT_HOURS and _to_profit < SMART_TIMEOUT_MIN_PROFIT_PCT:
+                            _to_pnl    = round(pos_size * _to_profit / 100, 2)
+                            _to_icon   = "📈" if _to_pnl >= 0 else "📉"
+                            _to_ret    = round(_to_profit * t_leverage, 1)
+                            daily_stats['total_pnl'] += _to_pnl
+                            if _to_pnl >= 0:
+                                daily_stats['wins'] += 1
+                            else:
+                                daily_stats['losses'] += 1
+                            daily_stats['close_reasons']['Timeout'] = \
+                                daily_stats['close_reasons'].get('Timeout', 0) + 1
+                            wallet_credit(_to_pnl, trade.get('margin', MARGIN))
+                            _log_closed_trade(trade, 'Timeout', _to_pnl, current_price)
+                            eq   = _get_equity()
+                            slip = trade.get('slippage_pct', 0.0)
+                            send_msg(
+                                f"⏱ *Smart Timeout — {sym}* "
+                                f"{'🟢' if direction == 'LONG' else '🔴'}\n"
+                                f"_פתוח {_to_elapsed:.1f}h | רווח {_to_profit:+.2f}% < "
+                                f"+{SMART_TIMEOUT_MIN_PROFIT_PCT}% — משחרר מרג'ין_\n\n"
+                                f"כניסה: `{entry:.6g}` → יציאה: `{current_price:.6g}`\n"
+                                f"{_to_icon} *P&L: ${_to_pnl:+.2f}* "
+                                f"({_to_ret:+.1f}% על מרג'ין)\n"
+                                f"💼 {t_leverage}x · ${trade.get('margin', MARGIN):.0f} "
+                                f"מרג'ין | {tbadge}\n"
+                                f"📊 Slippage: {slip:.2f}% (Demo)\n"
+                                f"💼 Equity: `${eq:.2f}` | "
+                                f"יתרה: `${wallet.get('balance', 0):.2f}`\n"
+                                f"{_to_icon} סה\"כ היום: "
+                                f"${round(daily_stats['total_pnl'], 2):+}"
+                            )
+                            print(
+                                f"[SmartTimeout] ⏱ {sym} {direction} — "
+                                f"{_to_elapsed:.1f}h | profit={_to_profit:+.2f}% "
+                                f"→ exit P&L=${_to_pnl:+.2f}",
+                                flush=True
+                            )
+                            with trades_lock:
+                                active_trades.remove(trade)
+                            save_active_trades()
+                            continue
+                    except Exception as _te:
+                        print(f"[SmartTimeout] error {sym}: {_te}", flush=True)
+
                 # 0b. Trailing SL — ATR-based (1.5× ATR מהשיא) + fallback TRAIL_PCT%
                 raw_profit_pct = (current_price - entry) / entry * 100 \
                                  if direction == 'LONG' \

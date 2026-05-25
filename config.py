@@ -98,6 +98,12 @@ STAGNATION_MIN_HOURS        = 4.0
 STAGNATION_PROFIT_MIN_HOURS = 24.0
 STAGNATION_RANGE_PCT        = 0.5
 
+# ── Smart Timeout ───────────────────────────────────────────────────────────────
+# סוגר עסקה שפתוחה >= N שעות ורווח < THRESHOLD% (הפסד / קרוב לאפס)
+# אם הרווח >= THRESHOLD% — לא נוגעים, ה-BE/Trailing SL מטפל
+SMART_TIMEOUT_HOURS          = 4.0   # שעות מקסימום לעסקה לא רווחית
+SMART_TIMEOUT_MIN_PROFIT_PCT = 1.0   # סף רווח מינימלי להמשך החזקה
+
 # ── Scalp Scan Triggers ────────────────────────────────────────────────────────
 SCALP_BUBBLE_MIN_PCT   = 30.0
 SCALP_CRASH_MIN_PCT    = 20.0
