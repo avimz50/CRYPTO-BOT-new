@@ -1962,23 +1962,106 @@ def save_active_trades():
 
 def get_btc_regime():
     """
-    מחזיר את מצב השוק לפי BTC/USDT ו-EMA50.
-    'BULL' — BTC מעל EMA50 → מאפשר LONG
-    'BEAR' — BTC מתחת EMA50 → מאפשר SHORT
+    מחזיר את מצב השוק לפי BTC/USDT ו-EMA20 (4H).
+    'BULL' — BTC מעל EMA20(4H) → מאפשר LONG
+    'BEAR' — BTC מתחת EMA20(4H) → מאפשר SHORT
     'NEUTRAL' — שגיאה בשליפה → מאפשר הכל (safe fallback)
     """
     try:
-        df   = get_data('BTC/USDT', timeframe='4h', limit=100)
-        ema50 = ta.ema(df['close'], length=50).iloc[-1]
+        df    = get_data('BTC/USDT', timeframe='4h', limit=60)
+        ema20 = ta.ema(df['close'], length=20).iloc[-1]
         price = df['close'].iloc[-1]
-        regime = 'BULL' if price > ema50 else 'BEAR'
-        pct = round((price - ema50) / ema50 * 100, 2)
+        regime = 'BULL' if price > ema20 else 'BEAR'
+        pct = round((price - ema20) / ema20 * 100, 2)
         if VERBOSE_LOG:
-            print(f"[BTC] Regime={regime} price={price:.0f} EMA50={ema50:.0f} ({pct:+.2f}%)")
+            print(f"[BTC] Regime={regime} price={price:.0f} EMA20(4H)={ema20:.0f} ({pct:+.2f}%)")
         return regime
     except Exception as e:
         print(f"BTC regime check failed: {e} — defaulting to NEUTRAL")
         return 'NEUTRAL'
+
+
+# ── Market Regime Cache (TTL 5 min) ───────────────────────────────────────────
+_market_regime_cache: dict = {'ts': 0.0, 'regime': 'NEUTRAL', 'fng_v': 50, 'btc_above': True, 'ema20': 0.0}
+_MARKET_REGIME_TTL = 300   # seconds
+
+
+def get_market_regime() -> tuple[str, int, bool, float]:
+    """
+    מחזיר (regime, fng_v, btc_above_ema20, ema20_4h) עם cache של 5 דקות.
+
+    BEARISH: FNG < REGIME_BEARISH_FNG(40) OR  BTC < EMA20(4H) → חוסם LONGs
+    BULLISH: FNG > REGIME_BULLISH_FNG(60) AND BTC > EMA20(4H) → חוסם SHORTs
+    NEUTRAL: אחרת → שני הכיוונים מותרים, max_trades מוגבל ל-2
+    """
+    global _market_regime_cache
+    now_ts = time.time()
+    if now_ts - _market_regime_cache['ts'] < _MARKET_REGIME_TTL:
+        c = _market_regime_cache
+        return c['regime'], c['fng_v'], c['btc_above'], c['ema20']
+
+    try:
+        fng_v, _ = get_fear_greed()
+    except Exception:
+        fng_v = 50
+
+    try:
+        df_btc    = get_data('BTC/USDT', timeframe='4h', limit=60)
+        ema20_4h  = float(ta.ema(df_btc['close'], length=20).iloc[-1])
+        btc_price = float(df_btc['close'].iloc[-1])
+        btc_above = btc_price > ema20_4h
+    except Exception as _e:
+        print(f"[MarketRegime] BTC EMA20 fetch failed: {_e} — keeping previous", flush=True)
+        btc_above = _market_regime_cache['btc_above']
+        ema20_4h  = _market_regime_cache['ema20']
+
+    if fng_v < REGIME_BEARISH_FNG or not btc_above:
+        regime = 'BEARISH'
+    elif fng_v > REGIME_BULLISH_FNG and btc_above:
+        regime = 'BULLISH'
+    else:
+        regime = 'NEUTRAL'
+
+    _market_regime_cache = {'ts': now_ts, 'regime': regime, 'fng_v': fng_v,
+                             'btc_above': btc_above, 'ema20': ema20_4h}
+    print(
+        f"[MarketRegime] {regime} | FNG={fng_v} | "
+        f"BTC {'above' if btc_above else 'below'} EMA20(4H)={ema20_4h:.0f}",
+        flush=True
+    )
+    return regime, fng_v, btc_above, ema20_4h
+
+
+def is_direction_allowed(direction: str, context: str = '') -> tuple[bool, str]:
+    """
+    Gate מרכזי — מחזיר (allowed, reason).
+    BEARISH → LONGs חסומים | BULLISH → SHORTs חסומים | NEUTRAL → max 2 עסקאות.
+    """
+    regime, fng_v, btc_above, ema20 = get_market_regime()
+    btc_lbl = f"BTC {'מעל' if btc_above else 'מתחת'} EMA20(4H)={ema20:.0f}"
+
+    if regime == 'BEARISH' and direction == 'LONG':
+        reason = f"BEARISH Regime — FNG={fng_v} {btc_lbl} → LONGs חסומים"
+        if context:
+            print(f"[RegimeGate/{context}] {reason}", flush=True)
+        return False, reason
+
+    if regime == 'BULLISH' and direction == 'SHORT':
+        reason = f"BULLISH Regime — FNG={fng_v} {btc_lbl} → SHORTs חסומים"
+        if context:
+            print(f"[RegimeGate/{context}] {reason}", flush=True)
+        return False, reason
+
+    if regime == 'NEUTRAL':
+        n_active = len(active_trades)
+        if n_active >= REGIME_NEUTRAL_MAX_TRADES:
+            reason = (f"NEUTRAL Regime — שוק צדדי, מקסימום {REGIME_NEUTRAL_MAX_TRADES} "
+                      f"עסקאות (פעיל={n_active})")
+            if context:
+                print(f"[RegimeGate/{context}] {reason}", flush=True)
+            return False, reason
+
+    return True, ''
 
 
 # Cache ל-BTC Parabolic Bull check (15 דקות TTL)
@@ -2147,6 +2230,12 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
 
     if fng_v is None:
         fng_v, _, _ = sentiment_check("open_trade")
+
+    # ── Market Regime Gate ────────────────────────────────────────────────────
+    _allowed, _reason = is_direction_allowed(direction, context='Swing')
+    if not _allowed:
+        print(f"[Swing] {symbol} {direction} נדחה — {_reason}", flush=True)
+        return
 
     # ── Fixed Sizing ──────────────────────────────────────────────────────────
     effective_margin = MARGIN        # $50
@@ -5164,7 +5253,7 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
     """
     עוזר לסריקה: מריץ score_symbol על רשימת מועמדים.
     direction: 'LONG' או 'SHORT'
-    btc_regime: 'BULL' / 'BEAR' / 'NEUTRAL' — BTC EMA50 Market Regime Filter
+    btc_regime: פרמטר legacy — הלוגיקה עברה ל-get_market_regime() / is_direction_allowed()
     rejected_out: רשימה שבה יצטברו מטבעות שנדחו (לדוח הסריקה)
     מחזיר מספר האיתותים שנמצאו.
     """
@@ -5174,22 +5263,15 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
     # ── Sentiment ─────────────────────────────────────────────────────────────
     fng_v_scan, fng_lbl_scan, fng_action = sentiment_check("scan")
 
-    # ── BTC Market Regime Safety Switch ──
-    if direction == 'LONG' and btc_regime == 'BEAR':
-        print(f"BTC REGIME VETO: BEAR market — skipping all {len(candidates)} LONG candidates")
+    # ── Market Regime Gate (FNG + BTC EMA20 4H) ──────────────────────────────
+    _mr_allowed, _mr_reason = is_direction_allowed(direction, context='Scan')
+    if not _mr_allowed:
+        print(f"[Scan] REGIME VETO {direction} ({len(candidates)} candidates) — {_mr_reason}",
+              flush=True)
         for c in candidates:
             rejected_out.append({
                 'symbol': c['symbol'], 'direction': direction, 'best_score': 0,
-                'reason': 'BTC BEAR Regime — LONGs חסומים',
-                'scores': {},
-            })
-        return 0
-    if direction == 'SHORT' and btc_regime == 'BULL':
-        print(f"BTC REGIME VETO: BULL market — skipping all {len(candidates)} SHORT candidates")
-        for c in candidates:
-            rejected_out.append({
-                'symbol': c['symbol'], 'direction': direction, 'best_score': 0,
-                'reason': 'BTC BULL Regime — SHORTs חסומים',
+                'reason': _mr_reason,
                 'scores': {},
             })
         return 0
@@ -5637,6 +5719,12 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
         print(f"SCALP: max scalp trades ({MAX_SCALP_TRADES}) reached — skip {symbol}")
         return
 
+    # ── Market Regime Gate ────────────────────────────────────────────────────
+    _allowed_s, _reason_s = is_direction_allowed(direction, context='Scalp')
+    if not _allowed_s:
+        print(f"[Scalp] {symbol} {direction} נדחה — {_reason_s}", flush=True)
+        return
+
     # ── נפח + שינוי 24h (קריאה אחת) ─────────────────────────────────────────
     vol_usd, change_24h = fetch_symbol_ticker_info(symbol)
     if vol_usd > 0 and vol_usd < SCALP_TRACK_VOL_MIN:
@@ -5830,6 +5918,12 @@ def open_cliff_trade(symbol: str, price: float, direction: str, move_pct: float,
         return
     if wallet.get('balance', 0) < CLIFF_MARGIN:
         print(f"[Velocity] יתרה נמוכה — skip {symbol}")
+        return
+
+    # ── Market Regime Gate ────────────────────────────────────────────────────
+    _allowed_c, _reason_c = is_direction_allowed(direction, context='Velocity')
+    if not _allowed_c:
+        print(f"[Velocity] {symbol} {direction} נדחה — {_reason_c}", flush=True)
         return
 
     if direction == 'LONG':
@@ -6132,6 +6226,13 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
     if wallet.get('balance', STARTING_BALANCE) < margin:
         print(f"[Breakout] insufficient balance for {symbol} — skip")
         return
+
+    # ── Market Regime Gate ────────────────────────────────────────────────────
+    _allowed_b, _reason_b = is_direction_allowed(direction, context='Breakout')
+    if not _allowed_b:
+        print(f"[Breakout] {symbol} {direction} נדחה — {_reason_b}", flush=True)
+        return
+
     tgt_b     = se.calc_targets(price, direction)
     sl_pct    = tgt_b['sl_pct']
     tp_pct    = tgt_b['tp_pct']

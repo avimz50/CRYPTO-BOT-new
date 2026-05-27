@@ -38,6 +38,14 @@ TP2_PCT = 4.0   # Take Profit 2 = 4% (final target, 1:2 RR)
 # ── Circuit Breaker ────────────────────────────────────────────────────────────
 DAILY_LOSS_LIMIT = -30.0     # -$30 = 15% of $200 starting balance
 
+# ── Market Regime Filter (FNG + BTC 4H EMA20) ──────────────────────────────────
+# BEARISH: FNG < 40 OR BTC below 4H EMA20  → LONGs blocked
+# BULLISH: FNG > 60 AND BTC above 4H EMA20 → SHORTs blocked
+# NEUTRAL: 40 ≤ FNG ≤ 60                   → both allowed, max 2 trades
+REGIME_BEARISH_FNG       = 40   # FNG threshold below = bearish
+REGIME_BULLISH_FNG       = 60   # FNG threshold above = bullish
+REGIME_NEUTRAL_MAX_TRADES = 2   # max concurrent trades in choppy/neutral market
+
 # ── Scoring Thresholds ─────────────────────────────────────────────────────────
 MIN_SCORE           = 72     # Entry threshold
 RSI_VETO_LONG       = 62     # Hard veto — LONG forbidden if RSI > 62 (overbought)
