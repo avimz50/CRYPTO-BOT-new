@@ -2440,6 +2440,51 @@ def track_trades():
                     )
                 except Exception as _ece:
                     print(f"[EmergencyClose] error closing {_et.get('symbol')}: {_ece}", flush=True)
+
+        elif _emrg_regime == 'BULLISH':
+            with trades_lock:
+                _shorts_to_close = [t for t in active_trades if t.get('direction') == 'SHORT']
+            for _et in _shorts_to_close:
+                try:
+                    _esym  = _et['symbol']
+                    _ep    = (_batch_prices.get(_esym)
+                              or float(exchange.fetch_ticker(_esym)['last']))
+                    _eps   = _et.get('pos_size', POSITION_SIZE)
+                    _eraw  = (_et['entry'] - _ep) / _et['entry'] * 100   # SHORT P&L
+                    _epnl  = round(_eps * _eraw / 100, 2)
+                    _elev  = _et.get('leverage', LEVERAGE)
+                    _eret  = round(_eraw * _elev, 1)
+                    _eicon = "📈" if _epnl >= 0 else "📉"
+                    _ebtc  = f"מעל EMA20={_emrg_ema:.0f}"
+                    wallet_credit(_epnl, _et.get('margin', MARGIN))
+                    _log_closed_trade(_et, 'RegimeClose', _epnl, _ep)
+                    daily_stats['total_pnl'] += _epnl
+                    if _epnl >= 0:
+                        daily_stats['wins'] += 1
+                    else:
+                        daily_stats['losses'] += 1
+                    daily_stats['close_reasons']['RegimeClose'] = (
+                        daily_stats['close_reasons'].get('RegimeClose', 0) + 1)
+                    with trades_lock:
+                        if _et in active_trades:
+                            active_trades.remove(_et)
+                    save_active_trades()
+                    _eeq = _get_equity()
+                    send_msg(
+                        f"🛡 *Emergency Close — {_esym.replace('/USDT','')}* 🟢\n"
+                        f"_שוק הפך BULLISH — סגירה אוטומטית להגנה על הון_\n"
+                        f"FNG={_emrg_fng} | BTC {_ebtc}\n\n"
+                        f"כניסה: `{_et['entry']:.6g}` → יציאה: `{_ep:.6g}`\n"
+                        f"{_eicon} *P&L: ${_epnl:+.2f}* ({_eret:+.1f}% מרג'ין)\n"
+                        f"💼 Equity: `${_eeq:.2f}`"
+                    )
+                    print(
+                        f"[EmergencyClose] 🛡 {_esym} SHORT → closed at {_ep:.6g} "
+                        f"pnl={_epnl:+.2f} | BULLISH FNG={_emrg_fng} BTC {_ebtc}",
+                        flush=True
+                    )
+                except Exception as _ece:
+                    print(f"[EmergencyClose] error closing {_et.get('symbol')}: {_ece}", flush=True)
     except Exception as _emrg_err:
         print(f"[EmergencyClose] regime check error: {_emrg_err}", flush=True)
 
