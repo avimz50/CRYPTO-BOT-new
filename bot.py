@@ -2000,20 +2000,27 @@ def get_market_regime() -> tuple[str, int, bool, float]:
         c = _market_regime_cache
         return c['regime'], c['fng_v'], c['btc_above'], c['ema20']
 
+    # Fail-SAFE defaults — API failure → assume worst case to protect capital
+    fng_v    = 0      # treat unknown FNG as extreme fear → triggers BEARISH
+    btc_above = False  # treat unknown BTC position as below EMA → triggers BEARISH
+    ema20_4h  = _market_regime_cache.get('ema20', 0.0)
+    _fng_ok   = False
+    _btc_ok   = False
+
     try:
         fng_v, _ = get_fear_greed()
-    except Exception:
-        fng_v = 50
+        _fng_ok  = True
+    except Exception as _fe:
+        print(f"[MarketRegime] FNG fetch failed: {_fe} — defaulting fng_v=0 (BEARISH safe)", flush=True)
 
     try:
         df_btc    = get_data('BTC/USDT', timeframe='4h', limit=60)
         ema20_4h  = float(ta.ema(df_btc['close'], length=20).iloc[-1])
         btc_price = float(df_btc['close'].iloc[-1])
         btc_above = btc_price > ema20_4h
-    except Exception as _e:
-        print(f"[MarketRegime] BTC EMA20 fetch failed: {_e} — keeping previous", flush=True)
-        btc_above = _market_regime_cache['btc_above']
-        ema20_4h  = _market_regime_cache['ema20']
+        _btc_ok   = True
+    except Exception as _be:
+        print(f"[MarketRegime] BTC EMA20 fetch failed: {_be} — defaulting btc_above=False (BEARISH safe)", flush=True)
 
     if fng_v < REGIME_BEARISH_FNG or not btc_above:
         regime = 'BEARISH'
@@ -2024,9 +2031,10 @@ def get_market_regime() -> tuple[str, int, bool, float]:
 
     _market_regime_cache = {'ts': now_ts, 'regime': regime, 'fng_v': fng_v,
                              'btc_above': btc_above, 'ema20': ema20_4h}
+    _data_src = f"{'FNG✓' if _fng_ok else 'FNG✗(safe)'} {'BTC✓' if _btc_ok else 'BTC✗(safe)'}"
     print(
         f"[MarketRegime] {regime} | FNG={fng_v} | "
-        f"BTC {'above' if btc_above else 'below'} EMA20(4H)={ema20_4h:.0f}",
+        f"BTC {'above' if btc_above else 'below'} EMA20(4H)={ema20_4h:.0f} | {_data_src}",
         flush=True
     )
     return regime, fng_v, btc_above, ema20_4h
@@ -6203,17 +6211,18 @@ def _btc_above_ema20_15m() -> bool:
     BTC Correlation Filter:
     מחזיר True אם BTC/USDT 15m close > EMA20 — מגמה חיובית.
     משמש כפילטר לפני כניסה לכל עסקת SOL.
+    Fail-SAFE: שגיאה → False (מניח שוק יורד, לא מאפשר כניסה)
     """
     try:
         df = get_data('BTC/USDT', timeframe='15m', limit=30)
         ema20 = ta.ema(df['close'], length=20)
         if ema20 is None:
-            return True   # fallback permissive
+            return False   # fail-safe: block entry
         btc_close = float(df['close'].iloc[-1])
         btc_ema   = float(ema20.iloc[-1])
         return btc_close > btc_ema
     except Exception:
-        return True   # fallback permissive
+        return False   # fail-safe: block entry
 
 
 def _sol_1h_breakout_above_4h_high() -> tuple[bool, float, float]:
