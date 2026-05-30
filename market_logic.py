@@ -878,6 +878,21 @@ def score_symbol(df_3h, df_1h, symbol: str, direction: str = 'LONG',
         else:
             parts.append(f"RSIDiv=0({rd_desc[:25]})")
 
+        # ── 7g. Pump Surge Bonus — +8 pts ────────────────────────────────────
+        # מזהה "Pump Fade" סטאפ: נפח קיצוני ×3.0+ ו-RSI בזון האידיאלי לכיוון ההפוך.
+        # SKYAI: נפח ×3.3, RSI=69 (SHORT ideal) → בדיוק הסטאפ הזה.
+        pump_surge = False
+        if vol_rat >= 3.0:
+            if direction == 'SHORT' and rsi_ideal:   # RSI overbought (55–75)
+                pump_surge = True
+            elif direction == 'LONG' and rsi_ideal:  # RSI oversold  (25–48)
+                pump_surge = True
+        if pump_surge:
+            score += 8
+            parts.append(f"PumpSurge=+8(vol×{vol_rat:.1f}+RSI={rsi_v:.0f})")
+        else:
+            parts.append(f"PumpSurge=0(vol×{vol_rat:.1f})")
+
         # ── 8. Fear & Greed — trend-aligned filter ───────────────────────────
         # Fear  (FNG < FNG_FEAR_THRESHOLD=35):  LONG -10, SHORT +5
         # Greed (FNG > FNG_GREED_THRESHOLD=65): LONG +5,  SHORT -10
