@@ -344,7 +344,7 @@ daily_stats = {
     'wins':         0,
     'losses':       0,
     'total_pnl':    0.0,
-    'date':         date.today(),
+    'date':         now_il().date(),
     'close_reasons': {'TP': 0, 'TP1+Trail': 0, 'Trailing': 0, 'SL': 0, 'BE': 0, 'Manual': 0},
 }
 
@@ -2375,9 +2375,9 @@ def track_trades():
     """
     global active_trades, daily_stats, _daily_circuit_notified
 
-    if daily_stats['date'] != date.today():
+    if daily_stats['date'] != now_il().date():
         daily_stats = {
-            'wins': 0, 'losses': 0, 'total_pnl': 0.0, 'date': date.today(),
+            'wins': 0, 'losses': 0, 'total_pnl': 0.0, 'date': now_il().date(),
             'close_reasons': {'TP': 0, 'TP1+Trail': 0, 'Trailing': 0, 'SL': 0, 'BE': 0, 'Manual': 0},
         }
         _daily_circuit_notified = False  # איפוס Circuit Breaker עם פתיחת יום חדש
@@ -3167,11 +3167,18 @@ def send_daily_report():
     send_msg(msg)
 
     # ── פירוט עסקאות סגורות היום ─────────────────────────────────────────────
+    # משתמשים ב-trade_audit_log (נשמר ל-object storage) כמקור ראשי,
+    # כך שהדוח שורד הפעלות מחדש של הבוט. closed_trades_log כ-fallback.
     today_str = now_il().strftime('%Y-%m-%d')
     today_trades = [
-        t for t in closed_trades_log
+        t for t in trade_audit_log
         if t.get('closed_at', '').startswith(today_str)
     ]
+    if not today_trades:   # fallback לרשימת הזיכרון למקרה שה-audit log ריק
+        today_trades = [
+            t for t in closed_trades_log
+            if t.get('closed_at', '').startswith(today_str)
+        ]
 
     if today_trades:
         reason_emoji = {
@@ -3916,9 +3923,9 @@ def handle_audit(message):
     send_msg(f"🤖 _מריץ ניתוח Gemini עבור {date_label}\\.\\.\\. עד 30 שניות_")
     try:
         from gdrive_reporter import run_audit_upload
-        # כשמסננים לפי תאריך — משתמשים ב-trade_audit_log (היסטורי מלא, 100 עסקאות)
-        # כשמסננים 24h — משתמשים ב-closed_trades_log (in-memory, מהיר)
-        source_trades = trade_audit_log if date_filter else closed_trades_log
+        # trade_audit_log — נשמר ל-object storage, שורד הפעלות מחדש (עד 100 עסקאות).
+        # closed_trades_log — זיכרון בלבד, מתאפס בהפעלה מחדש. לכן תמיד נשתמש ב-audit.
+        source_trades = trade_audit_log
         run_audit_upload(
             active_trades, wallet, source_trades,
             send_telegram=send_msg,
