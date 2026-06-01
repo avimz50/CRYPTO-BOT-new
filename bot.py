@@ -6277,6 +6277,7 @@ BREAKOUT_FNG_SHORT_MAX        = 65   # FNG מקסימום ל-SHORT (מעל = ח�
 RSI_VETO_SHORT                = 52   # RSI מינימום ל-SHORT — SHORT אסור אם RSI < 52 (oversold)
 BREAKOUT_MIN_VOL              = 1.5  # volume ratio מינימלי (150% מהממוצע = 50% מעל)
 RSI_VETO_BREAKOUT_LONG        = 62   # RSI מקסימום ל-LONG בפריצה — אסור אם RSI > 62 (overbought)
+RSI_VETO_BREAKOUT_SHORT       = 60   # RSI מינימום ל-SHORT בפריצה — אסור אם RSI < 60 (לא מספיק overbought)
 # BREAKOUT_FNG_REDUCED_MARGIN — REMOVED: margin is always $50, no dynamic reduction
 MAJOR_PRIORITY_SYMBOLS        = {'BTC/USDT', 'ETH/USDT'}  # תמיד ראשונים בתור המועמדים
 
@@ -6535,8 +6536,8 @@ def top10_breakout_loop():
                         print(f"[Top10 Breakout] {sym} LONG RSI veto ({rsi:.0f} > {_rsi_limit})")
                         continue
                 else:  # SHORT
-                    if rsi is not None and rsi < RSI_VETO_SHORT:
-                        print(f"[Top10 Breakout] {sym} SHORT RSI veto ({rsi:.0f} < {RSI_VETO_SHORT})")
+                    if rsi is not None and rsi < RSI_VETO_BREAKOUT_SHORT:
+                        print(f"[Top10 Breakout] {sym} SHORT RSI veto ({rsi:.0f} < {RSI_VETO_BREAKOUT_SHORT})")
                         continue
 
                 # Volume Filter
