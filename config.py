@@ -85,7 +85,7 @@ SCALP_TRACK_LEVERAGE   = 10
 SCALP_TRACK_BE_TRIGGER = 0.50
 
 # ── Swing Track ───────────────────────────────────────────────────────────────
-SWING_TRACK_VOL_MIN  = 10_000_000
+SWING_TRACK_VOL_MIN  = 1_500_000
 SWING_TRACK_SL_PCT   = 6.0
 SWING_TRACK_TP1_PCT  = 6.0
 SWING_TRACK_TP_PCT   = 12.0
