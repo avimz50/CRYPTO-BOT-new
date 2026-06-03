@@ -331,6 +331,11 @@ closed_trades_log  = []
 # Audit Log — מתמיד ל-trade_audit.json (100 עסקאות אחרונות)
 trade_audit_log: list[dict] = []
 
+# ─── Breakout SL Cooldown — מונע כניסה חוזרת אחרי SL ───────────────────────
+# מבנה: { 'BNB/USDT': timestamp_of_sl_exit }  →  5 שעות המתנה
+breakout_sl_cooldown: dict       = {}
+BREAKOUT_SL_COOLDOWN_SEC: int    = 5 * 3600   # 5 שעות
+
 # ─── Watch List — מעקב מטבעות ספציפיים כל 15 דקות ───────────────────────────
 # מבנה: { 'SOL/USDT': {'direction':'LONG','added_at':..., 'last_score':0, 'expires_at':...} }
 watch_list: dict = {}
@@ -2991,6 +2996,8 @@ def track_trades():
                         daily_stats['close_reasons']['SL'] += 1
                         wallet_credit(-loss, _trade_margin)   # מרג'ין חוזר פחות ההפסד
                         _log_closed_trade(trade, 'SL', -loss, current_price)
+                        if trade.get('timeframe') == 'Breakout':
+                            breakout_sl_cooldown[sym] = time.time()
                         eq = _get_equity()
                         send_msg(
                             f"🛑 *SL נגע — {sym}*\n"
@@ -6277,8 +6284,9 @@ BREAKOUT_FNG_SHORT_MAX        = 65   # FNG מקסימום ל-SHORT (מעל = ח�
 RSI_VETO_SHORT                = 52   # RSI מינימום ל-SHORT — SHORT אסור אם RSI < 52 (oversold)
 BREAKOUT_MIN_VOL              = 1.5  # volume ratio מינימלי (150% מהממוצע = 50% מעל)
 RSI_VETO_BREAKOUT_LONG        = 62   # RSI מקסימום ל-LONG בפריצה — אסור אם RSI > 62 (overbought)
-RSI_VETO_BREAKOUT_SHORT       = 60   # RSI מינימום ל-SHORT בפריצה — אסור אם RSI < 60 (לא מספיק overbought) [NEUTRAL/BULL בלבד]
-RSI_VETO_BREAKOUT_SHORT_BEAR  = 15   # RSI רצפה קשיחה ל-SHORT בפריצה בזמן BEAR — מונע כניסה ב-dead-bottom
+RSI_VETO_BREAKOUT_SHORT       = 60   # RSI מינימום ל-SHORT בפריצה [NEUTRAL/BULL בלבד] — fade pumps
+RSI_VETO_BREAKOUT_SHORT_BEAR_MIN = 30  # RSI מינימום ב-BEAR — מתחת = oversold bounce, לא שורטים
+RSI_VETO_BREAKOUT_SHORT_BEAR_MAX = 58  # RSI מקסימום ב-BEAR — מעל = recovery, לא שורטים
 # BREAKOUT_FNG_REDUCED_MARGIN — REMOVED: margin is always $50, no dynamic reduction
 MAJOR_PRIORITY_SYMBOLS        = {'BTC/USDT', 'ETH/USDT'}  # תמיד ראשונים בתור המועמדים
 
@@ -6526,6 +6534,12 @@ def top10_breakout_loop():
             for sym in TOP10_SYMBOLS:
                 if sym in existing_syms:
                     continue
+                # Cooldown: דלג אם המטבע לקח SL בפריצה ב-5 השעות האחרונות
+                _sl_ts = breakout_sl_cooldown.get(sym)
+                if _sl_ts and (time.time() - _sl_ts) < BREAKOUT_SL_COOLDOWN_SEC:
+                    _cd_remaining = (BREAKOUT_SL_COOLDOWN_SEC - (time.time() - _sl_ts)) / 3600
+                    print(f"[Top10 Breakout] {sym} SL cooldown — {_cd_remaining:.1f}h remaining")
+                    continue
                 signal, price, h4_level, rsi, vol_ratio = _coin_breakout_full(sym, direction)
                 if not signal:
                     continue
@@ -6539,9 +6553,9 @@ def top10_breakout_loop():
                 else:  # SHORT
                     if rsi is not None:
                         if not btc_above_ema:
-                            # BEARISH regime: only hard floor — trend-following shorts allowed
-                            if rsi < RSI_VETO_BREAKOUT_SHORT_BEAR:
-                                print(f"[Top10 Breakout] {sym} SHORT RSI veto — BEAR floor ({rsi:.0f} < {RSI_VETO_BREAKOUT_SHORT_BEAR})")
+                            # BEARISH regime: חלון RSI 30–58 — bounce entries ו-recovery מסוננים
+                            if rsi < RSI_VETO_BREAKOUT_SHORT_BEAR_MIN or rsi > RSI_VETO_BREAKOUT_SHORT_BEAR_MAX:
+                                print(f"[Top10 Breakout] {sym} SHORT RSI veto — BEAR window ({rsi:.0f} outside {RSI_VETO_BREAKOUT_SHORT_BEAR_MIN}–{RSI_VETO_BREAKOUT_SHORT_BEAR_MAX})")
                                 continue
                         else:
                             # NEUTRAL/BULL: require RSI ≥ 60 to fade only overbought pumps
