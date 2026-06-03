@@ -2230,6 +2230,11 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     פותח עסקת Swing — גודל קבוע: $20 מרג'ין, 10x, $200 נשלט.
     SL=2% | TP1=2% (→ BE אוטומטי) | TP2=4% (RR 1:2).
     """
+    # ── Daily Circuit Breaker ────────────────────────────────────────────────
+    if check_daily_circuit_breaker():
+        print(f"[SWING] ⛔ Circuit Breaker — לא פותחים {symbol} (הפסד יומי ≤ ${DAILY_LOSS_LIMIT})")
+        return
+
     # ── נפח + שינוי 24h ───────────────────────────────────────────────────────
     vol_usd, change_24h = fetch_symbol_ticker_info(symbol)
     if vol_usd > 0 and vol_usd < SWING_TRACK_VOL_MIN:
@@ -5828,6 +5833,11 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
 
     track = 'Scalp'
 
+    # ── Daily Circuit Breaker ────────────────────────────────────────────────
+    if check_daily_circuit_breaker():
+        print(f"[SCALP] ⛔ Circuit Breaker — לא פותחים {symbol} (הפסד יומי ≤ ${DAILY_LOSS_LIMIT})")
+        return
+
     with trades_lock:
         if any(t['symbol'] == symbol for t in active_trades):
             print(f"SCALP: {symbol} already in active_trades — skip")
@@ -6347,6 +6357,11 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
 
     if wallet.get('balance', STARTING_BALANCE) < margin:
         print(f"[Breakout] insufficient balance for {symbol} — skip")
+        return
+
+    # ── Daily Circuit Breaker ────────────────────────────────────────────────
+    if check_daily_circuit_breaker():
+        print(f"[Breakout] ⛔ Circuit Breaker — לא פותחים {symbol} (הפסד יומי ≤ ${DAILY_LOSS_LIMIT})")
         return
 
     # ── Market Regime Gate ────────────────────────────────────────────────────
