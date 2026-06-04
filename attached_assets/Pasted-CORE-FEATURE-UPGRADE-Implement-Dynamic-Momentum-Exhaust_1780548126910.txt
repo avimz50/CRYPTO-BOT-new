@@ -1,0 +1,23 @@
+CORE FEATURE UPGRADE: Implement Dynamic Momentum Exhaustion Exit (Short Bottom / Long Top Detection) & Dashboard Target Visibility.
+
+OBJECTIVE:
+We want to enable the bot to lock in maximal profits near the absolute top/bottom of a trend (just like a human trader would), while preventing early exits on minor trend pullbacks (market noise). Additionally, we need to expose the TP1, TP2, and SL targets dynamically on the active trades UI dashboard for full transparency.
+
+INSTRUCTIONS FOR IMPLEMENTATION:
+
+1. ARCHITECT THE EXHAUSTION EXIT ENGINE (Anti-Noise Filter):
+Create an asynchronous validation function `check_momentum_exhaustion(symbol, side, current_p_l)` wrapped inside the pre-close check loop:
+- GATEKEEPER: This mechanism must ONLY activate if the trade's current unrealized P&L is greater than or equal to $15.00 (Minimum Profit Threshold). If below, skip entirely to let the trade breath.
+- MULTI-CONFLUENCE CONFIRMATION: Fetch the 5-minute OHLCV candles (last 40 periods). Calculate a standard 14-period RSI and the Historical Moving Average of Volume (last 15 completed candles).
+- NOISE FILTER: Calculate if the current 5m candle volume is a "Volume Spike" (Current Volume > 2.2x Historical Average Volume). This confirms institutional/whale market reversal handoff, distinguishing it from a low-volume minor pullback.
+- SHORT POSITION REVERSAL (Bottom Catch): If Side == 'SHORT', trigger an immediate Market Close if: Previous 5m RSI < 22 AND Current 5m RSI > 24.5 AND Volume Spike is True.
+- LONG POSITION REVERSAL (Top Catch): If Side == 'LONG', trigger an immediate Market Close if: Previous 5m RSI > 78 AND Current 5m RSI < 75.5 AND Volume Spike is True.
+
+2. INTEGRATION INTO ACTIVE TRADE MANAGER:
+Inject this check inside your core open trade management loop. If the exhaustion function returns True, log a critical alert: "[EXHAUSTION BREAKOUT] Reversal confirmed on {symbol}. Executing early Market Close to secure max profits." Execute the CCXT market order and broadcast a custom Telegram notification to the user.
+
+3. DASHBOARD DATA SCHEMA & JINJA2 UI EXTENSION:
+- Update the active trades payload dictionary generation function (`get_dashboard_payload` or equivalent state object). Ensure it maps the active trade dictionary variables `tp1` (Break-Even target), `tp2` (Final destination target), and current dynamic `sl` (Stop Loss).
+- Safely update the Dashboard web interface HTML file (within the active trades table/loop component) to display these 3 critical targets explicitly next to each running symbol (e.g., "🎯 TP1 (BE): $X.XX | 🏆 TP2 (Final): $Y.YY | 🛑 SL: $Z.ZZ").
+
+Perform a full workspace architecture review, safely inject the unified code, run a syntax verification check, and restart the trading server.
