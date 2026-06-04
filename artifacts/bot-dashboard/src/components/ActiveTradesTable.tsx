@@ -76,9 +76,11 @@ export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSucce
                 const rawPct = (cp - t.entry) / t.entry * 100;
                 const pnlPct = isLong ? rawPct : -rawPct;
                 const posSize = t.pos_size ?? 500;
+                // After TP1: only 25% of position remains open; tp1_pnl is already realized in wallet
+                const activeSize = t.tp1_triggered ? posSize * 0.25 : posSize;
                 const pnlUsd = t.tp1_triggered
-                  ? (t.tp1_pnl ?? 0) + posSize * pnlPct / 100
-                  : posSize * pnlPct / 100;
+                  ? (t.tp1_pnl ?? 0) + activeSize * pnlPct / 100
+                  : activeSize * pnlPct / 100;
                 const tp1Price = (t as any).tp1 ?? t.tp;
                 const estProfit = tp1Price && t.entry
                   ? Math.abs(tp1Price - t.entry) / t.entry * posSize

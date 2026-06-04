@@ -1,0 +1,21 @@
+CRITICAL BACKEND BUG FIX: Correct Flawed Floating P&L Calculation Post-Partial Close (TP1)
+
+CONTEXT & BUG DESCRIPTION:
+We recently encountered a significant calculation mismatch between the dashboard UI and the actual exchange wallet state. Before TP2 was hit, the active trade row displayed an inflated Floating P&L of ~$22 to ~$27. However, upon hitting TP2 and closing the remainder of the position, the final injected Realized P&L delta was exactly $14.31 (moving from +$4.44 to +$18.75), stabilizing the Equity at $218.75 instead of the anticipated ~$240+. 
+
+ROOT CAUSE:
+The core engine is calculating the ongoing Floating P&L using the INITIAL position size (or initial margin) even AFTER a partial close (TP1) has already executed. When TP1 hits, 75% of the position is realized and removed from the active risk pool, leaving only 25% of the position running towards TP2. The formula currently fails to scale down the active position size parameter, leading to a visual compounding illusion on the dashboard.
+
+INSTRUCTIONS TO FIX:
+
+1. AUDIT & MODIFY CALCULATIONS (bot.py / engine.py):
+Locate the function responsible for calculating the active/unrealized Floating P&L for open positions (frequently used in the dashboard polling loop or state broadcast).
+Modify the logic to dynamically check the remaining volume or active margin of the position:
+- If a partial close flag (e.g., `tp1_hit == True`) is active, scale down the calculation baseline. The formula must multiply the price delta (Entry Price vs Current Price) ONLY by the remaining 25% of the position size/margin currently exposed to the market.
+- Alternatively, query the actual live remaining position size directly from the exchange API state to ensure 100% precision with the broker.
+
+2. PRESERVE RECENT ARCHITECTURE:
+Do NOT break, overwrite, or downgrade the newly implemented `check_momentum_exhaustion` mechanism or the newly added UI columns displaying "🛑 SL • 🎯 BE Target • 🏆 Final TP". 
+
+3. TESTING & DEPLOYMENT:
+Verify that after applying this fix, the Floating P&L + Realized P&L mathematically equals the Current Equity relative to the Starting Balance at any given second. Run a complete syntax check and restart the server safely.

@@ -60,9 +60,11 @@ export default function App() {
         const rawPct  = t.entry > 0 ? (cp - t.entry) / t.entry * 100 : 0;
         const pnlPct  = t.direction === "LONG" ? rawPct : -rawPct;
         const posSize = t.pos_size ?? 500;
+        // After TP1: only 25% of position remains open; tp1_pnl is already realized in wallet
+        const activeSize = t.tp1_triggered ? posSize * 0.25 : posSize;
         const pnlUsd  = t.tp1_triggered
-          ? (t.tp1_pnl ?? 0) + posSize * pnlPct / 100
-          : posSize * pnlPct / 100;
+          ? (t.tp1_pnl ?? 0) + activeSize * pnlPct / 100
+          : activeSize * pnlPct / 100;
         return sum + pnlUsd;
       }, 0)
     : (status?.unrealized ?? wallet?.unrealized_pnl ?? 0);

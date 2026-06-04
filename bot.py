@@ -1109,10 +1109,12 @@ def _get_unrealized_pnl() -> float:
         # עדכן current_price בתוך ה-trade לסינכרון עם הדשבורד
         if sym in live_prices:
             t['current_price'] = live_prices[sym]
+        # אחרי TP1 — רק 25% נשארו פתוחים; tp1_pnl כבר נרשם ב-wallet.total_pnl
+        active_pos = pos * 0.25 if t.get('tp1_triggered') else pos
         if t.get('direction') == 'LONG':
-            total += (curr - entry) / entry * pos
+            total += (curr - entry) / entry * active_pos
         else:
-            total += (entry - curr) / entry * pos
+            total += (entry - curr) / entry * active_pos
     return round(total, 2)
 
 def _get_equity():
@@ -1132,10 +1134,12 @@ def _unrealized_cached() -> float:
         pos   = t.get('pos_size', POSITION_SIZE)
         if entry <= 0:
             continue
+        # אחרי TP1 — רק 25% נשארו פתוחים; tp1_pnl כבר נרשם ב-wallet.total_pnl
+        active_pos = pos * 0.25 if t.get('tp1_triggered') else pos
         if t.get('direction') == 'LONG':
-            total += (curr - entry) / entry * pos
+            total += (curr - entry) / entry * active_pos
         else:
-            total += (entry - curr) / entry * pos
+            total += (entry - curr) / entry * active_pos
     return round(total, 2)
 
 def _equity_cached() -> float:
@@ -3455,10 +3459,9 @@ def send_heartbeat():
         _ps = t.get('pos_size', POSITION_SIZE)
         raw_pct = (cp - ep) / ep * 100 if ep else 0
         p_pct   = raw_pct if d == 'LONG' else -raw_pct
-        if t.get('tp1_triggered'):
-            total_floating += round(t.get('tp1_pnl', 0) + _ps / 2 * p_pct / 100, 2)
-        else:
-            total_floating += round(_ps * p_pct / 100, 2)
+        # אחרי TP1 — רק 25% נשארו פתוחים; tp1_pnl כבר ב-realized (wallet.total_pnl)
+        _active_ps = _ps * 0.25 if t.get('tp1_triggered') else _ps
+        total_floating += round(_active_ps * p_pct / 100, 2)
 
     float_icon = "📈" if total_floating >= 0 else "📉"
     realized   = round(wallet.get('total_pnl', 0.0), 2)
