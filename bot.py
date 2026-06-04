@@ -2378,6 +2378,88 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
           f"{leverage}x margin=${effective_margin:.0f} pos=${pos_size:.0f}")
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Momentum Exhaustion Exit
+# ─────────────────────────────────────────────────────────────────────────────
+EXHAUSTION_MIN_PROFIT_USD = 15.0   # מינימום רווח צף לפני בדיקה
+EXHAUSTION_RSI_PERIOD     = 14     # תקופת RSI
+EXHAUSTION_VOL_BARS       = 15     # בארים לממוצע נפח
+EXHAUSTION_VOL_SPIKE_X    = 2.2    # כפולה של ממוצע = spike מוסדי
+
+
+def check_momentum_exhaustion(trade: dict, current_price: float) -> tuple[bool, str]:
+    """
+    בודק סימני תשישות מומנטום על צ'ארט 5M לנעילת רווח מקסימלי.
+    מופעל רק כאשר רווח צף ≥ $15 — מונע יציאה מוקדמת על תנועות קטנות.
+
+    SHORT: RSI קפץ מ-oversold (prev<22 → curr>24.5) + volume spike = תחתית
+    LONG:  RSI נפל מ-overbought (prev>78 → curr<75.5) + volume spike = פסגה
+
+    Returns: (should_close: bool, reason_str: str)
+    """
+    sym       = trade['symbol']
+    direction = trade.get('direction', 'LONG')
+    entry     = trade['entry']
+    pos_size  = trade.get('pos_size', POSITION_SIZE)
+
+    # ── שער: מינימום רווח ────────────────────────────────────────────────
+    raw_pct      = (current_price - entry) / entry * 100
+    floating_pnl = pos_size * (raw_pct if direction == 'LONG' else -raw_pct) / 100
+    if floating_pnl < EXHAUSTION_MIN_PROFIT_USD:
+        return False, ''
+
+    # ── משיכת 5M OHLCV ───────────────────────────────────────────────────
+    try:
+        ohlcv = exchange.fetch_ohlcv(sym, '5m', limit=42)
+        if not ohlcv or len(ohlcv) < EXHAUSTION_RSI_PERIOD + 3:
+            return False, ''
+    except Exception as _exh_e:
+        print(f"[Exhaustion] OHLCV fetch error {sym}: {_exh_e}")
+        return False, ''
+
+    closes  = [float(c[4]) for c in ohlcv]
+    volumes = [float(c[5]) for c in ohlcv]
+
+    # ── Wilder RSI ────────────────────────────────────────────────────────
+    deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
+    gains  = [max(d, 0.0) for d in deltas]
+    losses = [max(-d, 0.0) for d in deltas]
+    avg_g  = sum(gains[:EXHAUSTION_RSI_PERIOD]) / EXHAUSTION_RSI_PERIOD
+    avg_l  = sum(losses[:EXHAUSTION_RSI_PERIOD]) / EXHAUSTION_RSI_PERIOD
+    rsi_series: list[float] = []
+    for _i in range(EXHAUSTION_RSI_PERIOD, len(deltas)):
+        avg_g = (avg_g * (EXHAUSTION_RSI_PERIOD - 1) + gains[_i]) / EXHAUSTION_RSI_PERIOD
+        avg_l = (avg_l * (EXHAUSTION_RSI_PERIOD - 1) + losses[_i]) / EXHAUSTION_RSI_PERIOD
+        rsi_series.append(100.0 if avg_l == 0 else 100 - 100 / (1 + avg_g / avg_l))
+    if len(rsi_series) < 2:
+        return False, ''
+    curr_rsi = rsi_series[-1]
+    prev_rsi = rsi_series[-2]
+
+    # ── Volume Spike (רק נרות סגורים) ────────────────────────────────────
+    completed_vols = volumes[:-1]          # מוציא את הנר הנוכחי שנסגר חלקית
+    if len(completed_vols) < EXHAUSTION_VOL_BARS + 1:
+        return False, ''
+    avg_vol   = sum(completed_vols[-(EXHAUSTION_VOL_BARS + 1):-1]) / EXHAUSTION_VOL_BARS
+    last_vol  = completed_vols[-1]
+    vol_ratio = (last_vol / avg_vol) if avg_vol > 0 else 0.0
+    vol_spike = vol_ratio >= EXHAUSTION_VOL_SPIKE_X
+
+    # ── סיגנל ────────────────────────────────────────────────────────────
+    if direction == 'SHORT':
+        triggered = prev_rsi < 22 and curr_rsi > 24.5 and vol_spike
+        reason    = (f"SHORT bottom — RSI {prev_rsi:.1f}→{curr_rsi:.1f} "
+                     f"vol×{vol_ratio:.1f} | P&L≈${floating_pnl:.1f}")
+    else:
+        triggered = prev_rsi > 78 and curr_rsi < 75.5 and vol_spike
+        reason    = (f"LONG top — RSI {prev_rsi:.1f}→{curr_rsi:.1f} "
+                     f"vol×{vol_ratio:.1f} | P&L≈${floating_pnl:.1f}")
+
+    if triggered:
+        print(f"[Exhaustion] 🔄 {sym} {direction} reversal: {reason}", flush=True)
+    return triggered, reason
+
+
 def track_trades():
     """
     בודק כל עסקה פעילה כל 60 שניות.
@@ -2713,6 +2795,42 @@ def track_trades():
             # שלב INITIAL — פוזיציה מלאה $500
             # ════════════════════════════════════════════
             if trade['phase'] == 'initial':
+
+                # ── Momentum Exhaustion Exit ─────────────────────────────────────────
+                # בדיקה ראשונה — לפני Stagnation/SL/TP. מנעל רווח כשיש היפוך 5M מאושר.
+                try:
+                    _exh_close, _exh_reason = check_momentum_exhaustion(trade, current_price)
+                    if _exh_close:
+                        _exh_raw_pct = (current_price - entry) / entry * 100
+                        _exh_pnl_pct = _exh_raw_pct if direction == 'LONG' else -_exh_raw_pct
+                        _exh_pnl     = round(pos_size * _exh_pnl_pct / 100, 2)
+                        _exh_ret     = round(_exh_pnl_pct * t_leverage, 1)
+                        daily_stats['wins'] += 1
+                        daily_stats['total_pnl'] += _exh_pnl
+                        daily_stats['close_reasons']['Exhaustion'] = (
+                            daily_stats['close_reasons'].get('Exhaustion', 0) + 1)
+                        wallet_credit(_exh_pnl, trade.get('margin', MARGIN))
+                        _log_closed_trade(trade, 'Exhaustion', _exh_pnl, current_price)
+                        slip = trade.get('slippage_pct', 0.0)
+                        eq   = _get_equity()
+                        send_msg(
+                            f"🔄 *Exhaustion Exit — {sym.replace('/USDT', '')}* "
+                            f"{'🟢' if direction == 'LONG' else '🔴'}\n"
+                            f"_היפוך מגמה זוהה — ננעל הרווח המקסימלי_\n\n"
+                            f"כניסה: `{entry:.6g}` → יציאה: `{current_price:.6g}`\n"
+                            f"📈 *P&L: ${_exh_pnl:+.2f}* ({_exh_ret:+.1f}% מרג'ין)\n"
+                            f"🔍 {_exh_reason}\n"
+                            f"💼 {t_leverage}x · ${trade.get('margin', MARGIN):.0f} מרג'ין | {tbadge}\n"
+                            f"📊 Slippage: {slip:.2f}% (Demo)\n"
+                            f"💼 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance', 0):.2f}`\n"
+                            f"📈 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
+                        )
+                        with trades_lock:
+                            active_trades.remove(trade)
+                        save_active_trades()
+                        continue
+                except Exception as _exh_err:
+                    print(f"[Exhaustion] check error {sym}: {_exh_err}")
 
                 # ── 0a. STAGNATION EXIT — אם תזת המומנטום לא התממשה ב-4 שעות ──────
                 # רלוונטי רק ל-Breakout/SOL/Main (לא Scalp/Cliff שיש להם timeout משלהם)

@@ -43,7 +43,7 @@ export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSucce
         <table className="w-full text-xs">
           <thead>
             <tr style={{ background: "#0d1f3c", borderBottom: "1px solid #1e3a5f" }}>
-              {["COIN ↗", "DIR", "LEVERAGE", "AMOUNT", "ENTRY", "CURR PRICE", "SL", "TP (BE Trigger)", "EST. PROFIT", "LIVE P&L", "STATUS"].map(h => (
+              {["COIN ↗", "DIR", "LEVERAGE", "AMOUNT", "ENTRY", "CURR PRICE", "SL", "BE Target", "Final TP", "EST. PROFIT", "LIVE P&L", "STATUS"].map(h => (
                 <th key={h} className="px-3 py-2 text-left font-semibold uppercase tracking-wide whitespace-nowrap"
                   style={{ color: "#64748b" }}>
                   {h}
@@ -55,7 +55,7 @@ export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSucce
             {loading && trades.length === 0 ? (
               [...Array(2)].map((_, i) => (
                 <tr key={i} style={{ borderBottom: "1px solid #0d1f3c" }}>
-                  {[...Array(10)].map((_, j) => (
+                  {[...Array(11)].map((_, j) => (
                     <td key={j} className="px-3 py-3">
                       <div className="h-3 rounded animate-pulse" style={{ background: "#0d1f3c", width: "60%" }} />
                     </td>
@@ -64,7 +64,7 @@ export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSucce
               ))
             ) : trades.length === 0 ? (
               <tr>
-                <td colSpan={11} className="px-4 py-6 text-center text-xs"
+                <td colSpan={12} className="px-4 py-6 text-center text-xs"
                   style={{ color: "#475569" }}>
                   No active trades
                 </td>
@@ -121,11 +121,17 @@ export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSucce
                         {pnlUsd >= 0 ? "▲" : "▼"}
                       </span>
                     </td>
-                    <td className="px-3 py-2.5 font-mono font-semibold" style={{ color: "#f87171" }}>
+                    <td className="px-3 py-2.5 font-mono" style={{ color: "#f87171" }}>
+                      <span className="text-xs opacity-60 mr-0.5">🛑</span>
                       {fmt(t.sl)}
                     </td>
-                    <td className="px-3 py-2.5 font-mono font-semibold" style={{ color: "#4ade80" }}>
+                    <td className="px-3 py-2.5 font-mono" style={{ color: "#fbbf24" }}>
+                      <span className="text-xs opacity-60 mr-0.5">🎯</span>
                       {fmt(tp1Price)}
+                    </td>
+                    <td className="px-3 py-2.5 font-mono" style={{ color: "#4ade80" }}>
+                      <span className="text-xs opacity-60 mr-0.5">🏆</span>
+                      {fmt(t.tp)}
                     </td>
                     <td className="px-3 py-2.5 font-mono" style={{ color: "#93c5fd" }}>
                       {estProfit != null ? `+$${estProfit.toFixed(2)}` : "—"}
