@@ -6153,6 +6153,11 @@ def open_cliff_trade(symbol: str, price: float, direction: str, move_pct: float,
     """
     global active_trades
 
+    # ── Strategy kill-switch (config.py: ENABLE_VELOCITY_STRATEGY) ───────────
+    if not ENABLE_VELOCITY_STRATEGY:
+        print(f"[Velocity] ⛔ ENABLE_VELOCITY_STRATEGY=False — {symbol} {direction} נדחה", flush=True)
+        return
+
     with trades_lock:
         if any(t['symbol'] == symbol for t in active_trades):
             print(f"[Velocity] {symbol} כבר פתוח — skip")

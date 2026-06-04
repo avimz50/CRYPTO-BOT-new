@@ -122,6 +122,9 @@ SCALP_SCAN_INTERVAL    = 300
 SCALP_SCAN_INTERVAL_WAIT = 600
 
 # ── High-Velocity / Cliff ──────────────────────────────────────────────────────
+# Set to False to disable all Velocity (Rocket/Cliff) trades — e.g. during Extreme Fear
+ENABLE_VELOCITY_STRATEGY = False
+
 CLIFF_DROP_PCT        = 2.5
 CLIFF_VOL_MULT        = 3.0
 CLIFF_RSI_OVERBOUGHT  = 70.0
