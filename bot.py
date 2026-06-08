@@ -336,6 +336,11 @@ trade_audit_log: list[dict] = []
 breakout_sl_cooldown: dict       = {}
 BREAKOUT_SL_COOLDOWN_SEC: int    = 5 * 3600   # 5 שעות
 
+# ─── RegimeClose Cooldown — מונע פינג-פונג אחרי סגירת RegimeClose ──────────
+# מבנה: { 'SOL/USDT': timestamp_of_regime_close }  →  15 דקות המתנה
+regime_close_cooldown: dict      = {}
+REGIME_CLOSE_COOLDOWN_SEC: int   = 15 * 60    # 15 דקות
+
 # ─── Watch List — מעקב מטבעות ספציפיים כל 15 דקות ───────────────────────────
 # מבנה: { 'SOL/USDT': {'direction':'LONG','added_at':..., 'last_score':0, 'expires_at':...} }
 watch_list: dict = {}
@@ -2058,7 +2063,11 @@ def is_direction_allowed(direction: str, context: str = '') -> tuple[bool, str]:
     btc_lbl = f"BTC {'מעל' if btc_above else 'מתחת'} EMA20(4H)={ema20:.0f}"
 
     if regime == 'BEARISH' and direction == 'LONG':
-        reason = f"BEARISH Regime — FNG={fng_v} {btc_lbl} → LONGs חסומים"
+        # הדגש את הסיבה הספציפית: BTC מתחת ל-EMA20 vs FNG
+        if not btc_above:
+            reason = f"BTC מתחת EMA20(4H)={ema20:.0f} — LONG חסום ישירות (FNG={fng_v})"
+        else:
+            reason = f"BEARISH Regime — FNG={fng_v} < {REGIME_BEARISH_FNG} {btc_lbl} → LONGs חסומים"
         if context:
             print(f"[RegimeGate/{context}] {reason}", flush=True)
         return False, reason
@@ -2237,6 +2246,13 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     # ── Daily Circuit Breaker ────────────────────────────────────────────────
     if check_daily_circuit_breaker():
         print(f"[SWING] ⛔ Circuit Breaker — לא פותחים {symbol} (הפסד יומי ≤ ${DAILY_LOSS_LIMIT})")
+        return
+
+    # ── RegimeClose Cooldown — מניעת פינג-פונג ───────────────────────────────
+    _rc_ts = regime_close_cooldown.get(symbol, 0)
+    if time.time() - _rc_ts < REGIME_CLOSE_COOLDOWN_SEC:
+        _rc_min = int((REGIME_CLOSE_COOLDOWN_SEC - (time.time() - _rc_ts)) / 60)
+        print(f"[RegimeCooldown] {symbol} בקולדאון {_rc_min}min — skip Swing", flush=True)
         return
 
     # ── נפח + שינוי 24h ───────────────────────────────────────────────────────
@@ -2506,6 +2522,14 @@ def track_trades():
             for _et in _longs_to_close:
                 try:
                     _esym  = _et['symbol']
+                    # ── Grace Period — מגן על עסקות שנפתחו לפני פחות מ-3 דקות ──────
+                    try:
+                        _grace_opened = datetime.fromisoformat(_et.get('opened_at', '')).timestamp()
+                    except Exception:
+                        _grace_opened = 0
+                    if time.time() - _grace_opened < 3 * 60:
+                        print(f"[RegimeClose] {_esym} בgrace period ({(time.time()-_grace_opened)/60:.1f}min < 3min) — skip", flush=True)
+                        continue
                     _ep    = (_batch_prices.get(_esym)
                               or float(exchange.fetch_ticker(_esym)['last']))
                     _eps   = _et.get('pos_size', POSITION_SIZE)
@@ -2527,6 +2551,7 @@ def track_trades():
                     with trades_lock:
                         if _et in active_trades:
                             active_trades.remove(_et)
+                    regime_close_cooldown[_esym] = time.time()   # 15 דקות קולדאון
                     save_active_trades()
                     _eeq = _get_equity()
                     send_msg(
@@ -2551,6 +2576,14 @@ def track_trades():
             for _et in _shorts_to_close:
                 try:
                     _esym  = _et['symbol']
+                    # ── Grace Period — מגן על עסקות שנפתחו לפני פחות מ-3 דקות ──────
+                    try:
+                        _grace_opened = datetime.fromisoformat(_et.get('opened_at', '')).timestamp()
+                    except Exception:
+                        _grace_opened = 0
+                    if time.time() - _grace_opened < 3 * 60:
+                        print(f"[RegimeClose] {_esym} בgrace period ({(time.time()-_grace_opened)/60:.1f}min < 3min) — skip", flush=True)
+                        continue
                     _ep    = (_batch_prices.get(_esym)
                               or float(exchange.fetch_ticker(_esym)['last']))
                     _eps   = _et.get('pos_size', POSITION_SIZE)
@@ -2572,6 +2605,7 @@ def track_trades():
                     with trades_lock:
                         if _et in active_trades:
                             active_trades.remove(_et)
+                    regime_close_cooldown[_esym] = time.time()   # 15 דקות קולדאון
                     save_active_trades()
                     _eeq = _get_equity()
                     send_msg(
@@ -5959,6 +5993,13 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
         print(f"[SCALP] ⛔ Circuit Breaker — לא פותחים {symbol} (הפסד יומי ≤ ${DAILY_LOSS_LIMIT})")
         return
 
+    # ── RegimeClose Cooldown — מניעת פינג-פונג ───────────────────────────────
+    _rc_ts_sc = regime_close_cooldown.get(symbol, 0)
+    if time.time() - _rc_ts_sc < REGIME_CLOSE_COOLDOWN_SEC:
+        _rc_min_sc = int((REGIME_CLOSE_COOLDOWN_SEC - (time.time() - _rc_ts_sc)) / 60)
+        print(f"[RegimeCooldown] {symbol} בקולדאון {_rc_min_sc}min — skip Scalp", flush=True)
+        return
+
     with trades_lock:
         if any(t['symbol'] == symbol for t in active_trades):
             print(f"SCALP: {symbol} already in active_trades — skip")
@@ -6488,6 +6529,13 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
     # ── Daily Circuit Breaker ────────────────────────────────────────────────
     if check_daily_circuit_breaker():
         print(f"[Breakout] ⛔ Circuit Breaker — לא פותחים {symbol} (הפסד יומי ≤ ${DAILY_LOSS_LIMIT})")
+        return
+
+    # ── RegimeClose Cooldown — מניעת פינג-פונג ───────────────────────────────
+    _rc_ts_br = regime_close_cooldown.get(symbol, 0)
+    if time.time() - _rc_ts_br < REGIME_CLOSE_COOLDOWN_SEC:
+        _rc_min_br = int((REGIME_CLOSE_COOLDOWN_SEC - (time.time() - _rc_ts_br)) / 60)
+        print(f"[RegimeCooldown] {symbol} בקולדאון {_rc_min_br}min — skip Breakout", flush=True)
         return
 
     # ── Market Regime Gate ────────────────────────────────────────────────────
