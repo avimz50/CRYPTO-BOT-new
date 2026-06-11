@@ -5801,7 +5801,7 @@ def _maybe_run_drive_audit():
         try:
             from gdrive_reporter import run_audit_upload
             run_audit_upload(
-                active_trades, wallet, closed_trades_log,
+                active_trades, wallet, trade_audit_log,
                 send_telegram=send_msg
             )
             print(f"Daily audit report generated at {now_hour:02d}:00")
