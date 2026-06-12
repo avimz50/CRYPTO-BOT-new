@@ -112,6 +112,20 @@ STAGNATION_RANGE_PCT        = 0.5
 SMART_TIMEOUT_HOURS          = 4.0   # שעות מקסימום לעסקה לא רווחית
 SMART_TIMEOUT_MIN_PROFIT_PCT = 1.0   # סף רווח מינימלי להמשך החזקה
 
+# ── Max Duration — עצירה מוקדמת לעסקות Swing/Breakout ────────────────────────
+# סוגר עסקה שלא הגיעה ל-TP1/BE אחרי 60 דקות — חוסך $4-7 לעומת SL מלא ($10)
+SWING_MAX_DURATION_MIN = 60    # דקות מקסימום ללא TP1 — close at market
+
+# ── Fast-Loss Protection — זיהוי setup כושל מוקדם ──────────────────────────────
+# סוגר עסקה שמפסידה 5%+ מהמרג'ין בתוך 15 הדקות הראשונות
+# 5% × $50 = $2.50 הפסד מהיר = setup נכשל → יוצאים לפני SL מלא ($10)
+FAST_LOSS_MARGIN_PCT = 5.0    # % הפסד על מרג'ין שמפעיל סגירה מוקדמת
+FAST_LOSS_MINUTES    = 15     # חלון זמן (דקות) לבדיקת fast-loss
+
+# ── Breakout Strategy Enable ─────────────────────────────────────────────────────
+# False = חסום את כל עסקאות ה-Breakout (להפעלה כשהאסטרטגיה מפסידה)
+ENABLE_BREAKOUT_STRATEGY = True
+
 # ── Scalp Scan Triggers ────────────────────────────────────────────────────────
 SCALP_BUBBLE_MIN_PCT   = 30.0
 SCALP_CRASH_MIN_PCT    = 20.0

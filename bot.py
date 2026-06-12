@@ -2920,7 +2920,101 @@ def track_trades():
                     except Exception as _e:
                         print(f"[Stagnation] error {sym}: {_e}")
 
-                # ── 0a-2. SMART TIMEOUT — 4h ללא רווח >= +1% ─────────────────
+                # ── 0a-2. FAST-LOSS PROTECTION — 5% הפסד מרג'ין בתוך 15 דקות ───────
+                # מזהה setup שנכשל מהר: יוצאים ב-~$2.50 במקום לחכות ל-SL מלא ($10)
+                if not trade.get('scalp') and not trade.get('cliff'):
+                    try:
+                        _fl_opened  = datetime.fromisoformat(trade.get('opened_at', now_il().isoformat()))
+                        _fl_elapsed = (now_il() - _fl_opened).total_seconds() / 60
+                        _fl_raw_pct = (current_price - entry) / entry * 100 \
+                                      if direction == 'LONG' \
+                                      else (entry - current_price) / entry * 100
+                        _fl_loss_margin = -_fl_raw_pct * t_leverage  # % הפסד על מרג'ין
+                        if _fl_elapsed < FAST_LOSS_MINUTES and _fl_loss_margin >= FAST_LOSS_MARGIN_PCT:
+                            _fl_pnl  = round(pos_size * _fl_raw_pct / 100, 2)
+                            _fl_ret  = round(_fl_raw_pct * t_leverage, 1)
+                            daily_stats['total_pnl'] += _fl_pnl
+                            daily_stats['losses'] += 1
+                            daily_stats['close_reasons']['FastLoss'] = \
+                                daily_stats['close_reasons'].get('FastLoss', 0) + 1
+                            wallet_credit(_fl_pnl, trade.get('margin', MARGIN))
+                            _log_closed_trade(trade, 'FastLoss', _fl_pnl, current_price)
+                            eq   = _get_equity()
+                            slip = trade.get('slippage_pct', 0.0)
+                            send_msg(
+                                f"⚡ *Fast-Loss Exit — {sym.replace('/USDT','')}* "
+                                f"{'🟢' if direction=='LONG' else '🔴'}\n"
+                                f"_Setup נכשל: -{_fl_loss_margin:.1f}% מרג'ין בתוך {_fl_elapsed:.0f} דקות_\n\n"
+                                f"כניסה: `{entry:.6g}` → יציאה: `{current_price:.6g}`\n"
+                                f"📉 *P&L: ${_fl_pnl:+.2f}* ({_fl_ret:+.1f}% על מרג'ין)\n"
+                                f"💼 {t_leverage}x · ${trade.get('margin', MARGIN):.0f} מרג'ין | {tbadge}\n"
+                                f"📊 Slippage: {slip:.2f}% (Demo)\n"
+                                f"💼 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance', 0):.2f}`\n"
+                                f"📉 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
+                            )
+                            print(
+                                f"[FastLoss] ⚡ {sym} {direction} — "
+                                f"{_fl_elapsed:.0f}min | margin_loss={_fl_loss_margin:.1f}% "
+                                f"→ exit P&L=${_fl_pnl:+.2f}",
+                                flush=True
+                            )
+                            with trades_lock:
+                                active_trades.remove(trade)
+                            save_active_trades()
+                            continue
+                    except Exception as _fl_err:
+                        print(f"[FastLoss] error {sym}: {_fl_err}", flush=True)
+
+                # ── 0a-3. MAX DURATION — 60 דקות ללא TP1/BE ────────────────────────
+                # עסקה שלא הגיעה ל-TP1 אחרי 60 דקות → יוצאים ב-market
+                # (BE הופעל = TP1 כבר נגע → ה-Trailing SL מטפל, לא נוגעים)
+                if not trade.get('scalp') and not trade.get('cliff') and not trade.get('be_triggered'):
+                    try:
+                        _md_opened  = datetime.fromisoformat(trade.get('opened_at', now_il().isoformat()))
+                        _md_elapsed = (now_il() - _md_opened).total_seconds() / 60
+                        if _md_elapsed >= SWING_MAX_DURATION_MIN:
+                            _md_raw_pct = (current_price - entry) / entry * 100 \
+                                          if direction == 'LONG' \
+                                          else (entry - current_price) / entry * 100
+                            _md_pnl  = round(pos_size * _md_raw_pct / 100, 2)
+                            _md_ret  = round(_md_raw_pct * t_leverage, 1)
+                            _md_icon = "📈" if _md_pnl >= 0 else "📉"
+                            daily_stats['total_pnl'] += _md_pnl
+                            if _md_pnl >= 0:
+                                daily_stats['wins'] += 1
+                            else:
+                                daily_stats['losses'] += 1
+                            daily_stats['close_reasons']['MaxDuration'] = \
+                                daily_stats['close_reasons'].get('MaxDuration', 0) + 1
+                            wallet_credit(_md_pnl, trade.get('margin', MARGIN))
+                            _log_closed_trade(trade, 'MaxDuration', _md_pnl, current_price)
+                            eq   = _get_equity()
+                            slip = trade.get('slippage_pct', 0.0)
+                            send_msg(
+                                f"⏱ *Max Duration Exit — {sym.replace('/USDT','')}* "
+                                f"{'🟢' if direction=='LONG' else '🔴'}\n"
+                                f"_TP1 לא הושג תוך {SWING_MAX_DURATION_MIN:.0f} דקות — יוצאים_\n\n"
+                                f"כניסה: `{entry:.6g}` → יציאה: `{current_price:.6g}`\n"
+                                f"{_md_icon} *P&L: ${_md_pnl:+.2f}* ({_md_ret:+.1f}% על מרג'ין)\n"
+                                f"💼 {t_leverage}x · ${trade.get('margin', MARGIN):.0f} מרג'ין | {tbadge}\n"
+                                f"📊 Slippage: {slip:.2f}% (Demo)\n"
+                                f"💼 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance', 0):.2f}`\n"
+                                f"{_md_icon} סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
+                            )
+                            print(
+                                f"[MaxDuration] ⏱ {sym} {direction} — "
+                                f"{_md_elapsed:.0f}min ≥ {SWING_MAX_DURATION_MIN:.0f}min, no TP1 "
+                                f"→ exit P&L=${_md_pnl:+.2f}",
+                                flush=True
+                            )
+                            with trades_lock:
+                                active_trades.remove(trade)
+                            save_active_trades()
+                            continue
+                    except Exception as _md_err:
+                        print(f"[MaxDuration] error {sym}: {_md_err}", flush=True)
+
+                # ── 0a-4. SMART TIMEOUT — 4h ללא רווח >= +1% ─────────────────
                 # משלים Stagnation: מטפל בעסקאות בהפסד ריאלי (drift > 0.5%)
                 # שה-Stagnation לא תפס. Scalp/Cliff מוחרגים (timeout משלהם).
                 if not trade.get('scalp') and not trade.get('cliff'):
@@ -6524,6 +6618,11 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
 
     if wallet.get('balance', STARTING_BALANCE) < margin:
         print(f"[Breakout] insufficient balance for {symbol} — skip")
+        return
+
+    # ── Breakout Strategy Kill-Switch ────────────────────────────────────────
+    if not ENABLE_BREAKOUT_STRATEGY:
+        print(f"[Breakout] ⛔ ENABLE_BREAKOUT_STRATEGY=False — skip {symbol}", flush=True)
         return
 
     # ── Daily Circuit Breaker ────────────────────────────────────────────────
