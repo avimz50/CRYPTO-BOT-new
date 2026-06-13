@@ -2930,7 +2930,11 @@ def track_trades():
                                       if direction == 'LONG' \
                                       else (entry - current_price) / entry * 100
                         _fl_loss_margin = -_fl_raw_pct * t_leverage  # % הפסד על מרג'ין
-                        if _fl_elapsed < FAST_LOSS_MINUTES and _fl_loss_margin >= FAST_LOSS_MARGIN_PCT:
+                        # FastLoss פועל רק כל עוד SL עדיין לא נחצה —
+                        # pump חד שחוצה SL ב-60 שניות יטופל ע"י SL הרגיל ($10), לא FastLoss ($24)
+                        _fl_sl_ok = (current_price > trade['sl'] if direction == 'LONG'
+                                     else current_price < trade['sl'])
+                        if _fl_elapsed < FAST_LOSS_MINUTES and _fl_loss_margin >= FAST_LOSS_MARGIN_PCT and _fl_sl_ok:
                             _fl_pnl  = round(pos_size * _fl_raw_pct / 100, 2)
                             _fl_ret  = round(_fl_raw_pct * t_leverage, 1)
                             daily_stats['total_pnl'] += _fl_pnl
