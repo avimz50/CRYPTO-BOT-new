@@ -2399,6 +2399,35 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ─── RSI Reversal Guard — cache + helper ─────────────────────────────────────
+_rsi15_cache: dict = {}   # {sym: {'rsi': float, 'ts': float}}
+
+def _get_rsi15m(sym: str) -> float | None:
+    """RSI(14) על TF 15m עם cache לפי RSI_REVERSAL_CACHE_TTL שניות."""
+    now_ts = time.time()
+    cached = _rsi15_cache.get(sym)
+    if cached and now_ts - cached['ts'] < RSI_REVERSAL_CACHE_TTL:
+        return cached['rsi']
+    try:
+        df      = get_data(sym, timeframe='15m', limit=20)
+        closes  = df['close'].tolist()
+        deltas  = [closes[i] - closes[i-1] for i in range(1, len(closes))]
+        gains   = [max(d, 0) for d in deltas]
+        losses  = [abs(min(d, 0)) for d in deltas]
+        period  = 14
+        avg_g   = sum(gains[:period]) / period
+        avg_l   = sum(losses[:period]) / period
+        for i in range(period, len(deltas)):
+            avg_g = (avg_g * (period - 1) + gains[i]) / period
+            avg_l = (avg_l * (period - 1) + losses[i]) / period
+        rsi = 100.0 if avg_l == 0 else 100 - 100 / (1 + avg_g / avg_l)
+        rsi = round(rsi, 1)
+        _rsi15_cache[sym] = {'rsi': rsi, 'ts': now_ts}
+        return rsi
+    except Exception as _e:
+        print(f"[RSIGuard] fetch error {sym}: {_e}", flush=True)
+        return None
+
 # Momentum Exhaustion Exit
 # ─────────────────────────────────────────────────────────────────────────────
 EXHAUSTION_MIN_PROFIT_USD = 15.0   # מינימום רווח צף לפני בדיקה
@@ -2969,7 +2998,63 @@ def track_trades():
                     except Exception as _fl_err:
                         print(f"[FastLoss] error {sym}: {_fl_err}", flush=True)
 
-                # ── 0a-3. MAX DURATION — 60 דקות ללא TP1/BE ────────────────────────
+                # ── 0a-2b. RSI REVERSAL GUARD — היפוך מומנטום 15m ──────────────────
+                # SHORT בהפסד + RSI_15m > 62 → קנייה חזקה → נסגור לפני SL ($10)
+                # LONG  בהפסד + RSI_15m < 38 → מכירה חזקה → נסגור לפני SL ($10)
+                # פעיל רק אחרי 15 דק׳ (FastLoss מטפל בחלון 0-15 דק׳)
+                if not trade.get('scalp') and not trade.get('cliff') and not trade.get('be_triggered'):
+                    try:
+                        _rg_opened  = datetime.fromisoformat(trade.get('opened_at', now_il().isoformat()))
+                        _rg_elapsed = (now_il() - _rg_opened).total_seconds() / 60
+                        _rg_raw_pct = (current_price - entry) / entry * 100 \
+                                      if direction == 'LONG' \
+                                      else (entry - current_price) / entry * 100
+                        _rg_loss_pct = -_rg_raw_pct   # חיובי = בהפסד
+                        if (_rg_elapsed >= RSI_REVERSAL_MIN_MIN
+                                and _rg_loss_pct >= RSI_REVERSAL_MIN_LOSS_PCT):
+                            _rg_rsi = _get_rsi15m(sym)
+                            _rg_trigger = (
+                                _rg_rsi is not None and (
+                                    (direction == 'SHORT' and _rg_rsi > RSI_REVERSAL_SHORT_THRESH) or
+                                    (direction == 'LONG'  and _rg_rsi < RSI_REVERSAL_LONG_THRESH)
+                                )
+                            )
+                            if _rg_trigger:
+                                _rg_pnl  = round(pos_size * _rg_raw_pct / 100, 2)
+                                _rg_ret  = round(_rg_raw_pct * t_leverage, 1)
+                                daily_stats['total_pnl'] += _rg_pnl
+                                daily_stats['losses'] += 1
+                                daily_stats['close_reasons']['ReversalGuard'] = \
+                                    daily_stats['close_reasons'].get('ReversalGuard', 0) + 1
+                                wallet_credit(_rg_pnl, trade.get('margin', MARGIN))
+                                _log_closed_trade(trade, 'ReversalGuard', _rg_pnl, current_price)
+                                eq   = _get_equity()
+                                slip = trade.get('slippage_pct', 0.0)
+                                send_msg(
+                                    f"🔄 *Reversal Guard — {sym.replace('/USDT','')}* "
+                                    f"{'🟢' if direction=='LONG' else '🔴'}\n"
+                                    f"_RSI 15m={_rg_rsi:.0f} — היפוך מומנטום, יוצאים לפני SL_\n\n"
+                                    f"כניסה: `{entry:.6g}` → יציאה: `{current_price:.6g}`\n"
+                                    f"📉 *P&L: ${_rg_pnl:+.2f}* ({_rg_ret:+.1f}% על מרג'ין)\n"
+                                    f"💼 {t_leverage}x · ${trade.get('margin', MARGIN):.0f} מרג'ין | {tbadge}\n"
+                                    f"📊 Slippage: {slip:.2f}% (Demo)\n"
+                                    f"💼 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance', 0):.2f}`\n"
+                                    f"📉 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
+                                )
+                                print(
+                                    f"[ReversalGuard] 🔄 {sym} {direction} — "
+                                    f"RSI_15m={_rg_rsi:.0f} | loss={_rg_loss_pct:.2f}% "
+                                    f"→ exit P&L=${_rg_pnl:+.2f}",
+                                    flush=True
+                                )
+                                with trades_lock:
+                                    active_trades.remove(trade)
+                                save_active_trades()
+                                continue
+                    except Exception as _rg_err:
+                        print(f"[ReversalGuard] error {sym}: {_rg_err}", flush=True)
+
+                # ── 0a-3. MAX DURATION — 90 דקות ללא TP1/BE ────────────────────────
                 # עסקה שלא הגיעה ל-TP1 אחרי 60 דקות → יוצאים ב-market
                 # (BE הופעל = TP1 כבר נגע → ה-Trailing SL מטפל, לא נוגעים)
                 if not trade.get('scalp') and not trade.get('cliff') and not trade.get('be_triggered'):

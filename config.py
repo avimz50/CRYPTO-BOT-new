@@ -122,6 +122,16 @@ SWING_MAX_DURATION_MIN = 90    # דקות מקסימום ללא TP1 — close at
 FAST_LOSS_MARGIN_PCT = 5.0    # % הפסד על מרג'ין שמפעיל סגירה מוקדמת
 FAST_LOSS_MINUTES    = 15     # חלון זמן (דקות) לבדיקת fast-loss
 
+# ── RSI Reversal Guard — זיהוי היפוך מומנטום על 15m ───────────────────────────
+# פעיל אחרי 15 דק' (FastLoss כיסה את החלון הראשון).
+# SHORT בהפסד + RSI_15m > 62 = קנייה חזקה → סוגר לפני SL ($10)
+# LONG  בהפסד + RSI_15m < 38 = מכירה חזקה → סוגר לפני SL ($10)
+RSI_REVERSAL_MIN_LOSS_PCT  = 0.30   # % הפסד מחיר מינימלי להפעלה (≈ $1.50)
+RSI_REVERSAL_MIN_MIN       = 15     # לא פעיל בחלון FastLoss (0–15 דק')
+RSI_REVERSAL_SHORT_THRESH  = 62     # RSI 15m מעל זה + SHORT בהפסד → סגור
+RSI_REVERSAL_LONG_THRESH   = 38     # RSI 15m מתחת לזה + LONG בהפסד → סגור
+RSI_REVERSAL_CACHE_TTL     = 120    # שניות: cache RSI לכל סימבול
+
 # ── Breakout Strategy Enable ─────────────────────────────────────────────────────
 # False = חסום את כל עסקאות ה-Breakout (להפעלה כשהאסטרטגיה מפסידה)
 ENABLE_BREAKOUT_STRATEGY = True
