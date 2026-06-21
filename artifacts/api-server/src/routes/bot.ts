@@ -1,4 +1,5 @@
-import { Router } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import http from "http";
@@ -7,6 +8,80 @@ import { fileURLToPath } from "url";
 import { osGet } from "../lib/objectStorage.js";
 
 const router = Router();
+
+// ── Auth middleware ──────────────────────────────────────────────────────────
+
+// Server-side session token generated fresh at startup — never sent to client JS.
+// The token is issued via POST /api/_login ONLY after the caller supplies the correct
+// DASHBOARD_PASSWORD. GET /api/_session only checks the cookie; it never issues one.
+const _SESSION_COOKIE   = "dash_sid";
+const _SESSION_TOKEN    = crypto.randomBytes(32).toString("hex");
+const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD ?? "";
+
+// GET /api/_session — read-only auth check; returns {authenticated: true/false}.
+// Does NOT issue any cookie. Used by the dashboard on mount to detect login state.
+router.get("/_session", (req, res) => {
+  const token = (req.cookies as Record<string, string> | undefined)?.[_SESSION_COOKIE];
+  res.json({ authenticated: token === _SESSION_TOKEN && _SESSION_TOKEN.length > 0 });
+});
+
+// POST /api/_login — validates DASHBOARD_PASSWORD, then issues the HttpOnly session cookie.
+// The password is checked server-side; it is never embedded in client JS.
+router.post("/_login", (req, res) => {
+  if (!DASHBOARD_PASSWORD) {
+    res.status(503).json({ ok: false, error: "Server misconfiguration: DASHBOARD_PASSWORD not set" });
+    return;
+  }
+  const submitted = (req.body as { password?: string })?.password ?? "";
+  if (!submitted || submitted !== DASHBOARD_PASSWORD) {
+    res.status(401).json({ ok: false, error: "Invalid password" });
+    return;
+  }
+  res.cookie(_SESSION_COOKIE, _SESSION_TOKEN, {
+    httpOnly: true,
+    sameSite: "strict",
+    secure: process.env.NODE_ENV === "production",
+    maxAge: 24 * 60 * 60 * 1000,
+  });
+  res.json({ ok: true });
+});
+
+// POST /api/_logout — clears the session cookie.
+router.post("/_logout", (_req, res) => {
+  res.clearCookie(_SESSION_COOKIE, { httpOnly: true, sameSite: "strict" });
+  res.json({ ok: true });
+});
+
+function requireSession(req: Request, res: Response, next: NextFunction): void {
+  const token = (req.cookies as Record<string, string> | undefined)?.[_SESSION_COOKIE];
+  if (!token || token !== _SESSION_TOKEN || !_SESSION_TOKEN) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  next();
+}
+
+// INTERNAL_API_SECRET is used server-to-server only: Express adds this header when
+// proxying to Flask so Flask can reject requests that bypass the Express layer.
+// This secret is NEVER sent to or readable by browser clients.
+const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET ?? "";
+
+// Telegram webhook secret — Telegram sends this header when a secret_token is set on the webhook.
+// Set TG_WEBHOOK_SECRET to the same value used in setWebhook?secret_token=...
+const TG_WEBHOOK_SECRET = process.env.TG_WEBHOOK_SECRET ?? "";
+
+function requireWebhookSecret(req: Request, res: Response, next: NextFunction): void {
+  if (!TG_WEBHOOK_SECRET) {
+    res.status(503).json({ ok: false, error: "Server misconfiguration: TG_WEBHOOK_SECRET not set" });
+    return;
+  }
+  const incoming = req.headers["x-telegram-bot-api-secret-token"];
+  if (!incoming || incoming !== TG_WEBHOOK_SECRET) {
+    res.status(403).json({ ok: false, error: "Forbidden" });
+    return;
+  }
+  next();
+}
 
 // Flask bot base URL — defaults to local keep_alive.py on BOT_PORT.
 // Set BOT_URL env var (e.g. https://python-script-bymzrkhy.replit.app) to
@@ -222,14 +297,15 @@ router.get("/audit", (_req, res) => {
 });
 
 // Sync — dashboard SYNC button → Flask /api/sync → sends /status to Telegram
-router.post("/sync", (req, res) => {
+router.post("/sync", requireSession, (req, res) => {
   const body = JSON.stringify(req.body ?? {});
+  const internalToken = INTERNAL_API_SECRET ? { "X-Internal-Token": INTERNAL_API_SECRET } : {};
   const options = {
     hostname: BOT_FLASK_HOST,
     port: BOT_FLASK_PNUM,
     path: "/api/sync",
     method: "POST",
-    headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+    headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body), ...internalToken },
     timeout: 8000,
   };
   const proxyReq = _botHttp.request(options, (r) => {
@@ -252,14 +328,15 @@ router.get("/slots", async (_req, res) => {
   res.json(data);
 });
 
-router.post("/slots", (req, res) => {
+router.post("/slots", requireSession, (req, res) => {
   const body = JSON.stringify(req.body ?? {});
+  const internalToken = INTERNAL_API_SECRET ? { "X-Internal-Token": INTERNAL_API_SECRET } : {};
   const options = {
     hostname: BOT_FLASK_HOST,
     port: BOT_FLASK_PNUM,
     path: "/api/slots",
     method: "POST",
-    headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+    headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body), ...internalToken },
   };
   const proxyReq = _botHttp.request(options, (r) => {
     let data = "";
@@ -287,14 +364,15 @@ router.get("/fng_settings", async (_req, res) => {
   res.json(data);
 });
 
-router.post("/fng_settings", (req, res) => {
+router.post("/fng_settings", requireSession, (req, res) => {
   const body = JSON.stringify(req.body);
+  const internalToken = INTERNAL_API_SECRET ? { "X-Internal-Token": INTERNAL_API_SECRET } : {};
   const options = {
     hostname: BOT_FLASK_HOST,
     port: BOT_FLASK_PNUM,
     path: "/api/fng_settings",
     method: "POST",
-    headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+    headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body), ...internalToken },
   };
   const proxyReq = _botHttp.request(options, (r) => {
     let data = "";
@@ -408,14 +486,23 @@ router.get("/fng", async (_req, res) => {
 
 // Telegram webhook — receives Telegram updates in production (webhook mode)
 // Proxies the POST body straight to Flask /api/tg_hook for bot.process_new_updates()
-router.post("/tg_hook", (req, res) => {
+// requireWebhookSecret validates the X-Telegram-Bot-Api-Secret-Token header Telegram attaches
+// when the webhook is registered with a secret_token parameter.
+router.post("/tg_hook", requireWebhookSecret, (req, res) => {
   const body = JSON.stringify(req.body ?? {});
+  // Forward the secret token header to Flask so its defense-in-depth validation passes.
+  // Express has already verified the token via requireWebhookSecret above.
+  const webhookHeaders: Record<string, string> = {
+    "Content-Type": "application/json",
+    "Content-Length": String(Buffer.byteLength(body)),
+    "X-Telegram-Bot-Api-Secret-Token": TG_WEBHOOK_SECRET,
+  };
   const options = {
     hostname: BOT_FLASK_HOST,
     port: BOT_FLASK_PNUM,
     path: "/api/tg_hook",
     method: "POST",
-    headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+    headers: webhookHeaders,
     timeout: 5000, // always return to Telegram within 5s — prevents retry storms
   };
   const proxyReq = _botHttp.request(options, (r) => {

@@ -78,6 +78,14 @@ bot = telebot.TeleBot(os.environ['TELEGRAM_TOKEN'])
 CHAT_ID = os.environ['CHAT_ID']
 print("[BOOT] Telegram bot OK.", flush=True)
 
+# Webhook secret — must match the secret_token used when registering the webhook via setWebhook.
+# Set TG_WEBHOOK_SECRET to a strong random string in the environment.
+_TG_WEBHOOK_SECRET = os.environ.get('TG_WEBHOOK_SECRET', '')
+
+def _is_authorized(chat_id) -> bool:
+    """Return True only if chat_id matches the configured operator CHAT_ID."""
+    return str(chat_id) == str(CHAT_ID)
+
 # ENERGY_GEO, HOT_CANDIDATES_FILE, ACTIVE_TRADES_FILE, WALLET_FILE, AUDIT_LOG_FILE,
 # STARTING_BALANCE, DASHBOARD_URL → config.py (from config import *)
 
@@ -790,12 +798,24 @@ def api_status():
         'updated':         now_il().strftime('%H:%M:%S'),
     })
 
+def _require_internal_token() -> bool:
+    """Return True if the request carries the correct internal API token.
+    Express always adds X-Internal-Token when proxying to Flask.
+    If INTERNAL_API_SECRET is not configured, all requests are rejected (fail closed).
+    """
+    secret = os.environ.get('INTERNAL_API_SECRET', '')
+    if not secret:
+        return False
+    return flask_request.headers.get('X-Internal-Token', '') == secret
+
 @flask_app.route('/api/sync', methods=['POST'])
 def api_sync():
-    """Dashboard SYNC button — שולח /status לטלגרם. ללא אימות (internal only).
+    """Dashboard SYNC button — שולח /status לטלגרם.
     NOTE: handle_status runs in a background thread to avoid blocking the Flask server.
     _get_unrealized_pnl() is called INSIDE the thread, not in the request handler.
     """
+    if not _require_internal_token():
+        return flask_jsonify({'ok': False, 'error': 'Forbidden'}), 403
     def _do_sync():
         try:
             _get_unrealized_pnl()   # רענון מחירים — בתוך thread נפרד, לא חוסם Flask
@@ -949,6 +969,8 @@ def api_make_command():
 
 @flask_app.route('/api/fng_settings', methods=['POST'])
 def api_fng_settings_post():
+    if not _require_internal_token():
+        return flask_jsonify({'ok': False, 'error': 'Forbidden'}), 403
     global EXTREME_FEAR_THRESHOLD, FEAR_THRESHOLD, GREED_THRESHOLD
     data = flask_request.get_json(force=True, silent=True) or {}
     errors = []
@@ -1022,6 +1044,11 @@ def api_close_trade():
 @flask_app.route('/api/tg_hook', methods=['POST'])
 def api_tg_hook():
     """Telegram webhook endpoint — used in production instead of polling."""
+    if _TG_WEBHOOK_SECRET:
+        incoming = flask_request.headers.get('X-Telegram-Bot-Api-Secret-Token', '')
+        if incoming != _TG_WEBHOOK_SECRET:
+            print(f"[WEBHOOK] Rejected request with invalid secret token", flush=True)
+            return flask_jsonify({'ok': False, 'error': 'Forbidden'}), 403
     try:
         json_string = flask_request.get_data().decode('utf-8')
         update = telebot.types.Update.de_json(json_string)
@@ -1044,6 +1071,8 @@ def api_slots_get():
 
 @flask_app.route('/api/slots', methods=['POST'])
 def api_slots_post():
+    if not _require_internal_token():
+        return flask_jsonify({'ok': False, 'error': 'Forbidden'}), 403
     global MAX_TRADES
     data = flask_request.get_json(force=True, silent=True) or {}
     try:
@@ -3895,6 +3924,8 @@ def handle_update(message):
     או:    /update BTC sl=84000
     או:    /update BTC tp=95000
     """
+    if not _is_authorized(message.chat.id):
+        return
     try:
         parts = message.text.strip().split()
         if len(parts) < 3:
@@ -3997,6 +4028,8 @@ def handle_update(message):
 @bot.message_handler(commands=['close'])
 def handle_close(message):
     """סגירה ידנית של עסקה: /close BTC"""
+    if not _is_authorized(message.chat.id):
+        return
     try:
         parts = message.text.strip().split()
         if len(parts) < 2:
@@ -4065,6 +4098,8 @@ def handle_close(message):
 @bot.callback_query_handler(func=lambda call: call.data.startswith('close_'))
 def handle_close_button(call):
     """מטפל בלחיצה על כפתור '❌ Close Position' — סוגר את העסקה מיד."""
+    if not _is_authorized(call.from_user.id):
+        return
     try:
         symbol = call.data[len('close_'):]  # e.g. 'BTC/USDT'
         bot.answer_callback_query(call.id, f"🔄 סוגר {symbol}...")
@@ -4140,6 +4175,8 @@ def handle_addtrade(message):
     /addtrade SOL LONG          — כניסה = מחיר חי מ-Bitget.
     /addtrade SOL               — LONG + מחיר חי (ברירת מחדל).
     """
+    if not _is_authorized(message.chat.id):
+        return
     try:
         parts = message.text.strip().split()
         # פענוח: /addtrade SYMBOL [DIRECTION] [PRICE]
@@ -4692,6 +4729,8 @@ def handle_sol(message):
     תנאים: BTC 15m > EMA20 AND SOL 1H close > recent 4H High.
     כשמוחלט EXECUTE — רושם מיד כעסקה פעילה בארנק הוירטואלי.
     """
+    if not _is_authorized(message.chat.id):
+        return
     send_msg("🔭 *SOL Breakout Strategy* — מריץ ניתוח חי\\.\\.\\.")
 
     def _run():
@@ -4788,6 +4827,8 @@ def handle_fillslots(message):
     פותח עסקה רק אם 1H close > 4H High (LONG) או < 4H Low (SHORT),
     לפי כיוון שנקבע מ-FNG + BTC EMA20.
     """
+    if not _is_authorized(message.chat.id):
+        return
     parts = message.text.strip().split()
     # מטבעות ספציפיים אם צוינו, אחרת TOP10
     if len(parts) > 1:
@@ -4925,6 +4966,8 @@ def handle_slots(message):
     /slots       — מציג מספר slots פעיל
     /slots 1–5   — מגדיר מקסימום slots (עסקאות פתוחות בו-זמנית)
     """
+    if not _is_authorized(message.chat.id):
+        return
     global MAX_TRADES
     parts = message.text.strip().split()
 
@@ -4979,6 +5022,8 @@ def handle_watch(message):
     /watch SOL SHORT — מעקב SHORT
     /watch           — מציג רשימת מעקב פעילה
     """
+    if not _is_authorized(message.chat.id):
+        return
     parts = message.text.strip().split()
 
     # /watch ללא פרמטרים — הצג רשימה
@@ -5041,6 +5086,8 @@ def handle_watch(message):
 @bot.message_handler(commands=['unwatch'])
 def handle_unwatch(message):
     """/unwatch SOL — מסיר מ-Watch List"""
+    if not _is_authorized(message.chat.id):
+        return
     parts = message.text.strip().split()
     if len(parts) < 2:
         send_msg("_שימוש: /unwatch SOL_")
@@ -5091,6 +5138,8 @@ def handle_fng(message):
 @bot.message_handler(commands=['setfng'])
 def handle_setfng(message):
     """שינוי סף מדד הפחד. שימוש: /setfng extreme|fear|greed <ערך>"""
+    if not _is_authorized(message.chat.id):
+        return
     global EXTREME_FEAR_THRESHOLD, FEAR_THRESHOLD, GREED_THRESHOLD
     parts = message.text.strip().split()
 
@@ -5466,6 +5515,8 @@ def handle_major(message):
 @bot.message_handler(commands=['scan'])
 def handle_scan(message):
     """סריקה מיידית — מופעלת ב-Thread נפרד כדי לא לחסום את ה-polling."""
+    if not _is_authorized(message.chat.id):
+        return
     global _scan_running
     if _scan_running:
         send_msg("⏳ *סריקה כבר רצה ברקע* — המתן לסיומה.")

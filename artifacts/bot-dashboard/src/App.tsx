@@ -24,7 +24,71 @@ function useIsMobile() {
   return mobile;
 }
 
-export default function App() {
+function LoginGate({ onAuth }: { onAuth: () => void }) {
+  const [pw, setPw]       = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy]   = useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const r = await fetch("/api/_login", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: pw }),
+      });
+      if (r.ok) { onAuth(); }
+      else       { setError("Incorrect password"); }
+    } catch {
+      setError("Could not reach server");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", justifyContent: "center",
+      minHeight: "100vh", background: "#0f1117",
+    }}>
+      <form onSubmit={submit} style={{
+        background: "#1a1d27", borderRadius: 12, padding: "2rem 2.5rem",
+        display: "flex", flexDirection: "column", gap: 16, minWidth: 300,
+        boxShadow: "0 4px 32px #0006",
+      }}>
+        <div style={{ color: "#e2e8f0", fontSize: 20, fontWeight: 700, textAlign: "center" }}>
+          Trading Bot Dashboard
+        </div>
+        <div style={{ color: "#94a3b8", fontSize: 14, textAlign: "center" }}>
+          Enter dashboard password to continue
+        </div>
+        <input
+          type="password"
+          value={pw}
+          onChange={e => setPw(e.target.value)}
+          placeholder="Password"
+          autoFocus
+          style={{
+            padding: "0.6rem 0.8rem", borderRadius: 8, border: "1px solid #334155",
+            background: "#0f1117", color: "#e2e8f0", fontSize: 15, outline: "none",
+          }}
+        />
+        {error && <div style={{ color: "#f87171", fontSize: 13, textAlign: "center" }}>{error}</div>}
+        <button type="submit" disabled={busy || !pw} style={{
+          padding: "0.6rem", borderRadius: 8, border: "none", cursor: "pointer",
+          background: busy ? "#334155" : "#3b82f6", color: "#fff", fontWeight: 600, fontSize: 15,
+        }}>
+          {busy ? "Signing in…" : "Sign in"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function AuthenticatedApp() {
   const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 768);
   const [activeNav, setActiveNav] = useState("Dashboard");
@@ -327,4 +391,25 @@ export default function App() {
       )}
     </div>
   );
+}
+
+export default function App() {
+  const [authChecked, setAuthChecked]     = useState(false);
+  const [authenticated, setAuthenticated] = useState(false);
+
+  // Check whether the browser already has a valid session cookie from a previous login.
+  // GET /api/_session is read-only — it never issues a cookie, only checks the existing one.
+  useEffect(() => {
+    fetch("/api/_session", { credentials: "include" })
+      .then(r => r.json())
+      .then((d: { authenticated?: boolean }) => {
+        setAuthenticated(d.authenticated === true);
+      })
+      .catch(() => { /* treat as unauthenticated */ })
+      .finally(() => setAuthChecked(true));
+  }, []);
+
+  if (!authChecked) return null;
+  if (!authenticated) return <LoginGate onAuth={() => setAuthenticated(true)} />;
+  return <AuthenticatedApp />;
 }

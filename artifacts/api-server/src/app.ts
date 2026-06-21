@@ -1,5 +1,6 @@
 import express, { type Express } from "express";
 import cors from "cors";
+import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
@@ -35,8 +36,10 @@ app.use(cors({
     if (!origin || _CORS_ALLOW.test(origin)) return cb(null, true);
     cb(new Error("CORS: origin not allowed"));
   },
+  credentials: true,
   optionsSuccessStatus: 200,
 }));
+app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

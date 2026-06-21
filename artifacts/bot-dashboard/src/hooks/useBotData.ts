@@ -255,6 +255,7 @@ export async function syncTelegram(): Promise<boolean> {
   try {
     const r = await fetch("/api/sync", {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
     });
@@ -271,6 +272,7 @@ export async function saveSlots(max_trades: number): Promise<boolean> {
   // Fire-and-forget to Flask (best-effort; production URL may not accept POSTs)
   fetch("/api/slots", {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ max_trades }),
   }).catch(() => {/* ignore */});
@@ -295,6 +297,7 @@ export async function saveBotSettings(payload: {
   // Fire-and-forget to Flask (best-effort)
   fetch("/api/fng_settings", {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       extreme_fear:     payload.fng.extreme_fear,
