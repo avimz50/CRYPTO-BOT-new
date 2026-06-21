@@ -38,18 +38,7 @@ def api_audit():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/debug')
-def api_debug():
-    import os as _os
-    hot    = 'artifacts/bot-dashboard/public/hot_candidates.json'
-    wallet = 'artifacts/bot-dashboard/public/wallet.json'
-    trades = 'artifacts/bot-dashboard/public/active_trades.json'
-    return jsonify({
-        'cwd':           _os.getcwd(),
-        'hot_exists':    _os.path.exists(hot),
-        'wallet_exists': _os.path.exists(wallet),
-        'trades_exists': _os.path.exists(trades),
-    })
+# /api/debug removed — exposed cwd and filesystem state to public internet.
 
 @app.route('/api/last_scan')
 def api_last_scan():

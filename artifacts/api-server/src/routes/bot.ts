@@ -169,23 +169,8 @@ router.get("/trade_audit", async (_req, res) => {
   res.json(data);
 });
 
-router.get("/debug", async (_req, res) => {
-  const data = await fetchFromFlask("/api/debug", "", null);
-  const readTmp = (f: string) => { try { return fs.readFileSync(f, "utf-8").slice(-3000); } catch { return null; } };
-  res.json({
-    flask_port: BOT_FLASK_PORT,
-    flask_response: data,
-    root: ROOT,
-    public: PUBLIC,
-    wallet_exists: fs.existsSync(path.join(PUBLIC, "wallet.json")),
-    trades_exists: fs.existsSync(path.join(PUBLIC, "active_trades.json")),
-    hot_exists:    fs.existsSync(path.join(PUBLIC, "hot_candidates.json")),
-    cwd: process.cwd(),
-    bot_crash_log:   readTmp("/tmp/bot_crash.log"),
-    bot_startup_log: readTmp("/tmp/bot_startup.log"),
-    bot_stdout_log:  readTmp("/tmp/bot_stdout.log"),
-  });
-});
+// /api/debug removed — exposed internal paths, filesystem state, and crash logs
+// to unauthenticated public requests (security hardening).
 
 router.get("/last_scan", async (_req, res) => {
   const data = await fetchFromFlask("/api/last_scan", path.join(PUBLIC, "last_scan_results.json"), null);
@@ -221,30 +206,8 @@ router.post("/make", (req, res) => {
   flaskReq.end();
 });
 
-router.get("/bot_log", (_req, res) => {
-  try {
-    const stdout = fs.existsSync("/tmp/bot_stdout.log")
-      ? fs.readFileSync("/tmp/bot_stdout.log", "utf-8").slice(-8000)
-      : "(no stdout log yet)";
-    const stderr = fs.existsSync("/tmp/bot_stderr.log")
-      ? fs.readFileSync("/tmp/bot_stderr.log", "utf-8").slice(-8000)
-      : "(no stderr log yet)";
-    const crash = fs.existsSync("/tmp/bot_crash.log")
-      ? fs.readFileSync("/tmp/bot_crash.log", "utf-8")
-      : null;
-
-    let restart_info: Record<string, unknown> | null = null;
-    if (fs.existsSync("/tmp/bot_restart.log")) {
-      try {
-        restart_info = JSON.parse(fs.readFileSync("/tmp/bot_restart.log", "utf-8"));
-      } catch { /* ignore malformed */ }
-    }
-
-    res.json({ stdout, stderr, crash, restart_info });
-  } catch (e) {
-    res.json({ stdout: "", stderr: String(e), crash: null, restart_info: null });
-  }
-});
+// /api/bot_log removed — exposed stdout/stderr/crash logs and restart history
+// to unauthenticated public requests (security hardening).
 
 router.get("/audit", (_req, res) => {
   const filePath = path.join(ROOT, "audit_report.json");

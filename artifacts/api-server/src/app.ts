@@ -25,7 +25,18 @@ app.use(
     },
   }),
 );
-app.use(cors());
+// Restrict CORS to Replit domains and localhost only.
+// Wildcard '*' would allow any third-party site to read trading telemetry
+// from a logged-in user's browser via cross-origin fetch.
+const _CORS_ALLOW = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$|^https:\/\/[a-z0-9-]+\.(replit\.app|replit\.dev|repl\.co)(\/.*)?$/i;
+app.use(cors({
+  origin: (origin, cb) => {
+    // Allow server-to-server (no Origin header) and matching browser origins
+    if (!origin || _CORS_ALLOW.test(origin)) return cb(null, true);
+    cb(new Error("CORS: origin not allowed"));
+  },
+  optionsSuccessStatus: 200,
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
