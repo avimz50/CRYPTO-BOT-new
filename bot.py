@@ -6696,8 +6696,8 @@ RSI_VETO_SHORT                = 52   # RSI מינימום ל-SHORT — SHORT א�
 BREAKOUT_MIN_VOL              = 1.5  # volume ratio מינימלי (150% מהממוצע = 50% מעל)
 RSI_VETO_BREAKOUT_LONG        = 62   # RSI מקסימום ל-LONG בפריצה — אסור אם RSI > 62 (overbought)
 RSI_VETO_BREAKOUT_SHORT       = 60   # RSI מינימום ל-SHORT בפריצה [NEUTRAL/BULL בלבד] — fade pumps
-RSI_VETO_BREAKOUT_SHORT_BEAR_MIN = 30  # RSI מינימום ב-BEAR — מתחת = oversold bounce, לא שורטים
-RSI_VETO_BREAKOUT_SHORT_BEAR_MAX = 58  # RSI מקסימום ב-BEAR — מעל = recovery, לא שורטים
+RSI_VETO_BREAKOUT_SHORT_BEAR_MIN = 25  # RSI מינימום ב-BEAR — מתחת = oversold bounce, לא שורטים
+RSI_VETO_BREAKOUT_SHORT_BEAR_MAX = 65  # RSI מקסימום ב-BEAR — מעל = recovery, לא שורטים
 # BREAKOUT_FNG_REDUCED_MARGIN — REMOVED: margin is always $50, no dynamic reduction
 MAJOR_PRIORITY_SYMBOLS        = {'BTC/USDT', 'ETH/USDT'}  # תמיד ראשונים בתור המועמדים
 
