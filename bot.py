@@ -4327,8 +4327,7 @@ def handle_export_trades(message):
             bot.send_document(
                 CHAT_ID,
                 f,
-                caption=f"📊 *Trade History — {row_count} עסקאות*\n_trade\\_history.csv_",
-                parse_mode="Markdown",
+                caption=f"📊 Trade History — {row_count} עסקאות (trade_history.csv)",
             )
     except Exception as e:
         send_msg(f"❌ שגיאה בשליחת הקובץ: {e}")
