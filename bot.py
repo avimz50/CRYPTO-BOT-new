@@ -1,6 +1,7 @@
 import os
 import io
 import json
+import csv
 import signal
 import sys
 
@@ -1451,6 +1452,32 @@ def _extract_prebreakout(breakdown: str) -> str:
     return ' + '.join(signals) if signals else 'None'
 
 
+class TradeLogger:
+    CSV_PATH = os.path.join(os.path.dirname(__file__), "trade_history.csv")
+    COLUMNS  = ["timestamp", "symbol", "side", "entry_price", "exit_price", "pnl_usd", "exit_reason"]
+
+    @classmethod
+    def log(cls, symbol: str, side: str, entry_price: float,
+            exit_price: float, pnl_usd: float, exit_reason: str) -> None:
+        file_exists = os.path.isfile(cls.CSV_PATH)
+        try:
+            with open(cls.CSV_PATH, "a", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=cls.COLUMNS)
+                if not file_exists:
+                    writer.writeheader()
+                writer.writerow({
+                    "timestamp":   datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "symbol":      symbol,
+                    "side":        side,
+                    "entry_price": entry_price,
+                    "exit_price":  exit_price,
+                    "pnl_usd":     round(pnl_usd, 2),
+                    "exit_reason": exit_reason,
+                })
+        except Exception as e:
+            print(f"[TradeLogger] שגיאה בכתיבה ל-CSV: {e}", flush=True)
+
+
 def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_price: float = None):
     """מוסיף עסקה סגורה ל-closed_trades_log + Audit Log מתמיד."""
     global closed_trades_log, trade_audit_log
@@ -1531,6 +1558,16 @@ def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_pric
     # ── Audit Log (persistent, 100 עסקאות) ───────────────────────────────
     trade_audit_log.append(record)
     _save_audit_log()
+
+    # ── CSV Trade History (trade_history.csv בשורש הפרויקט) ──────────────
+    TradeLogger.log(
+        symbol      = record['symbol'],
+        side        = record['direction'],
+        entry_price = record['entry_price'],
+        exit_price  = record['close_price'],
+        pnl_usd     = record['pnl_usd'],
+        exit_reason = record['close_reason'],
+    )
 
 def wallet_status_text() -> str:
     """מחזיר מחרוזת סטטוס ארנק לטלגרם — Available Balance ראשי."""
