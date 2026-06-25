@@ -179,28 +179,28 @@ function _recordPrices(tradesPayload: unknown): void {
   }
 }
 
-router.get("/trades", async (_req, res) => {
+router.get("/trades", requireSession, async (_req, res) => {
   const data = await fetchFromFlask("/api/trades", path.join(PUBLIC, "active_trades.json"), { updated: null, count: 0, trades: [] }, "active_trades");
   _recordPrices(data);
   res.json(data);
 });
 
 /** Alias: /active_trades → same as /trades (required by dashboard spec) */
-router.get("/active_trades", async (_req, res) => {
+router.get("/active_trades", requireSession, async (_req, res) => {
   const data = await fetchFromFlask("/api/trades", path.join(PUBLIC, "active_trades.json"), { updated: null, count: 0, trades: [] }, "active_trades");
   _recordPrices(data);
   res.json(data);
 });
 
 /** Close-price series for a single symbol — used by dashboard mini charts */
-router.get("/price_history/:symbol", (req, res) => {
+router.get("/price_history/:symbol", requireSession, (req, res) => {
   const symbol = decodeURIComponent(req.params.symbol ?? "");
   const hist   = _priceHistory.get(symbol) ?? [];
   res.json({ symbol, count: hist.length, series: hist });
 });
 
 /** /status — combined connection/equity/FNG snapshot for the top status bar */
-router.get("/status", async (_req, res) => {
+router.get("/status", requireSession, async (_req, res) => {
   const [walletRaw, tradesRaw, btcPrice] = await Promise.all([
     fetchFromFlask("/api/wallet",  path.join(PUBLIC, "wallet.json"),       { balance: 200, starting: 200, total_pnl: 0, equity: 200, available_balance: 200, locked_balance: 0, unrealized_pnl: 0 }, "wallet"),
     fetchFromFlask("/api/trades",  path.join(PUBLIC, "active_trades.json"), { count: 0, trades: [] }, "active_trades"),
@@ -229,17 +229,17 @@ router.get("/status", async (_req, res) => {
   });
 });
 
-router.get("/wallet", async (_req, res) => {
+router.get("/wallet", requireSession, async (_req, res) => {
   const data = await fetchFromFlask("/api/wallet", path.join(PUBLIC, "wallet.json"), { balance: 200, starting: 200, total_pnl: 0, trades_opened: 0, equity_history: [] }, "wallet");
   res.json(data);
 });
 
-router.get("/hot", async (_req, res) => {
+router.get("/hot", requireSession, async (_req, res) => {
   const data = await fetchFromFlask("/api/hot", path.join(PUBLIC, "hot_candidates.json"), { updated: null, count: 0, candidates: [] });
   res.json(data);
 });
 
-router.get("/trade_audit", async (_req, res) => {
+router.get("/trade_audit", requireSession, async (_req, res) => {
   const data = await fetchFromFlask("/api/trade_audit", path.join(PUBLIC, "trade_audit.json"), { updated: null, count: 0, trades: [] }, "trade_audit");
   res.json(data);
 });
@@ -247,7 +247,7 @@ router.get("/trade_audit", async (_req, res) => {
 // /api/debug removed — exposed internal paths, filesystem state, and crash logs
 // to unauthenticated public requests (security hardening).
 
-router.get("/last_scan", async (_req, res) => {
+router.get("/last_scan", requireSession, async (_req, res) => {
   const data = await fetchFromFlask("/api/last_scan", path.join(PUBLIC, "last_scan_results.json"), null);
   if (!data) { res.status(404).json({ error: "No scan report yet." }); return; }
   res.json(data);
@@ -284,7 +284,7 @@ router.post("/make", (req, res) => {
 // /api/bot_log removed — exposed stdout/stderr/crash logs and restart history
 // to unauthenticated public requests (security hardening).
 
-router.get("/audit", (_req, res) => {
+router.get("/audit", requireSession, (_req, res) => {
   const filePath = path.join(ROOT, "audit_report.json");
   try {
     const raw = fs.readFileSync(filePath, "utf-8");
@@ -323,7 +323,7 @@ router.post("/sync", requireSession, (req, res) => {
 });
 
 // Slots — proxy GET/POST to Flask bot
-router.get("/slots", async (_req, res) => {
+router.get("/slots", requireSession, async (_req, res) => {
   const data = await fetchFromFlask("/api/slots", "", { max_trades: 5, active_trades: 0, open_slots: 5, min: 1, max: 5 });
   res.json(data);
 });
@@ -352,7 +352,7 @@ router.post("/slots", requireSession, (req, res) => {
 });
 
 // FNG Settings — proxy to Flask bot
-router.get("/fng_settings", async (_req, res) => {
+router.get("/fng_settings", requireSession, async (_req, res) => {
   const data = await fetchFromFlask("/api/fng_settings", "", {
     extreme_fear: 13, fear: 30, greed: 70,
     ranges: {
@@ -464,7 +464,7 @@ function _refreshFngCache(): Promise<void> {
 // Warm up FNG cache immediately on server start (so /status never shows 50 on first load)
 _refreshFngCache();
 
-router.get("/fng", async (_req, res) => {
+router.get("/fng", requireSession, async (_req, res) => {
   const now = Date.now() / 1000;
   if (now - _fngCache.ts < 900) {
     res.json({
