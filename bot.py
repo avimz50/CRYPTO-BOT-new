@@ -4314,6 +4314,26 @@ def handle_report(message):
     send_daily_report()
 
 
+@bot.message_handler(commands=['exporttrades'])
+def handle_export_trades(message):
+    """שולח את trade_history.csv ישירות לטלגרם."""
+    csv_path = TradeLogger.CSV_PATH
+    if not os.path.isfile(csv_path):
+        send_msg("📭 אין עדיין קובץ עסקאות — הקובץ נוצר אוטומטית עם סגירת העסקה הראשונה.")
+        return
+    try:
+        with open(csv_path, "rb") as f:
+            row_count = sum(1 for _ in open(csv_path, encoding="utf-8")) - 1  # minus header
+            bot.send_document(
+                CHAT_ID,
+                f,
+                caption=f"📊 *Trade History — {row_count} עסקאות*\n_trade\\_history.csv_",
+                parse_mode="Markdown",
+            )
+    except Exception as e:
+        send_msg(f"❌ שגיאה בשליחת הקובץ: {e}")
+
+
 @bot.message_handler(commands=['audit'])
 def handle_audit(message):
     """שולח דוח ניתוח AI מלא (Gemini) — פירוט עסקאות + המלצות.
@@ -5274,9 +5294,10 @@ def handle_home(message):
         f"📋 *פקודות מידע*\n"
         f"  /status     — עסקאות פעילות + SL/TP\n"
         f"  /wallet     — סיכום ארנק מלא (יתרה, equity, win rate)\n"
-        f"  /report     — דוח יומי מלא (סטטיסטיקות)\n"
-        f"  /audit      — דוח ניתוח AI מלא (Gemini) | /audit DD.MM לתאריך ספציפי\n"
-        f"  /scanreport — דוח סריקה אחרון\n"
+        f"  /report        — דוח יומי מלא (סטטיסטיקות)\n"
+        f"  /audit         — דוח ניתוח AI מלא (Gemini) | /audit DD.MM לתאריך ספציפי\n"
+        f"  /exporttrades  — הורדת trade\\_history.csv (כל העסקאות)\n"
+        f"  /scanreport    — דוח סריקה אחרון\n"
         f"  /ping       — בדיקת חיות הבוט\n\n"
         f"📊 *הגדרות מדד הפחד (FNG)*\n"
         f"  /fng                  — הצג ספים נוכחיים + טווחים מותרים\n"
