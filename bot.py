@@ -1079,9 +1079,9 @@ def api_slots_post():
     try:
         v = int(data.get('max_trades', MAX_TRADES))
     except (ValueError, TypeError):
-        return flask_jsonify({'ok': False, 'error': 'max_trades חייב להיות מספר שלם 1–5'}), 400
-    if not (1 <= v <= 5):
-        return flask_jsonify({'ok': False, 'error': f'max_trades חייב להיות 1–5 (קיבלתי {v})'}), 400
+        return flask_jsonify({'ok': False, 'error': 'max_trades חייב להיות מספר שלם 0–5'}), 400
+    if not (0 <= v <= 5):
+        return flask_jsonify({'ok': False, 'error': f'max_trades חייב להיות 0–5 (קיבלתי {v})'}), 400
     old      = MAX_TRADES
     MAX_TRADES = v
     _save_config()
