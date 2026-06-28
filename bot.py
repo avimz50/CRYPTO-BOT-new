@@ -5020,6 +5020,7 @@ def handle_fillslots(message):
 def handle_slots(message):
     """
     /slots       — מציג מספר slots פעיל
+    /slots 0     — הפסקה (אין כניסות חדשות, עסקאות פעילות ממשיכות)
     /slots 1–5   — מגדיר מקסימום slots (עסקאות פתוחות בו-זמנית)
     """
     if not _is_authorized(message.chat.id):
@@ -5046,8 +5047,8 @@ def handle_slots(message):
         send_msg("❌ שימוש: `/slots 1` עד `/slots 5`")
         return
 
-    if not (1 <= v <= 5):
-        send_msg("❌ הערך חייב להיות בין 1 ל-5.")
+    if not (0 <= v <= 5):
+        send_msg("❌ הערך חייב להיות בין 0 ל-5.\n_0 = הפסקה (אין כניסות חדשות)_")
         return
 
     old        = MAX_TRADES
@@ -5056,7 +5057,13 @@ def handle_slots(message):
     n_open     = len(active_trades)
     bar        = '🟢' * n_open + '⬜' * max(0, MAX_TRADES - n_open)
 
-    if v < n_open:
+    if v == 0:
+        send_msg(
+            f"⏸️ *בוט בהפסקה — Slots = 0*\n\n"
+            f"{'🟢' * n_open}  {n_open} עסקאות פעילות ממשיכות עד שיסגרו לבד.\n\n"
+            f"_אין כניסות חדשות עד שתשנה חזרה עם /slots 3_"
+        )
+    elif v < n_open:
         send_msg(
             f"💼 *Slots עודכן: {old}→{v}*\n\n"
             f"{bar}  `{n_open}/{MAX_TRADES}`\n\n"
