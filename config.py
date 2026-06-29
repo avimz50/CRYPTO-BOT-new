@@ -47,7 +47,7 @@ REGIME_BULLISH_FNG       = 60   # FNG threshold above = bullish
 REGIME_NEUTRAL_MAX_TRADES = 2   # max concurrent trades in choppy/neutral market
 
 # ── Scoring Thresholds ─────────────────────────────────────────────────────────
-MIN_SCORE           = 72     # Entry threshold
+MIN_SCORE           = 75     # Entry threshold
 RSI_VETO_LONG       = 62     # Hard veto — LONG forbidden if RSI > 62 (overbought)
 RSI_VETO_SHORT      = 52     # Hard veto — SHORT forbidden if RSI < 52 (only short when relatively high/overbought)
 EMA_PROXIMITY_PCT   = 10.0   # Anti-chase: max % above EMA200
@@ -119,7 +119,7 @@ SWING_MAX_DURATION_MIN = 90    # דקות מקסימום ללא TP1 — close at
 # ── Fast-Loss Protection — זיהוי setup כושל מוקדם ──────────────────────────────
 # סוגר עסקה שמפסידה 5%+ מהמרג'ין בתוך 15 הדקות הראשונות
 # 5% × $50 = $2.50 הפסד מהיר = setup נכשל → יוצאים לפני SL מלא ($10)
-FAST_LOSS_MARGIN_PCT = 5.0    # % הפסד על מרג'ין שמפעיל סגירה מוקדמת
+FAST_LOSS_MARGIN_PCT = 3.5    # % הפסד על מרג'ין שמפעיל סגירה מוקדמת
 FAST_LOSS_MINUTES    = 15     # חלון זמן (דקות) לבדיקת fast-loss
 
 # ── RSI Reversal Guard — זיהוי היפוך מומנטום על 15m ───────────────────────────
@@ -169,11 +169,11 @@ MOMENTUM_VOL_RATIO     = 0.10   # 24h Volume must be > 10% of Open Interest valu
 MOMENTUM_EMA_FAST      = 9
 MOMENTUM_EMA_MID       = 21
 MOMENTUM_EMA_SLOW      = 50
-MOMENTUM_MIN_VOL_SURGE = 1.5    # 15m candle volume > 1.5× 20-bar average
+MOMENTUM_MIN_VOL_SURGE = 2.0    # 15m candle volume > 2.0× 20-bar average
 VWAP_TIMEFRAME         = '1h'   # Timeframe used for VWAP calculation
 
 # ── Slow-Movers Blacklist ──────────────────────────────────────────────────────
-SLOW_MOVERS = {'TRX/USDT', 'ADA/USDT'}
+SLOW_MOVERS = {'TRX/USDT', 'ADA/USDT', 'DOGE/USDT'}  # DOGE: 4/4 MaxDuration הפסדים
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 VERBOSE_LOG = False
