@@ -6610,6 +6610,9 @@ def scalp_scan_loop():
 
             # Scalp scanner is ONLY active during Extreme Fear (FNG < threshold)
             # In normal market (WAIT mode), sleep longer to save CPU
+            if not ENABLE_SCALP_MODE:
+                time.sleep(SCALP_SCAN_INTERVAL_WAIT)
+                continue
             if fng_v >= EXTREME_FEAR_THRESHOLD:
                 time.sleep(SCALP_SCAN_INTERVAL_WAIT)   # 10 min in WAIT mode
                 continue

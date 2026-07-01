@@ -93,6 +93,7 @@ SWING_TRACK_LEVERAGE = 10
 SWING_TRACK_BE_PCT   = 4.0
 
 # ── Scalp Mode (Mean-Reversion) ────────────────────────────────────────────────
+ENABLE_SCALP_MODE      = False     # כבוי — לא סוחרים ב-Extreme Fear
 SCALP_LEVERAGE         = 10        # locked — same as LEVERAGE
 SCALP_MARGIN           = 50.0      # locked — same as MARGIN
 SCALP_POS_SIZE         = SCALP_MARGIN * SCALP_LEVERAGE   # = $500
