@@ -1,0 +1,1 @@
+- [Trading bot exit-check ordering](trading-bot-exit-checks.md) — per-iteration exit checks run in a fixed priority order with early `continue`; any uncapped-loss exit (no SL-crossed gate) can short-circuit the real SL and cause larger-than-expected losses.

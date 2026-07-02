@@ -3068,6 +3068,9 @@ def track_trades():
                 # SHORT בהפסד + RSI_15m > 62 → קנייה חזקה → נסגור לפני SL ($10)
                 # LONG  בהפסד + RSI_15m < 38 → מכירה חזקה → נסגור לפני SL ($10)
                 # פעיל רק אחרי 15 דק׳ (FastLoss מטפל בחלון 0-15 דק׳)
+                # ReversalGuard פועל רק כל עוד SL עדיין לא נחצה —
+                # אם המחיר כבר עבר את ה-SL (gap/pump חד), ה-SL הרגיל יטפל בזה
+                # ולא ניתן ל-ReversalGuard "לעקוף" אותו בלי תקרת הפסד.
                 if not trade.get('scalp') and not trade.get('cliff') and not trade.get('be_triggered'):
                     try:
                         _rg_opened  = datetime.fromisoformat(trade.get('opened_at', now_il().isoformat()))
@@ -3076,8 +3079,11 @@ def track_trades():
                                       if direction == 'LONG' \
                                       else (entry - current_price) / entry * 100
                         _rg_loss_pct = -_rg_raw_pct   # חיובי = בהפסד
+                        _rg_sl_ok = (current_price > trade['sl'] if direction == 'LONG'
+                                     else current_price < trade['sl'])
                         if (_rg_elapsed >= RSI_REVERSAL_MIN_MIN
-                                and _rg_loss_pct >= RSI_REVERSAL_MIN_LOSS_PCT):
+                                and _rg_loss_pct >= RSI_REVERSAL_MIN_LOSS_PCT
+                                and _rg_sl_ok):
                             _rg_rsi = _get_rsi15m(sym)
                             _rg_trigger = (
                                 _rg_rsi is not None and (
