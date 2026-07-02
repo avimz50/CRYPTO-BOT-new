@@ -101,3 +101,4 @@ timestamp,symbol,side,entry_price,exit_price,pnl_usd,exit_reason
 2026-06-25 17:31:02,TRX/USDT,SHORT,0.32694,0.32297,6.07,MaxDuration
 2026-06-25 15:25:38,BTC/USDT,SHORT,59228.46,59330.03,-0.86,MaxDuration
 2026-06-29 14:27:58,BNB/USDT,SHORT,547.5,550.0,-2.28,FastLoss
+2026-07-01 11:22:17,GWEI/USDT,SHORT,0.122193,0.122592,-1.63,ReversalGuard
