@@ -1,1 +1,2 @@
 - [Trading bot exit-check ordering](trading-bot-exit-checks.md) — per-iteration exit checks run in a fixed priority order with early `continue`; any uncapped-loss exit (no SL-crossed gate) can short-circuit the real SL and cause larger-than-expected losses.
+- [Autoscale vs 24/7 background bot mismatch](autoscale-vs-vm-deployment.md) — a bot with a continuous loop/Telegram polling piggybacked on a web artifact dies whenever autoscale scales to zero; compare `getDeploymentInfo()` vs artifact.toml's `deploymentTarget` when symptoms look like "background worker randomly stops."
