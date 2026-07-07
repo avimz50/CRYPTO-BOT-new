@@ -2609,9 +2609,13 @@ def track_trades():
 
     # ── Emergency Regime Protection — auto-close LONGs when market turns BEARISH ──
     # Fires every 60 s; get_market_regime() is cached (5 min TTL) — essentially free.
+    # CLOSE uses AND logic: both FNG *and* BTC must be bearish to force-close open positions.
+    # ENTRY gate (is_direction_allowed) keeps the strict OR logic for blocking new entries.
     try:
         _emrg_regime, _emrg_fng, _emrg_btc_above, _emrg_ema = get_market_regime()
-        if _emrg_regime == 'BEARISH':
+        _close_bearish = _emrg_fng < REGIME_BEARISH_FNG and not _emrg_btc_above
+        _close_bullish = _emrg_fng > REGIME_BULLISH_FNG and _emrg_btc_above
+        if _close_bearish:
             with trades_lock:
                 _longs_to_close = [t for t in active_trades if t.get('direction', 'LONG') == 'LONG']
             for _et in _longs_to_close:
@@ -2665,7 +2669,7 @@ def track_trades():
                 except Exception as _ece:
                     print(f"[EmergencyClose] error closing {_et.get('symbol')}: {_ece}", flush=True)
 
-        elif _emrg_regime == 'BULLISH':
+        elif _close_bullish:
             with trades_lock:
                 _shorts_to_close = [t for t in active_trades if t.get('direction') == 'SHORT']
             for _et in _shorts_to_close:
