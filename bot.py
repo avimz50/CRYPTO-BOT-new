@@ -7076,6 +7076,16 @@ def top10_breakout_loop():
             for sym in TOP10_SYMBOLS:
                 if sym in existing_syms:
                     continue
+                # ── SLOW_MOVERS blacklist — BNB/SKYAI/TRX/ADA/DOGE ───────────────
+                if sym in SLOW_MOVERS:
+                    print(f"[Top10 Breakout] {sym} — SLOW_MOVERS blacklist, skip", flush=True)
+                    continue
+                # ── Trade Close Cooldown — 2h אחרי FastLoss/SL/MaxDuration ────────
+                _tcc_ts_br2 = trade_close_cooldown.get(sym, 0)
+                if time.time() - _tcc_ts_br2 < TRADE_CLOSE_COOLDOWN_SEC:
+                    _tcc_min_br2 = int((TRADE_CLOSE_COOLDOWN_SEC - (time.time() - _tcc_ts_br2)) / 60)
+                    print(f"[Top10 Breakout] {sym} TradeCooldown {_tcc_min_br2}min — skip", flush=True)
+                    continue
                 # Cooldown: דלג אם המטבע לקח SL בפריצה ב-5 השעות האחרונות
                 _sl_ts = breakout_sl_cooldown.get(sym)
                 if _sl_ts and (time.time() - _sl_ts) < BREAKOUT_SL_COOLDOWN_SEC:
@@ -7295,6 +7305,9 @@ def cliff_hanger_loop():
                 cliff_count = sum(1 for t in active_trades if t.get('cliff'))
                 if cliff_count >= MAX_CLIFF_TRADES:
                     break
+                # ── SLOW_MOVERS blacklist ─────────────────────────────────────
+                if sym in SLOW_MOVERS:
+                    continue
 
                 is_velocity, vel_dir, move_pct, vol_ratio, rsi_div = _cliff_detect(sym)
                 if not is_velocity:
