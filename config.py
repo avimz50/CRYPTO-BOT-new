@@ -49,7 +49,7 @@ REGIME_NEUTRAL_MAX_TRADES = 2   # max concurrent trades in choppy/neutral market
 # ── Scoring Thresholds ─────────────────────────────────────────────────────────
 MIN_SCORE           = 75     # Entry threshold
 RSI_VETO_LONG       = 62     # Hard veto — LONG forbidden if RSI > 62 (overbought)
-RSI_VETO_SHORT      = 52     # Hard veto — SHORT forbidden if RSI < 52 (only short when relatively high/overbought)
+RSI_VETO_SHORT      = 60     # Hard veto — SHORT forbidden if RSI < 60 (only short when overbought, not just neutral)
 EMA_PROXIMITY_PCT   = 10.0   # Anti-chase: max % above EMA200
 VOL_EMA_BYPASS_MULT = 1.5    # Volume ≥ ×1.5 bypasses EMA proximity veto
 
@@ -174,7 +174,8 @@ MOMENTUM_MIN_VOL_SURGE = 2.0    # 15m candle volume > 2.0× 20-bar average
 VWAP_TIMEFRAME         = '1h'   # Timeframe used for VWAP calculation
 
 # ── Slow-Movers Blacklist ──────────────────────────────────────────────────────
-SLOW_MOVERS = {'TRX/USDT', 'ADA/USDT', 'DOGE/USDT'}  # DOGE: 4/4 MaxDuration הפסדים
+SLOW_MOVERS = {'TRX/USDT', 'ADA/USDT', 'DOGE/USDT',   # DOGE: 4/4 MaxDuration הפסדים
+               'BNB/USDT', 'SKYAI/USDT'}              # BNB: 4/5 SHORT losses; SKYAI: 2/3 FastLoss
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 VERBOSE_LOG = False

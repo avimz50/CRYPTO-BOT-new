@@ -350,6 +350,12 @@ BREAKOUT_SL_COOLDOWN_SEC: int    = 5 * 3600   # 5 שעות
 regime_close_cooldown: dict      = {}
 REGIME_CLOSE_COOLDOWN_SEC: int   = 15 * 60    # 15 דקות
 
+# ─── General Trade Close Cooldown — מונע כניסה מחדש מיידית לאחר כל סגירה ───
+# FastLoss / SL / MaxDuration / ReversalGuard → 2 שעות המתנה לאותו סימבול
+# מגן מפני פתיחת עסקה שנייה אחרי setup כושל (BNB SHORT ×2 ביום)
+trade_close_cooldown: dict       = {}
+TRADE_CLOSE_COOLDOWN_SEC: int    = 2 * 60 * 60   # 2 שעות
+
 # ─── Watch List — מעקב מטבעות ספציפיים כל 15 דקות ───────────────────────────
 # מבנה: { 'SOL/USDT': {'direction':'LONG','added_at':..., 'last_score':0, 'expires_at':...} }
 watch_list: dict = {}
@@ -3061,6 +3067,7 @@ def track_trades():
                                 f"→ exit P&L=${_fl_pnl:+.2f}",
                                 flush=True
                             )
+                            trade_close_cooldown[sym] = time.time()   # 2h cooldown — מניעת כניסה מחדש
                             with trades_lock:
                                 active_trades.remove(trade)
                             save_active_trades()
@@ -3123,6 +3130,7 @@ def track_trades():
                                     f"→ exit P&L=${_rg_pnl:+.2f}",
                                     flush=True
                                 )
+                                trade_close_cooldown[sym] = time.time()   # 2h cooldown — מניעת כניסה מחדש
                                 with trades_lock:
                                     active_trades.remove(trade)
                                 save_active_trades()
@@ -3172,6 +3180,7 @@ def track_trades():
                                 f"→ exit P&L=${_md_pnl:+.2f}",
                                 flush=True
                             )
+                            trade_close_cooldown[sym] = time.time()   # 2h cooldown — מניעת כניסה מחדש
                             with trades_lock:
                                 active_trades.remove(trade)
                             save_active_trades()
@@ -3418,6 +3427,7 @@ def track_trades():
                         _log_closed_trade(trade, 'SL', -loss, current_price)
                         if trade.get('timeframe') == 'Breakout':
                             breakout_sl_cooldown[sym] = time.time()
+                        trade_close_cooldown[sym] = time.time()   # 2h cooldown — מניעת כניסה מחדש
                         eq = _get_equity()
                         send_msg(
                             f"🛑 *SL נגע — {sym}*\n"
@@ -5905,6 +5915,19 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                 })
             continue
 
+        # ── Trade Close Cooldown — מניעת כניסה מחדש תוך 2 שעות אחרי FastLoss/SL/MaxDuration ──
+        _tcc_ts = trade_close_cooldown.get(symbol, 0)
+        if time.time() - _tcc_ts < TRADE_CLOSE_COOLDOWN_SEC:
+            _tcc_min = int((TRADE_CLOSE_COOLDOWN_SEC - (time.time() - _tcc_ts)) / 60)
+            print(f"  [TradeCooldown] {symbol} — עוד {_tcc_min} דק' (2h אחרי סגירה)", flush=True)
+            if rejected_out is not None:
+                rejected_out.append({
+                    'symbol': symbol, 'direction': direction, 'best_score': 0,
+                    'reason': f'Trade Cooldown ({_tcc_min} דק\' נותרו אחרי סגירה)',
+                    'scores': {},
+                })
+            continue
+
         # ── 1 trade per symbol enforcement ──
         if any(t['symbol'] == symbol for t in active_trades):
             continue
@@ -6306,6 +6329,13 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
     if time.time() - _rc_ts_sc < REGIME_CLOSE_COOLDOWN_SEC:
         _rc_min_sc = int((REGIME_CLOSE_COOLDOWN_SEC - (time.time() - _rc_ts_sc)) / 60)
         print(f"[RegimeCooldown] {symbol} בקולדאון {_rc_min_sc}min — skip Scalp", flush=True)
+        return
+
+    # ── Trade Close Cooldown — מניעת כניסה מחדש תוך 2h אחרי FastLoss/SL/MaxDuration ──
+    _tcc_ts_sc = trade_close_cooldown.get(symbol, 0)
+    if time.time() - _tcc_ts_sc < TRADE_CLOSE_COOLDOWN_SEC:
+        _tcc_min_sc = int((TRADE_CLOSE_COOLDOWN_SEC - (time.time() - _tcc_ts_sc)) / 60)
+        print(f"[TradeCooldown] {symbol} בקולדאון {_tcc_min_sc}min — skip Scalp", flush=True)
         return
 
     with trades_lock:
@@ -6852,6 +6882,13 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
     if time.time() - _rc_ts_br < REGIME_CLOSE_COOLDOWN_SEC:
         _rc_min_br = int((REGIME_CLOSE_COOLDOWN_SEC - (time.time() - _rc_ts_br)) / 60)
         print(f"[RegimeCooldown] {symbol} בקולדאון {_rc_min_br}min — skip Breakout", flush=True)
+        return
+
+    # ── Trade Close Cooldown — מניעת כניסה מחדש תוך 2h אחרי FastLoss/SL/MaxDuration ──
+    _tcc_ts_br = trade_close_cooldown.get(symbol, 0)
+    if time.time() - _tcc_ts_br < TRADE_CLOSE_COOLDOWN_SEC:
+        _tcc_min_br = int((TRADE_CLOSE_COOLDOWN_SEC - (time.time() - _tcc_ts_br)) / 60)
+        print(f"[TradeCooldown] {symbol} בקולדאון {_tcc_min_br}min — skip Breakout", flush=True)
         return
 
     # ── Market Regime Gate ────────────────────────────────────────────────────
