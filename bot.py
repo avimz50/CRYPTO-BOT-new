@@ -351,10 +351,15 @@ regime_close_cooldown: dict      = {}
 REGIME_CLOSE_COOLDOWN_SEC: int   = 15 * 60    # 15 דקות
 
 # ─── General Trade Close Cooldown — מונע כניסה מחדש מיידית לאחר כל סגירה ───
-# FastLoss / SL / MaxDuration / ReversalGuard → 2 שעות המתנה לאותו סימבול
+# FastLoss / SL / ReversalGuard → 2 שעות המתנה לאותו סימבול
 # מגן מפני פתיחת עסקה שנייה אחרי setup כושל (BNB SHORT ×2 ביום)
 trade_close_cooldown: dict       = {}
 TRADE_CLOSE_COOLDOWN_SEC: int    = 2 * 60 * 60   # 2 שעות
+
+# ─── MaxDuration Cooldown — cooldown ארוך אחרי יציאה בזמן (SOL loop) ────────
+# MaxDuration → 6 שעות המתנה — מונע SOL loop (9 עסקאות ב-4 ימים)
+max_duration_cooldown: dict      = {}
+MAX_DURATION_COOLDOWN_SEC: int   = 6 * 60 * 60   # 6 שעות
 
 # ─── Watch List — מעקב מטבעות ספציפיים כל 15 דקות ───────────────────────────
 # מבנה: { 'SOL/USDT': {'direction':'LONG','added_at':..., 'last_score':0, 'expires_at':...} }
@@ -1544,6 +1549,7 @@ def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_pric
         'atr':             trade.get('atr', 0.0),
         'duration_min':    duration_m,
         'scalp':           trade.get('scalp', False),
+        'volume_ratio':    trade.get('volume_ratio'),
         # ── Auto-generated lesson ────────────────────────────────────────
         'lesson': _generate_lesson(
             close_reason, pnl_usd, duration_m,
@@ -2151,6 +2157,27 @@ def is_direction_allowed(direction: str, context: str = '') -> tuple[bool, str]:
         return False, reason
 
     if regime == 'NEUTRAL':
+        # ── BTC Intraday Bias — חוסם SHORTs/LONGs נגד המגמה בשוק NEUTRAL ──────
+        _intraday_bias, _btc_p, _btc_ema15m = get_btc_intraday_bias()
+        if direction == 'SHORT' and _intraday_bias == 'BULLISH':
+            reason = (
+                f"NEUTRAL + BTC Intraday BULLISH "
+                f"({_btc_p:.0f} > EMA20(15m)={_btc_ema15m:.0f} & DailyOpen) "
+                f"→ SHORT נגד המגמה — חסום"
+            )
+            if context:
+                print(f"[RegimeGate/{context}] 🚫 {reason}", flush=True)
+            return False, reason
+        if direction == 'LONG' and _intraday_bias == 'BEARISH':
+            reason = (
+                f"NEUTRAL + BTC Intraday BEARISH "
+                f"({_btc_p:.0f} < EMA20(15m)={_btc_ema15m:.0f} & DailyOpen) "
+                f"→ LONG נגד המגמה — חסום"
+            )
+            if context:
+                print(f"[RegimeGate/{context}] 🚫 {reason}", flush=True)
+            return False, reason
+
         n_active = len(active_trades)
         if n_active >= REGIME_NEUTRAL_MAX_TRADES:
             reason = (f"NEUTRAL Regime — שוק צדדי, מקסימום {REGIME_NEUTRAL_MAX_TRADES} "
@@ -3180,7 +3207,8 @@ def track_trades():
                                 f"→ exit P&L=${_md_pnl:+.2f}",
                                 flush=True
                             )
-                            trade_close_cooldown[sym] = time.time()   # 2h cooldown — מניעת כניסה מחדש
+                            trade_close_cooldown[sym]    = time.time()   # 2h cooldown
+                            max_duration_cooldown[sym]   = time.time()   # 6h cooldown — מונע SOL loop
                             with trades_lock:
                                 active_trades.remove(trade)
                             save_active_trades()
@@ -5915,7 +5943,7 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                 })
             continue
 
-        # ── Trade Close Cooldown — מניעת כניסה מחדש תוך 2 שעות אחרי FastLoss/SL/MaxDuration ──
+        # ── Trade Close Cooldown — 2h אחרי FastLoss/SL/ReversalGuard ───────────
         _tcc_ts = trade_close_cooldown.get(symbol, 0)
         if time.time() - _tcc_ts < TRADE_CLOSE_COOLDOWN_SEC:
             _tcc_min = int((TRADE_CLOSE_COOLDOWN_SEC - (time.time() - _tcc_ts)) / 60)
@@ -5924,6 +5952,18 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                 rejected_out.append({
                     'symbol': symbol, 'direction': direction, 'best_score': 0,
                     'reason': f'Trade Cooldown ({_tcc_min} דק\' נותרו אחרי סגירה)',
+                    'scores': {},
+                })
+            continue
+        # ── MaxDuration Cooldown — 6h אחרי MaxDuration (SOL loop prevention) ──
+        _mdc_ts = max_duration_cooldown.get(symbol, 0)
+        if time.time() - _mdc_ts < MAX_DURATION_COOLDOWN_SEC:
+            _mdc_min = int((MAX_DURATION_COOLDOWN_SEC - (time.time() - _mdc_ts)) / 60)
+            print(f"  [MaxDurCooldown] {symbol} — עוד {_mdc_min} דק' (6h אחרי MaxDuration)", flush=True)
+            if rejected_out is not None:
+                rejected_out.append({
+                    'symbol': symbol, 'direction': direction, 'best_score': 0,
+                    'reason': f'MaxDuration Cooldown ({_mdc_min} דק\' נותרו, 6h)',
                     'scores': {},
                 })
             continue
@@ -6331,11 +6371,17 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
         print(f"[RegimeCooldown] {symbol} בקולדאון {_rc_min_sc}min — skip Scalp", flush=True)
         return
 
-    # ── Trade Close Cooldown — מניעת כניסה מחדש תוך 2h אחרי FastLoss/SL/MaxDuration ──
+    # ── Trade Close Cooldown — 2h אחרי FastLoss/SL/ReversalGuard ────────────
     _tcc_ts_sc = trade_close_cooldown.get(symbol, 0)
     if time.time() - _tcc_ts_sc < TRADE_CLOSE_COOLDOWN_SEC:
         _tcc_min_sc = int((TRADE_CLOSE_COOLDOWN_SEC - (time.time() - _tcc_ts_sc)) / 60)
         print(f"[TradeCooldown] {symbol} בקולדאון {_tcc_min_sc}min — skip Scalp", flush=True)
+        return
+    # ── MaxDuration Cooldown — 6h (SOL loop prevention) ──────────────────────
+    _mdc_ts_sc = max_duration_cooldown.get(symbol, 0)
+    if time.time() - _mdc_ts_sc < MAX_DURATION_COOLDOWN_SEC:
+        _mdc_min_sc = int((MAX_DURATION_COOLDOWN_SEC - (time.time() - _mdc_ts_sc)) / 60)
+        print(f"[MaxDurCooldown] {symbol} {_mdc_min_sc}min נותרו (6h) — skip Scalp", flush=True)
         return
 
     with trades_lock:
@@ -6757,6 +6803,65 @@ def _btc_above_ema20_15m() -> bool:
         return False   # fail-safe: block entry
 
 
+# ── BTC Intraday Momentum Cache (3 דקות TTL) ─────────────────────────────────
+_btc_intraday_cache: dict = {
+    'ts': 0.0, 'bias': 'SIDEWAYS', 'price': 0.0,
+    'ema15m': 0.0, 'daily_open': 0.0,
+}
+_BTC_INTRADAY_TTL = 180   # 3 דקות
+
+def get_btc_intraday_bias() -> tuple[str, float, float]:
+    """
+    BTC Intraday Momentum — combines EMA20(15m) + Daily Open.
+
+    BULLISH : price > EMA20(15m) AND price > daily_open → BTC עולה intraday
+    BEARISH : price < EMA20(15m) AND price < daily_open → BTC יורד intraday
+    SIDEWAYS: איתות מעורב
+
+    Returns: (bias, btc_price, btc_ema20_15m)
+    Cache: 3 דקות — קריאה אחת לכל כמה סריקות.
+    Fail-safe: שגיאה → SIDEWAYS (לא חוסם, לא מרשה בוודאות)
+    """
+    global _btc_intraday_cache
+    now_ts = time.time()
+    if now_ts - _btc_intraday_cache['ts'] < _BTC_INTRADAY_TTL:
+        c = _btc_intraday_cache
+        return c['bias'], c['price'], c['ema15m']
+
+    try:
+        df_15m     = get_data('BTC/USDT', timeframe='15m', limit=50)
+        df_1d      = get_data('BTC/USDT', timeframe='1d',  limit=2)
+        price      = float(df_15m['close'].iloc[-1])
+        ema20_15m  = float(ta.ema(df_15m['close'], length=20).iloc[-1])
+        daily_open = float(df_1d['open'].iloc[-1])
+
+        above_ema   = price > ema20_15m
+        above_dopen = price > daily_open
+
+        if above_ema and above_dopen:
+            bias = 'BULLISH'
+        elif not above_ema and not above_dopen:
+            bias = 'BEARISH'
+        else:
+            bias = 'SIDEWAYS'
+
+        _btc_intraday_cache = {
+            'ts': now_ts, 'bias': bias, 'price': price,
+            'ema15m': ema20_15m, 'daily_open': daily_open,
+        }
+        _icon = '📈' if bias == 'BULLISH' else ('📉' if bias == 'BEARISH' else '↔️')
+        print(
+            f"[BTC Intraday] {_icon} {bias} | "
+            f"price={price:.0f} | EMA20(15m)={ema20_15m:.0f} | "
+            f"DailyOpen={daily_open:.0f}",
+            flush=True
+        )
+        return bias, price, ema20_15m
+    except Exception as _e:
+        print(f"[BTC Intraday] fetch failed: {_e} — SIDEWAYS (safe)", flush=True)
+        return 'SIDEWAYS', 0.0, 0.0
+
+
 def _sol_1h_breakout_above_4h_high() -> tuple[bool, float, float]:
     """
     Breakout Confirmation:
@@ -6803,7 +6908,7 @@ RSI_VETO_SHORT                = 52   # RSI מינימום ל-SHORT — SHORT א�
 BREAKOUT_MIN_VOL              = 1.5  # volume ratio מינימלי (150% מהממוצע = 50% מעל)
 RSI_VETO_BREAKOUT_LONG        = 62   # RSI מקסימום ל-LONG בפריצה — אסור אם RSI > 62 (overbought)
 RSI_VETO_BREAKOUT_SHORT       = 60   # RSI מינימום ל-SHORT בפריצה [NEUTRAL/BULL בלבד] — fade pumps
-RSI_VETO_BREAKOUT_SHORT_BEAR_MIN = 25  # RSI מינימום ב-BEAR — מתחת = oversold bounce, לא שורטים
+RSI_VETO_BREAKOUT_SHORT_BEAR_MIN = 50  # RSI מינימום ב-BEAR — מתחת = oversold (INJ/XRP audit), לא שורטים
 RSI_VETO_BREAKOUT_SHORT_BEAR_MAX = 65  # RSI מקסימום ב-BEAR — מעל = recovery, לא שורטים
 # BREAKOUT_FNG_REDUCED_MARGIN — REMOVED: margin is always $50, no dynamic reduction
 MAJOR_PRIORITY_SYMBOLS        = {'BTC/USDT', 'ETH/USDT'}  # תמיד ראשונים בתור המועמדים
@@ -6884,11 +6989,17 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
         print(f"[RegimeCooldown] {symbol} בקולדאון {_rc_min_br}min — skip Breakout", flush=True)
         return
 
-    # ── Trade Close Cooldown — מניעת כניסה מחדש תוך 2h אחרי FastLoss/SL/MaxDuration ──
+    # ── Trade Close Cooldown — 2h אחרי FastLoss/SL/ReversalGuard ─────────────
     _tcc_ts_br = trade_close_cooldown.get(symbol, 0)
     if time.time() - _tcc_ts_br < TRADE_CLOSE_COOLDOWN_SEC:
         _tcc_min_br = int((TRADE_CLOSE_COOLDOWN_SEC - (time.time() - _tcc_ts_br)) / 60)
         print(f"[TradeCooldown] {symbol} בקולדאון {_tcc_min_br}min — skip Breakout", flush=True)
+        return
+    # ── MaxDuration Cooldown — 6h אחרי MaxDuration (מונע SOL loop) ────────────
+    _mdc_ts_br = max_duration_cooldown.get(symbol, 0)
+    if time.time() - _mdc_ts_br < MAX_DURATION_COOLDOWN_SEC:
+        _mdc_min_br = int((MAX_DURATION_COOLDOWN_SEC - (time.time() - _mdc_ts_br)) / 60)
+        print(f"[MaxDurCooldown] {symbol} {_mdc_min_br}min נותרו (6h) — skip Breakout", flush=True)
         return
 
     # ── Market Regime Gate ────────────────────────────────────────────────────
@@ -7080,11 +7191,17 @@ def top10_breakout_loop():
                 if sym in SLOW_MOVERS:
                     print(f"[Top10 Breakout] {sym} — SLOW_MOVERS blacklist, skip", flush=True)
                     continue
-                # ── Trade Close Cooldown — 2h אחרי FastLoss/SL/MaxDuration ────────
+                # ── Trade Close Cooldown — 2h אחרי FastLoss/SL/ReversalGuard ───────
                 _tcc_ts_br2 = trade_close_cooldown.get(sym, 0)
                 if time.time() - _tcc_ts_br2 < TRADE_CLOSE_COOLDOWN_SEC:
                     _tcc_min_br2 = int((TRADE_CLOSE_COOLDOWN_SEC - (time.time() - _tcc_ts_br2)) / 60)
                     print(f"[Top10 Breakout] {sym} TradeCooldown {_tcc_min_br2}min — skip", flush=True)
+                    continue
+                # ── MaxDuration Cooldown — 6h (SOL loop prevention) ────────────────
+                _mdc_ts_br2 = max_duration_cooldown.get(sym, 0)
+                if time.time() - _mdc_ts_br2 < MAX_DURATION_COOLDOWN_SEC:
+                    _mdc_min_br2 = int((MAX_DURATION_COOLDOWN_SEC - (time.time() - _mdc_ts_br2)) / 60)
+                    print(f"[Top10 Breakout] {sym} MaxDurCooldown {_mdc_min_br2}min — skip", flush=True)
                     continue
                 # Cooldown: דלג אם המטבע לקח SL בפריצה ב-5 השעות האחרונות
                 _sl_ts = breakout_sl_cooldown.get(sym)
@@ -7307,6 +7424,10 @@ def cliff_hanger_loop():
                     break
                 # ── SLOW_MOVERS blacklist ─────────────────────────────────────
                 if sym in SLOW_MOVERS:
+                    continue
+                # ── MaxDuration Cooldown — 6h (SOL loop prevention) ───────────
+                _mdc_ts_v = max_duration_cooldown.get(sym, 0)
+                if time.time() - _mdc_ts_v < MAX_DURATION_COOLDOWN_SEC:
                     continue
 
                 is_velocity, vel_dir, move_pct, vol_ratio, rsi_div = _cliff_detect(sym)
