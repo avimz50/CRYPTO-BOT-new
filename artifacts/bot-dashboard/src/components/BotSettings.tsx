@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { saveSlots, saveBotSettings, SlotsData, FngSettings } from "@/hooks/useBotData";
+import { usePushNotifications } from "@/hooks/usePushNotifications";
 
 interface BotSettingsProps {
   slots: SlotsData | null;
@@ -100,7 +101,62 @@ export function BotSettings({ slots, fngSettings, onSaved }: BotSettingsProps) {
   const slotMin = slots?.min ?? 1;
   const slotMax = slots?.max ?? 5;
 
+  const { state: pushState, subscribe, unsubscribe } = usePushNotifications();
+
+  const pushBg      = pushState === "subscribed" ? "rgba(34,197,94,0.1)"  : "rgba(251,191,36,0.07)";
+  const pushBorder  = pushState === "subscribed" ? "#22c55e55"             : "#f59e0b55";
+  const pushBtnBg   = pushState === "subscribed" ? "rgba(239,68,68,0.15)" : "linear-gradient(135deg,#b45309,#d97706)";
+  const pushBtnClr  = pushState === "subscribed" ? "#f87171"               : "#fff";
+  const pushBtnTxt  = pushState === "subscribed" ? "🔕  כבה התראות"       :
+                      pushState === "loading"     ? "⏳  בודק..."          :
+                      pushState === "denied"      ? "🚫  חסום בדפדפן"      :
+                      pushState === "unsupported" ? "❌  הדפדפן לא תומך"   : "🔔  הפעל התראות";
+
   return (
+    <div className="space-y-3">
+
+    {/* ── Push Notifications card ────────────────────────────────────── */}
+    <div className="rounded-xl p-4" style={{ background: pushBg, border: `1px solid ${pushBorder}` }}>
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-sm font-bold" style={{ color: "#e2e8f0" }}>🔔 התראות Push</span>
+        <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
+          style={{
+            background: pushState === "subscribed" ? "rgba(34,197,94,0.2)" : "rgba(100,116,139,0.2)",
+            color:      pushState === "subscribed" ? "#4ade80"              : "#94a3b8",
+          }}>
+          {pushState === "subscribed" ? "✅ פעיל" : pushState === "loading" ? "..." : "כבוי"}
+        </span>
+      </div>
+      <p className="text-xs mb-3" style={{ color: "#94a3b8" }}>
+        {pushState === "subscribed"
+          ? "תקבל התראה לטלפון בכל פתיחה וסגירה של עסקה."
+          : pushState === "denied"
+          ? "התראות חסומות — כנס להגדרות הדפדפן ואפשר אותן עבור האתר הזה."
+          : pushState === "unsupported"
+          ? "הדפדפן שלך לא תומך ב-Push. נסה Chrome."
+          : "לחץ כדי לקבל התראות על כל עסקה שנפתחת או נסגרת."}
+      </p>
+      <button
+        onClick={pushState === "subscribed" ? unsubscribe : subscribe}
+        disabled={pushState === "loading" || pushState === "denied" || pushState === "unsupported"}
+        className="w-full py-2.5 rounded-lg text-sm font-bold transition-all"
+        style={{
+          background: pushBtnBg,
+          color: pushBtnClr,
+          border: "none",
+          cursor: (pushState === "loading" || pushState === "denied" || pushState === "unsupported") ? "not-allowed" : "pointer",
+          opacity: (pushState === "loading" || pushState === "denied" || pushState === "unsupported") ? 0.6 : 1,
+        }}>
+        {pushBtnTxt}
+      </button>
+      {pushState === "unsupported" && (
+        <p className="text-xs mt-2 text-center" style={{ color: "#64748b" }}>
+          פתח את הקישור ב-Chrome לאפשור התראות
+        </p>
+      )}
+    </div>
+
+    {/* ── Bot Settings card ─────────────────────────────────────────── */}
     <div className="rounded-xl p-4" style={{ background: "#0a1628", border: "1px solid #1e3a5f" }}>
       <h2 className="text-xs font-bold uppercase tracking-widest mb-4" style={{ color: "#94a3b8" }}>
         Bot Settings
@@ -164,6 +220,7 @@ export function BotSettings({ slots, fngSettings, onSaved }: BotSettingsProps) {
           </div>
         </div>
       )}
+    </div>
     </div>
   );
 }
