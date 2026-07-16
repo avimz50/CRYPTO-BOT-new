@@ -51,22 +51,26 @@ export function Header({ onToggleSidebar, isOnline, btcPrice, isMobile }: Header
                             { bg: "rgba(59,130,246,0.15)", border: "#3b82f6", text: "#93c5fd" };
 
   const pushIcon =
+    pushState === "loading"      ? "🔔" :
     pushState === "subscribed"   ? "🔔" :
     pushState === "denied"       ? "🔕" :
     pushState === "unsupported"  ? "🔕" : "🔔";
 
   const pushTitle =
+    pushState === "loading"     ? "בודק סטטוס התראות..." :
     pushState === "subscribed"  ? "התראות פעילות — לחץ לכיבוי" :
-    pushState === "denied"      ? "התראות חסומות בדפדפן" :
-    pushState === "unsupported" ? "הדפדפן לא תומך בהתראות" : "הפעל התראות לטלפון";
+    pushState === "denied"      ? "התראות חסומות בדפדפן — אפשר בהגדרות" :
+    pushState === "unsupported" ? "פתח את הדשבורד בדפדפן Chrome/Safari ישירות (לא iframe)" :
+                                  "הפעל התראות לטלפון";
 
   const pushColor =
     pushState === "subscribed"  ? { bg: "rgba(34,197,94,0.12)",  border: "#22c55e66", text: "#4ade80" } :
+    pushState === "loading"     ? { bg: "rgba(100,116,139,0.1)", border: "#47536166", text: "#475569" } :
     pushState === "denied" || pushState === "unsupported"
                                 ? { bg: "rgba(100,116,139,0.1)", border: "#47536166", text: "#64748b" } :
                                   { bg: "rgba(251,191,36,0.1)",  border: "#f59e0b66", text: "#fbbf24" };
 
-  const showPushBtn = pushState !== "loading" && pushState !== "unsupported";
+  const showPushBtn = true; // always visible so user knows the feature exists
 
   const compactTime = `${String(clock.getHours()).padStart(2, "0")}:${String(clock.getMinutes()).padStart(2, "0")}`;
 
@@ -104,7 +108,7 @@ export function Header({ onToggleSidebar, isOnline, btcPrice, isMobile }: Header
         {showPushBtn && (
           <button
             onClick={handlePush}
-            disabled={pushState === "denied"}
+            disabled={pushState === "loading" || pushState === "denied" || pushState === "unsupported"}
             title={pushTitle}
             className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-semibold transition-all"
             style={{
