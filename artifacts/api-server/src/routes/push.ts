@@ -98,6 +98,7 @@ router.get("/status", requireSession, async (_req, res) => {
 router.post("/send", requireInternalToken, async (req, res) => {
   const sub = await _getSub();
   if (!sub) {
+    console.log("[Push] /send called but no subscription registered — user has not subscribed yet");
     res.json({ ok: false, reason: "no_subscription" });
     return;
   }
