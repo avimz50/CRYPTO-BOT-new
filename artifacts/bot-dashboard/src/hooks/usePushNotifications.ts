@@ -43,6 +43,13 @@ export function usePushNotifications() {
   const subscribe = useCallback(async (): Promise<boolean> => {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) return false;
     try {
+      // Explicitly request notification permission before subscribing
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        setState("denied");
+        return false;
+      }
+
       const vapidRes = await fetch(`${API_BASE}/api/push/vapid-public-key`, { credentials: "include" });
       if (!vapidRes.ok) return false;
       const { publicKey } = await vapidRes.json() as { publicKey: string };

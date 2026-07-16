@@ -1,5 +1,5 @@
 /**
- * Lightweight Object Storage reader for the api-server fallback layer.
+ * Lightweight Object Storage reader/writer for the api-server fallback layer.
  *
  * Uses the same Replit GCS sidecar auth as the Python bot's state_store.py.
  * Keys map identically: key "wallet" → "<PRIVATE_OBJECT_DIR>/state/wallet.json"
@@ -66,5 +66,34 @@ export async function osGet(key: string, timeoutMs = 3000): Promise<unknown> {
     return JSON.parse(contents.toString("utf-8"));
   } catch {
     return null;
+  }
+}
+
+/**
+ * Write a value to Object Storage under the given key.
+ * Pass null to delete the object.
+ * Times out after `timeoutMs` ms (default 5000).
+ */
+export async function osSet(key: string, value: unknown, timeoutMs = 5000): Promise<boolean> {
+  const storage = _getStorage();
+  if (!storage) return false;
+  try {
+    const objectName = _objectName(key);
+    const file = storage.bucket(BUCKET_ID).file(objectName);
+    if (value === null) {
+      await Promise.race([
+        file.delete({ ignoreNotFound: true }),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error("os_timeout")), timeoutMs)),
+      ]);
+    } else {
+      const buf = Buffer.from(JSON.stringify(value), "utf-8");
+      await Promise.race([
+        file.save(buf, { contentType: "application/json" }),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error("os_timeout")), timeoutMs)),
+      ]);
+    }
+    return true;
+  } catch {
+    return false;
   }
 }

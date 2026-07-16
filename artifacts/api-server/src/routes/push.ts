@@ -1,52 +1,48 @@
 import { Router } from "express";
 import type { Request, Response, NextFunction } from "express";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 import webpush from "web-push";
 import { requireSession } from "../lib/auth.js";
+import { osGet, osSet } from "../lib/objectStorage.js";
 
 const router = Router();
 
-const VAPID_PUBLIC_KEY   = process.env.VAPID_PUBLIC_KEY  ?? "";
-const VAPID_PRIVATE_KEY  = process.env.VAPID_PRIVATE_KEY ?? "";
-const VAPID_SUBJECT      = process.env.VAPID_SUBJECT     ?? "mailto:admin@cryptobot.local";
+const VAPID_PUBLIC_KEY    = process.env.VAPID_PUBLIC_KEY  ?? "";
+const VAPID_PRIVATE_KEY   = process.env.VAPID_PRIVATE_KEY ?? "";
+const VAPID_SUBJECT       = process.env.VAPID_SUBJECT     ?? "mailto:admin@cryptobot.local";
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET ?? "";
 
 if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
   webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 }
 
-// ── Durable subscription persistence ────────────────────────────────────────
-// Stored on disk so it survives process restarts.
-const __dirname_here = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname_here, "../../..");
-const SUB_FILE = path.join(ROOT, "push_subscription.json");
+// ── Durable subscription persistence via Object Storage ─────────────────────
+// Stored in Object Storage under key "push_subscription" so it survives
+// process restarts and redeployments. Falls back gracefully if OS unavailable.
 
-function _loadSub(): webpush.PushSubscription | null {
-  try {
-    const raw = fs.readFileSync(SUB_FILE, "utf-8");
-    return JSON.parse(raw) as webpush.PushSubscription;
-  } catch {
-    return null;
+const OS_KEY = "push_subscription";
+
+// In-memory cache to avoid round-trips on every /send call
+let _subscription: webpush.PushSubscription | null = null;
+let _loaded = false;
+
+async function _getSub(): Promise<webpush.PushSubscription | null> {
+  if (_loaded) return _subscription;
+  const raw = await osGet(OS_KEY);
+  _loaded = true;
+  if (raw && typeof raw === "object" && "endpoint" in (raw as object)) {
+    _subscription = raw as webpush.PushSubscription;
+    console.log("[Push] Loaded subscription from Object Storage.");
   }
+  return _subscription;
 }
 
-function _saveSub(sub: webpush.PushSubscription | null): void {
-  try {
-    if (sub) {
-      fs.writeFileSync(SUB_FILE, JSON.stringify(sub, null, 2), "utf-8");
-    } else {
-      fs.rmSync(SUB_FILE, { force: true });
-    }
-  } catch (e) {
-    console.error("[Push] Failed to persist subscription:", e);
+async function _setSub(sub: webpush.PushSubscription | null): Promise<void> {
+  _subscription = sub;
+  _loaded = true;
+  const ok = await osSet(OS_KEY, sub);
+  if (!ok) {
+    console.warn("[Push] Object Storage unavailable — subscription stored in-memory only (non-durable).");
   }
-}
-
-let _subscription: webpush.PushSubscription | null = _loadSub();
-if (_subscription) {
-  console.log("[Push] Loaded persisted subscription from disk.");
 }
 
 // ── Internal-token auth (bot → server) ───────────────────────────────────────
@@ -73,35 +69,35 @@ router.get("/vapid-public-key", (_req, res) => {
 });
 
 // POST /api/push/subscribe — stores the browser's push subscription (session-auth)
-router.post("/subscribe", requireSession, (req, res) => {
+router.post("/subscribe", requireSession, async (req, res) => {
   const sub = req.body as webpush.PushSubscription | undefined;
   if (!sub?.endpoint || !sub?.keys) {
     res.status(400).json({ error: "Invalid subscription object" });
     return;
   }
-  _subscription = sub;
-  _saveSub(sub);
-  console.log(`[Push] Subscription registered and persisted: ${sub.endpoint.slice(0, 60)}...`);
+  await _setSub(sub);
+  console.log(`[Push] Subscription registered: ${sub.endpoint.slice(0, 60)}...`);
   res.json({ ok: true });
 });
 
 // DELETE /api/push/subscribe — unsubscribes (session-auth)
-router.delete("/subscribe", requireSession, (_req, res) => {
-  _subscription = null;
-  _saveSub(null);
+router.delete("/subscribe", requireSession, async (_req, res) => {
+  await _setSub(null);
   console.log("[Push] Subscription cleared");
   res.json({ ok: true });
 });
 
 // GET /api/push/status — returns whether a subscription is registered (session-auth)
-router.get("/status", requireSession, (_req, res) => {
-  res.json({ subscribed: _subscription !== null });
+router.get("/status", requireSession, async (_req, res) => {
+  const sub = await _getSub();
+  res.json({ subscribed: sub !== null });
 });
 
 // POST /api/push/send — internal only (Python bot → API Server)
 // Body: { title: string, body: string, icon?: string, tag?: string }
 router.post("/send", requireInternalToken, async (req, res) => {
-  if (!_subscription) {
+  const sub = await _getSub();
+  if (!sub) {
     res.json({ ok: false, reason: "no_subscription" });
     return;
   }
@@ -124,16 +120,15 @@ router.post("/send", requireInternalToken, async (req, res) => {
   });
 
   try {
-    await webpush.sendNotification(_subscription, payload);
+    await webpush.sendNotification(sub, payload);
     console.log(`[Push] Sent: ${title} — ${body}`);
     res.json({ ok: true });
   } catch (err: unknown) {
     const e = err as { statusCode?: number; message?: string };
     console.error(`[Push] Send failed: ${e?.statusCode} ${e?.message}`);
     if (e?.statusCode === 410 || e?.statusCode === 404) {
-      _subscription = null;
-      _saveSub(null);
-      console.log("[Push] Subscription expired — cleared and removed from disk");
+      await _setSub(null);
+      console.log("[Push] Subscription expired — cleared from Object Storage");
     }
     res.status(500).json({ ok: false, error: String(e?.message ?? err) });
   }
