@@ -53,5 +53,9 @@ packages = ["glibcLocales"]
 
 [userenv.shared]
 GDRIVE_FOLDER_ID = "1DkapUVXvVvWydBCETazrJBOQxK-QutU4"
+VAPID_PUBLIC_KEY = "BMfErtDjWd8PKdEsB8_j64TQjUdgZICpYdLV8DJ1uxBsM8WOLZqJtTA7B9sZZfbtMVzohXW6aYYPN3qrdZP1hGA"
+VAPID_PRIVATE_KEY = "LSjS7Ha8nMYi7pLebE4MC5FwVCde-cQvEO9kshekpbU"
+VAPID_SUBJECT = "mailto:admin@cryptobot.local"
+INTERNAL_API_SECRET = "55a67fc30b653f927dbb83f9a84f04219e64c21bed79dc55a4c4200fd7dbff68"
 
 [userenv.development]

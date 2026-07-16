@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { syncTelegram } from "@/hooks/useBotData";
+import { usePushNotifications } from "@/hooks/usePushNotifications";
 
 interface HeaderProps {
   onToggleSidebar: () => void;
@@ -11,6 +12,7 @@ interface HeaderProps {
 export function Header({ onToggleSidebar, isOnline, btcPrice, isMobile }: HeaderProps) {
   const [clock, setClock] = useState(new Date());
   const [syncState, setSyncState] = useState<"idle" | "syncing" | "done" | "error">("idle");
+  const { state: pushState, subscribe, unsubscribe } = usePushNotifications();
 
   useEffect(() => {
     const id = setInterval(() => setClock(new Date()), 1000);
@@ -22,6 +24,14 @@ export function Header({ onToggleSidebar, isOnline, btcPrice, isMobile }: Header
     const ok = await syncTelegram();
     setSyncState(ok ? "done" : "error");
     setTimeout(() => setSyncState("idle"), 3000);
+  };
+
+  const handlePush = async () => {
+    if (pushState === "subscribed") {
+      await unsubscribe();
+    } else if (pushState === "unsubscribed") {
+      await subscribe();
+    }
   };
 
   const syncIcon =
@@ -39,6 +49,24 @@ export function Header({ onToggleSidebar, isOnline, btcPrice, isMobile }: Header
     syncState === "done"  ? { bg: "rgba(34,197,94,0.15)",  border: "#22c55e", text: "#4ade80" } :
     syncState === "error" ? { bg: "rgba(239,68,68,0.15)",  border: "#ef4444", text: "#f87171" } :
                             { bg: "rgba(59,130,246,0.15)", border: "#3b82f6", text: "#93c5fd" };
+
+  const pushIcon =
+    pushState === "subscribed"   ? "🔔" :
+    pushState === "denied"       ? "🔕" :
+    pushState === "unsupported"  ? "🔕" : "🔔";
+
+  const pushTitle =
+    pushState === "subscribed"  ? "התראות פעילות — לחץ לכיבוי" :
+    pushState === "denied"      ? "התראות חסומות בדפדפן" :
+    pushState === "unsupported" ? "הדפדפן לא תומך בהתראות" : "הפעל התראות לטלפון";
+
+  const pushColor =
+    pushState === "subscribed"  ? { bg: "rgba(34,197,94,0.12)",  border: "#22c55e66", text: "#4ade80" } :
+    pushState === "denied" || pushState === "unsupported"
+                                ? { bg: "rgba(100,116,139,0.1)", border: "#47536166", text: "#64748b" } :
+                                  { bg: "rgba(251,191,36,0.1)",  border: "#f59e0b66", text: "#fbbf24" };
+
+  const showPushBtn = pushState !== "loading" && pushState !== "unsupported";
 
   const compactTime = `${String(clock.getHours()).padStart(2, "0")}:${String(clock.getMinutes()).padStart(2, "0")}`;
 
@@ -71,6 +99,27 @@ export function Header({ onToggleSidebar, isOnline, btcPrice, isMobile }: Header
 
       {/* Right: controls */}
       <div className="flex items-center gap-2 flex-shrink-0">
+
+        {/* Push notification toggle */}
+        {showPushBtn && (
+          <button
+            onClick={handlePush}
+            disabled={pushState === "denied"}
+            title={pushTitle}
+            className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-semibold transition-all"
+            style={{
+              background: pushColor.bg,
+              border: `1px solid ${pushColor.border}`,
+              color: pushColor.text,
+              cursor: pushState === "denied" ? "not-allowed" : "pointer",
+            }}>
+            <span>{pushIcon}</span>
+            {!isMobile && (
+              <span>{pushState === "subscribed" ? "התראות ON" : "התראות"}</span>
+            )}
+          </button>
+        )}
+
         <button
           onClick={handleSync}
           disabled={syncState === "syncing"}

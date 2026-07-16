@@ -383,6 +383,25 @@ last_daily_report_date = None
 
 # SCAN_REPORT_FILE → config.py (from config import *)
 
+def send_push(title: str, body: str, tag: str = "") -> None:
+    """שולח Web Push Notification לדשבורד דרך API Server (fire-and-forget)."""
+    try:
+        internal_secret = os.environ.get('INTERNAL_API_SECRET', '')
+        if not internal_secret:
+            return
+        payload = {'title': title, 'body': body}
+        if tag:
+            payload['tag'] = tag
+        requests.post(
+            'http://localhost:8080/api/push/send',
+            json=payload,
+            headers={'X-Internal-Token': internal_secret},
+            timeout=3,
+        )
+    except Exception as _pe:
+        print(f"[Push] שגיאה (non-critical): {_pe}", flush=True)
+
+
 def _reject_reason(score: int, breakdown: str) -> str:
     """הופך breakdown גולמי לסיבת דחייה קריאה לאדם."""
     bd = breakdown.lower()
@@ -1581,6 +1600,16 @@ def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_pric
         exit_reason = record['close_reason'],
     )
 
+    # ── Web Push Notification ─────────────────────────────────────────────
+    sym_short  = record['symbol'].replace('/USDT', '')
+    pnl_sign   = '+' if pnl_usd >= 0 else ''
+    win_emoji  = '✅' if pnl_usd >= 0 else '❌'
+    send_push(
+        title=f"{win_emoji} {sym_short} {record['direction']} נסגרה",
+        body=f"{pnl_sign}${pnl_usd:.2f} | {close_reason}",
+        tag=f"close-{record['symbol']}",
+    )
+
 def wallet_status_text() -> str:
     """מחזיר מחרוזת סטטוס ארנק לטלגרם — Available Balance ראשי."""
     available  = wallet.get('balance', STARTING_BALANCE)
@@ -2492,6 +2521,13 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     chart_buf = generate_chart(df_3h, symbol, price, sl_price, tp_price, direction) \
                 if df_3h is not None else None
     send_chart_alert(chart_buf, symbol, msg)
+    sym_short = symbol.replace('/USDT', '')
+    dir_emoji = '🟢' if direction == 'LONG' else '🔴'
+    send_push(
+        title=f"{dir_emoji} עסקה נפתחה — {sym_short} {direction}",
+        body=f"כניסה @ {price:.6g} | SL {sl_pct:.1f}% | TP {tp_pct:.1f}%",
+        tag=f"open-{symbol}",
+    )
     print(f"[SWING] Trade opened: {symbol} {direction} @ {price:.6g} | "
           f"SL={sl_pct:.1f}% TP1={tp1_pct:.1f}% TP2={tp_pct:.1f}% | "
           f"{leverage}x margin=${effective_margin:.0f} pos=${pos_size:.0f}")
