@@ -1,28 +1,21 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import http from "http";
 import https from "https";
 import { fileURLToPath } from "url";
 import { osGet } from "../lib/objectStorage.js";
+import { SESSION_COOKIE, SESSION_TOKEN, requireSession } from "../lib/auth.js";
 
 const router = Router();
 
-// ── Auth middleware ──────────────────────────────────────────────────────────
-
-// Server-side session token generated fresh at startup — never sent to client JS.
-// The token is issued via POST /api/_login ONLY after the caller supplies the correct
-// DASHBOARD_PASSWORD. GET /api/_session only checks the cookie; it never issues one.
-const _SESSION_COOKIE   = "dash_sid";
-const _SESSION_TOKEN    = crypto.randomBytes(32).toString("hex");
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD ?? "";
 
 // GET /api/_session — read-only auth check; returns {authenticated: true/false}.
 // Does NOT issue any cookie. Used by the dashboard on mount to detect login state.
 router.get("/_session", (req, res) => {
-  const token = (req.cookies as Record<string, string> | undefined)?.[_SESSION_COOKIE];
-  res.json({ authenticated: token === _SESSION_TOKEN && _SESSION_TOKEN.length > 0 });
+  const token = (req.cookies as Record<string, string> | undefined)?.[SESSION_COOKIE];
+  res.json({ authenticated: token === SESSION_TOKEN && SESSION_TOKEN.length > 0 });
 });
 
 // POST /api/_login — validates DASHBOARD_PASSWORD, then issues the HttpOnly session cookie.
@@ -37,7 +30,7 @@ router.post("/_login", (req, res) => {
     res.status(401).json({ ok: false, error: "Invalid password" });
     return;
   }
-  res.cookie(_SESSION_COOKIE, _SESSION_TOKEN, {
+  res.cookie(SESSION_COOKIE, SESSION_TOKEN, {
     httpOnly: true,
     sameSite: "strict",
     secure: process.env.NODE_ENV === "production",
@@ -48,18 +41,9 @@ router.post("/_login", (req, res) => {
 
 // POST /api/_logout — clears the session cookie.
 router.post("/_logout", (_req, res) => {
-  res.clearCookie(_SESSION_COOKIE, { httpOnly: true, sameSite: "strict" });
+  res.clearCookie(SESSION_COOKIE, { httpOnly: true, sameSite: "strict" });
   res.json({ ok: true });
 });
-
-function requireSession(req: Request, res: Response, next: NextFunction): void {
-  const token = (req.cookies as Record<string, string> | undefined)?.[_SESSION_COOKIE];
-  if (!token || token !== _SESSION_TOKEN || !_SESSION_TOKEN) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
-  next();
-}
 
 // INTERNAL_API_SECRET is used server-to-server only: Express adds this header when
 // proxying to Flask so Flask can reject requests that bypass the Express layer.

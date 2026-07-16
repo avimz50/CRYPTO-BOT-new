@@ -1,54 +1,55 @@
-import { Router, type Request, type Response, type NextFunction } from "express";
-import crypto from "crypto";
+import { Router } from "express";
+import type { Request, Response, NextFunction } from "express";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import webpush from "web-push";
+import { requireSession } from "../lib/auth.js";
 
 const router = Router();
 
-const VAPID_PUBLIC_KEY  = process.env.VAPID_PUBLIC_KEY  ?? "";
-const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY ?? "";
-const VAPID_SUBJECT     = process.env.VAPID_SUBJECT     ?? "mailto:admin@cryptobot.local";
+const VAPID_PUBLIC_KEY   = process.env.VAPID_PUBLIC_KEY  ?? "";
+const VAPID_PRIVATE_KEY  = process.env.VAPID_PRIVATE_KEY ?? "";
+const VAPID_SUBJECT      = process.env.VAPID_SUBJECT     ?? "mailto:admin@cryptobot.local";
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET ?? "";
-const _SESSION_COOKIE   = "dash_sid";
 
 if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
   webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 }
 
-// In-memory subscription store (survives the process lifetime; 1 device is enough for this bot)
-let _subscription: webpush.PushSubscription | null = null;
+// ── Durable subscription persistence ────────────────────────────────────────
+// Stored on disk so it survives process restarts.
+const __dirname_here = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(__dirname_here, "../../..");
+const SUB_FILE = path.join(ROOT, "push_subscription.json");
 
-// ── Auth helpers (duplicated minimally — avoids circular import) ──────────────
-const _SESSION_TOKEN_REF = {
-  // We can't share the token from bot.ts without circular imports.
-  // Instead, require the session cookie value to be passed and we verify it
-  // against an env-driven password hash. Since requireSession lives in bot.ts,
-  // we use a lightweight approach here: accept any valid session cookie OR
-  // fall back to checking the Internal-Token header (for bot→server calls).
-};
-
-function _hasSession(req: Request): boolean {
-  // We can't directly access bot.ts _SESSION_TOKEN (different module).
-  // Use a simple approach: re-read the cookie and check it against a
-  // shared auth mechanism. We reuse the INTERNAL_API_SECRET for the push/send
-  // endpoint, and treat the browser session as "authenticated" by checking
-  // the cookie is non-empty (the real auth happens at the bot.ts level, but
-  // the browser only hits /api/push/* after already being authenticated).
-  // For subscribe: the browser will have a valid cookie from bot.ts session.
-  // We trust the presence of a non-empty dash_sid cookie (Express already
-  // validates this in bot.ts for all data endpoints; push/subscribe is called
-  // only from within the authenticated dashboard).
-  const cookies = req.cookies as Record<string, string> | undefined;
-  return typeof cookies?.[_SESSION_COOKIE] === "string" && cookies[_SESSION_COOKIE].length > 0;
-}
-
-function requireSession(req: Request, res: Response, next: NextFunction): void {
-  if (!_hasSession(req)) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
+function _loadSub(): webpush.PushSubscription | null {
+  try {
+    const raw = fs.readFileSync(SUB_FILE, "utf-8");
+    return JSON.parse(raw) as webpush.PushSubscription;
+  } catch {
+    return null;
   }
-  next();
 }
 
+function _saveSub(sub: webpush.PushSubscription | null): void {
+  try {
+    if (sub) {
+      fs.writeFileSync(SUB_FILE, JSON.stringify(sub, null, 2), "utf-8");
+    } else {
+      fs.rmSync(SUB_FILE, { force: true });
+    }
+  } catch (e) {
+    console.error("[Push] Failed to persist subscription:", e);
+  }
+}
+
+let _subscription: webpush.PushSubscription | null = _loadSub();
+if (_subscription) {
+  console.log("[Push] Loaded persisted subscription from disk.");
+}
+
+// ── Internal-token auth (bot → server) ───────────────────────────────────────
 function requireInternalToken(req: Request, res: Response, next: NextFunction): void {
   if (!INTERNAL_API_SECRET) {
     res.status(503).json({ error: "INTERNAL_API_SECRET not configured" });
@@ -62,7 +63,7 @@ function requireInternalToken(req: Request, res: Response, next: NextFunction): 
   next();
 }
 
-// GET /api/push/vapid-public-key — public, no auth needed
+// GET /api/push/vapid-public-key — public, no auth needed (only public key)
 router.get("/vapid-public-key", (_req, res) => {
   if (!VAPID_PUBLIC_KEY) {
     res.status(503).json({ error: "Push notifications not configured" });
@@ -71,7 +72,7 @@ router.get("/vapid-public-key", (_req, res) => {
   res.json({ publicKey: VAPID_PUBLIC_KEY });
 });
 
-// POST /api/push/subscribe — stores the browser's push subscription
+// POST /api/push/subscribe — stores the browser's push subscription (session-auth)
 router.post("/subscribe", requireSession, (req, res) => {
   const sub = req.body as webpush.PushSubscription | undefined;
   if (!sub?.endpoint || !sub?.keys) {
@@ -79,23 +80,25 @@ router.post("/subscribe", requireSession, (req, res) => {
     return;
   }
   _subscription = sub;
-  console.log(`[Push] Subscription registered: ${sub.endpoint.slice(0, 60)}...`);
+  _saveSub(sub);
+  console.log(`[Push] Subscription registered and persisted: ${sub.endpoint.slice(0, 60)}...`);
   res.json({ ok: true });
 });
 
-// DELETE /api/push/subscribe — unsubscribes
+// DELETE /api/push/subscribe — unsubscribes (session-auth)
 router.delete("/subscribe", requireSession, (_req, res) => {
   _subscription = null;
+  _saveSub(null);
   console.log("[Push] Subscription cleared");
   res.json({ ok: true });
 });
 
-// GET /api/push/status — returns whether a subscription is registered (for UI)
+// GET /api/push/status — returns whether a subscription is registered (session-auth)
 router.get("/status", requireSession, (_req, res) => {
   res.json({ subscribed: _subscription !== null });
 });
 
-// POST /api/push/send — internal only (called by Python bot via HTTP)
+// POST /api/push/send — internal only (Python bot → API Server)
 // Body: { title: string, body: string, icon?: string, tag?: string }
 router.post("/send", requireInternalToken, async (req, res) => {
   if (!_subscription) {
@@ -128,9 +131,9 @@ router.post("/send", requireInternalToken, async (req, res) => {
     const e = err as { statusCode?: number; message?: string };
     console.error(`[Push] Send failed: ${e?.statusCode} ${e?.message}`);
     if (e?.statusCode === 410 || e?.statusCode === 404) {
-      // Subscription expired — clear it
       _subscription = null;
-      console.log("[Push] Subscription expired — cleared");
+      _saveSub(null);
+      console.log("[Push] Subscription expired — cleared and removed from disk");
     }
     res.status(500).json({ ok: false, error: String(e?.message ?? err) });
   }
