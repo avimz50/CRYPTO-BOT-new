@@ -29,6 +29,7 @@ from market_logic import (
     detect_flag, detect_bb_squeeze, detect_volume_buildup,
     detect_rsi_divergence, score_candles,
     momentum_gate,
+    adaptive_threshold,
 )
 
 # ── אזור זמן ישראל — ZoneInfo עובד גם ב-Production ──
@@ -5773,9 +5774,10 @@ def handle_scan(message):
             elif signals_found == 0:
                 top_m = sorted(all_rejections_m, key=lambda x: x.get('best_score', 0), reverse=True)
                 best_m = top_m[0] if top_m else None
+                _eff_m, _, _, _eff_lbl = adaptive_threshold(fng_v_m, btc_regime, 'LONG')
                 sys_msg_m = (
-                    f"אף מטבע לא הגיע לציון {MIN_SCORE}/100. הטוב ביותר: {best_m['symbol']} עם {best_m['best_score']}/100" if best_m
-                    else f"אף מטבע לא עמד בסף {MIN_SCORE}/100"
+                    f"אף מטבע לא הגיע לסף {_eff_m}/100 [{_eff_lbl}]. הטוב ביותר: {best_m['symbol']} עם {best_m['best_score']}/100" if best_m
+                    else f"אף מטבע לא עמד בסף {_eff_m}/100 [{_eff_lbl}]"
                 )
             else:
                 sys_msg_m = f"{signals_found} עסקה/ות נפתחו — סריקה ידנית"
@@ -5923,6 +5925,16 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
     # ── Sentiment ─────────────────────────────────────────────────────────────
     fng_v_scan, fng_lbl_scan, fng_action = sentiment_check("scan")
 
+    # ── Adaptive Threshold — FNG + BTC Regime → effective entry bar ───────────
+    eff_min, eff_rsi_long, eff_rsi_short, eff_label = adaptive_threshold(
+        fng_v_scan, btc_regime, direction
+    )
+    print(
+        f"[AdaptiveThreshold] {direction} | base={MIN_SCORE} → eff={eff_min} "
+        f"[{eff_label}] | RSI_L≤{eff_rsi_long} RSI_S≥{eff_rsi_short}",
+        flush=True,
+    )
+
     # ── Market Regime Gate (FNG + BTC EMA20 4H) ──────────────────────────────
     _mr_allowed, _mr_reason = is_direction_allowed(direction, context='Scan')
     if not _mr_allowed:
@@ -6048,8 +6060,11 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                 print(f"  [MomentumGate] ✅ {symbol}: {_gate_reason}")
             # ─────────────────────────────────────────────────────────────────────
 
-            print(f"Scoring {symbol} [{direction}] @ {price:.6g} [4H]")
-            score, breakdown, atr = score_symbol(df_4h, df_1h, symbol, direction, fng_v=fng_v_scan)
+            print(f"Scoring {symbol} [{direction}] @ {price:.6g} [4H] | threshold={eff_min} [{eff_label}]")
+            score, breakdown, atr = score_symbol(
+                df_4h, df_1h, symbol, direction, fng_v=fng_v_scan,
+                rsi_veto_long=eff_rsi_long, rsi_veto_short=eff_rsi_short,
+            )
             score_4h  = score
             score_1h  = 0
             score_15m = 0
@@ -6060,41 +6075,47 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
             tf_reason = 'טרנד חזק בגרף 4H'
 
             # ── שלב 2: אם 4H לא מספיק — נסה 1H ──
-            if score < MIN_SCORE:
+            if score < eff_min:
                 df_15m = get_data_cached(symbol, timeframe='15m', limit=250)
-                score_1h, breakdown_1h, atr_1h = score_symbol(df_1h, df_15m, symbol, direction, fng_v=fng_v_scan)
-                print(f"  4H={score_4h} < {MIN_SCORE} → try 1H: {score_1h}")
+                score_1h, breakdown_1h, atr_1h = score_symbol(
+                    df_1h, df_15m, symbol, direction, fng_v=fng_v_scan,
+                    rsi_veto_long=eff_rsi_long, rsi_veto_short=eff_rsi_short,
+                )
+                print(f"  4H={score_4h} < {eff_min} → try 1H: {score_1h}")
                 if score_1h > best_score:
                     best_score     = score_1h
                     best_breakdown = breakdown_1h
-                if score_1h >= MIN_SCORE:
+                if score_1h >= eff_min:
                     score     = score_1h
                     breakdown = breakdown_1h
                     atr       = atr_1h
                     chosen_tf = '1H'
                     chosen_df = df_1h
                     price     = df_1h['close'].iloc[-1]
-                    tf_reason = f'High Volatility Entry ב-1H (4H={score_4h} < {MIN_SCORE})'
+                    tf_reason = f'High Volatility Entry ב-1H (4H={score_4h} < {eff_min})'
 
                 # ── שלב 3: אם גם 1H לא מספיק — נסה 15m (Scalp) ──
                 else:
-                    score_15m, breakdown_15m, atr_15m = score_symbol(df_15m, df_1h, symbol, direction, fng_v=fng_v_scan)
-                    print(f"  1H={score_1h} < {MIN_SCORE} → try 15m: {score_15m}")
+                    score_15m, breakdown_15m, atr_15m = score_symbol(
+                        df_15m, df_1h, symbol, direction, fng_v=fng_v_scan,
+                        rsi_veto_long=eff_rsi_long, rsi_veto_short=eff_rsi_short,
+                    )
+                    print(f"  1H={score_1h} < {eff_min} → try 15m: {score_15m}")
                     if score_15m > best_score:
                         best_score     = score_15m
                         best_breakdown = breakdown_15m
-                    if score_15m >= MIN_SCORE:
+                    if score_15m >= eff_min:
                         score     = score_15m
                         breakdown = breakdown_15m
                         atr       = atr_15m
                         chosen_tf = '15m'
                         chosen_df = df_15m
                         price     = df_15m['close'].iloc[-1]
-                        tf_reason = f'Scalp Entry ב-15m (4H={score_4h}, 1H={score_1h} < {MIN_SCORE})'
+                        tf_reason = f'Scalp Entry ב-15m (4H={score_4h}, 1H={score_1h} < {eff_min})'
 
             # ── Priority Score Logging — compare with open trades when slots full ─
             if at_capacity:
-                if score >= MIN_SCORE and active_trades:
+                if score >= eff_min and active_trades:
                     _lowest = min(active_trades, key=lambda t: t.get('score', 0))
                     _delta  = score - _lowest.get('score', 0)
                     if _delta > 0:
@@ -6110,7 +6131,7 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
                         )
                 continue  # never open new trades when at capacity
 
-            if score >= MIN_SCORE:
+            if score >= eff_min:
                 # חישוב RSI ו-EMA200 רגע לפני פתיחה לשמירה בדוח
                 try:
                     _last_rsi   = ta.rsi(chosen_df['close'], length=14).iloc[-1]

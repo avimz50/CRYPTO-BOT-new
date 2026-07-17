@@ -676,7 +676,9 @@ def momentum_gate(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def score_symbol(df_3h, df_1h, symbol: str, direction: str = 'LONG',
-                 fng_v: int = None) -> tuple[int, str, float]:
+                 fng_v: int = None,
+                 rsi_veto_long: int = None,
+                 rsi_veto_short: int = None) -> tuple[int, str, float]:
     """
     Professional scoring system 0–100+ points.
 
@@ -779,10 +781,12 @@ def score_symbol(df_3h, df_1h, symbol: str, direction: str = 'LONG',
 
         # ── 3. RSI Safety Gate + Scoring — 10 pts ────────────────────────────
         # STRICT: LONG forbidden if RSI > 55 | SHORT forbidden if RSI < 45
-        if direction == 'LONG' and rsi_v > RSI_VETO_LONG:
-            return 0, f"RSI Safety Gate: LONG אסור (RSI={rsi_v:.1f} > {RSI_VETO_LONG} — overbought)", atr_v
-        if direction == 'SHORT' and rsi_v < RSI_VETO_SHORT:
-            return 0, f"RSI Safety Gate: SHORT אסור (RSI={rsi_v:.1f} < {RSI_VETO_SHORT} — oversold)", atr_v
+        _rvl = rsi_veto_long  if rsi_veto_long  is not None else RSI_VETO_LONG
+        _rvs = rsi_veto_short if rsi_veto_short is not None else RSI_VETO_SHORT
+        if direction == 'LONG' and rsi_v > _rvl:
+            return 0, f"RSI Safety Gate: LONG אסור (RSI={rsi_v:.1f} > {_rvl} — overbought)", atr_v
+        if direction == 'SHORT' and rsi_v < _rvs:
+            return 0, f"RSI Safety Gate: SHORT אסור (RSI={rsi_v:.1f} < {_rvs} — oversold)", atr_v
 
         # Scoring — within the allowed RSI window
         if direction == 'LONG':
@@ -969,3 +973,106 @@ def sentiment_check(context: str = "scan") -> tuple:
         print(f"[Sentiment] {_last_sentiment_action or 'START'} → {action} [{context}]")
         _last_sentiment_action = action
     return fng_v, lbl, action
+
+
+# ── Adaptive Threshold Engine ──────────────────────────────────────────────────
+# FNG band: (max_fng_inclusive, label, min_score_delta, rsi_veto_long, rsi_veto_short)
+_FNG_BANDS: list[tuple] = [
+    (19,  'Extreme Fear',  +10, 55, 65),
+    (39,  'Fear',          +5,  58, 62),
+    (59,  'Neutral',        0,  62, 60),
+    (74,  'Greed',         -3,  65, 58),
+    (100, 'Extreme Greed', +3,  63, 60),
+]
+
+# Regime + direction → additional delta on MIN_SCORE
+_REGIME_DIR_DELTA: dict[tuple, int] = {
+    ('BULL', 'LONG'):    -3,   # with-trend long — slightly easier
+    ('BULL', 'SHORT'):  +15,   # counter-trend short — very hard
+    ('BEAR', 'SHORT'):   -3,   # with-trend short — slightly easier
+    ('BEAR', 'LONG'):   +10,   # counter-trend long — hard
+    ('NEUTRAL', 'LONG'):  0,
+    ('NEUTRAL', 'SHORT'): 0,
+}
+
+
+def adaptive_threshold(fng_value, btc_regime: str, direction: str
+                       ) -> tuple[int, int, int, str]:
+    """
+    Compute effective (min_score, rsi_veto_long, rsi_veto_short, label) from
+    current FNG value, BTC regime, and trade direction.
+
+    Base values come from config (MIN_SCORE / RSI_VETO_LONG / RSI_VETO_SHORT).
+    This function adds regime-aware deltas on top.
+
+    Robust fallback: if fng_value is None or out of 0-100 range, falls back to
+    Neutral (FNG=50) so the bot keeps trading even when the FNG API is down.
+
+    Returns:
+        (eff_min_score, eff_rsi_veto_long, eff_rsi_veto_short, label_str)
+    """
+    # ── Safe fallback — FNG API may be unavailable ─────────────────────────
+    try:
+        fng_int = int(fng_value)
+        if not (0 <= fng_int <= 100):
+            raise ValueError
+    except (TypeError, ValueError):
+        fng_int = 50  # Neutral — bot keeps trading
+
+    btc_regime = (btc_regime or 'NEUTRAL').upper()
+    direction  = (direction  or 'LONG').upper()
+
+    # ── FNG band lookup ───────────────────────────────────────────────────
+    fng_delta  = 0
+    rsi_long   = RSI_VETO_LONG
+    rsi_short  = RSI_VETO_SHORT
+    band_label = 'Neutral'
+    for max_fng, label, delta, rv_long, rv_short in _FNG_BANDS:
+        if fng_int <= max_fng:
+            fng_delta  = delta
+            rsi_long   = rv_long
+            rsi_short  = rv_short
+            band_label = label
+            break
+
+    # ── Regime + direction delta ──────────────────────────────────────────
+    regime_delta = _REGIME_DIR_DELTA.get((btc_regime, direction), 0)
+
+    # ── Compute & clamp ───────────────────────────────────────────────────
+    eff_min = MIN_SCORE + fng_delta + regime_delta
+    eff_min = max(60, min(95, eff_min))
+
+    # ── Human-readable label for logs / Telegram ─────────────────────────
+    fng_part    = (f"FNG={fng_int}({band_label})→{fng_delta:+d}"
+                   if fng_delta != 0 else f"FNG={fng_int}({band_label})")
+    regime_part = (f"{btc_regime}+{direction}→{regime_delta:+d}"
+                   if regime_delta != 0 else "")
+    parts       = [p for p in [fng_part, regime_part] if p]
+    label_str   = " | ".join(parts) or "Neutral"
+
+    return eff_min, rsi_long, rsi_short, label_str
+
+
+def _test_adaptive_threshold() -> None:
+    """
+    Dry-run sanity check.  Run directly:  python market_logic.py
+    Prints the computed thresholds for key scenarios so you can verify the math.
+    """
+    cases = [
+        (15,  'BULL',    'LONG',  'Extreme Fear + BULL LONG  → expect ~72  (85-13?)'),
+        (15,  'BULL',    'SHORT', 'Extreme Fear + BULL SHORT → expect 90   (85+15-10 clamp)'),
+        (15,  'NEUTRAL', 'LONG',  'Extreme Fear + NEUTRAL    → expect 85   (75+10)'),
+        (75,  'BULL',    'LONG',  'Extreme Greed + BULL LONG → expect 75   (75+3-3)'),
+        (75,  'BEAR',    'SHORT', 'Extreme Greed + BEAR SHORT→ expect 75   (75+3-3)'),
+        (75,  'BULL',    'SHORT', 'Extreme Greed + BULL SHORT→ expect 93   (75+3+15)'),
+        (50,  'NEUTRAL', 'LONG',  'Pure Neutral              → expect 75   (base)'),
+        (None,'BULL',    'LONG',  'FNG=None fallback         → expect 72   (Neutral+BULL LONG)'),
+    ]
+    print("\n╔══ adaptive_threshold() — Dry Run ══════════════════════════════════")
+    print(f"  {'FNG':>6}  {'Regime':>8}  {'Dir':>6} │ {'eff_min':>8}  {'RSI_L':>6}  {'RSI_S':>6}  Label")
+    print("  " + "─" * 72)
+    for fng, regime, dirn, note in cases:
+        eff_min, rsi_l, rsi_s, lbl = adaptive_threshold(fng, regime, dirn)
+        fng_d = str(fng) if fng is not None else "None"
+        print(f"  {fng_d:>6}  {regime:>8}  {dirn:>6} │ {eff_min:>8}  {rsi_l:>6}  {rsi_s:>6}  {lbl}")
+    print("╚" + "═" * 74 + "\n")
