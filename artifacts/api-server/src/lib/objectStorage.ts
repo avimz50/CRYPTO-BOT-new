@@ -1,48 +1,37 @@
 /**
- * Lightweight Object Storage reader/writer for the api-server fallback layer.
+ * Lightweight Object Storage reader/writer for the api-server.
  *
- * Uses the same Replit GCS sidecar auth as the Python bot's state_store.py.
- * Keys map identically: key "wallet" → "<PRIVATE_OBJECT_DIR>/state/wallet.json"
- *
- * Call order in fetchFromFlask: Flask → Object Storage → disk → hardcoded default
+ * Uses the Replit GCS sidecar auth — credentials passed directly to
+ * @google-cloud/storage (same pattern as the official Replit template).
+ * Keys map to: "<bucket>/.private/state/<key>.json"
  */
 import { Storage } from "@google-cloud/storage";
-import { IdentityPoolClient } from "google-auth-library";
 
-const BUCKET_ID   = process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID ?? "";
-const PRIVATE_DIR = process.env.PRIVATE_OBJECT_DIR ?? "";
+const REPLIT_SIDECAR = "http://127.0.0.1:1106";
+const BUCKET_ID      = process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID ?? "";
+const PRIVATE_DIR    = process.env.PRIVATE_OBJECT_DIR ?? "";
 
-let _storage: Storage | null = null;
-
-function _getStorage(): Storage | null {
-  if (!BUCKET_ID) return null;
-  if (_storage) return _storage;
-  try {
-    const authClient = new IdentityPoolClient({
-      audience: "replit",
-      subjectTokenType: "urn:ietf:params:oauth:token-type:access_token",
-      tokenUrl: "http://127.0.0.1:1106/token",
-      credentialSource: {
-        url: "http://127.0.0.1:1106/credential",
-        format: {
-          type: "json",
-          subject_token_field_name: "access_token",
-        },
-      },
-    });
-    // Cast needed: @google-cloud/storage bundles google-auth-library@9 internally,
-    // but we import from google-auth-library@10. The runtime interface is compatible.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    _storage = new Storage({ authClient: authClient as any });
-    return _storage;
-  } catch {
-    return null;
-  }
-}
+// Use the same credential shape as the official Replit objectStorage template.
+// Do NOT use IdentityPoolClient — it has google-auth-library version conflicts.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const _storage = BUCKET_ID ? new Storage({
+  credentials: {
+    type: "external_account",
+    audience: "replit",
+    subject_token_type: "access_token",
+    token_url: `${REPLIT_SIDECAR}/token`,
+    credential_source: {
+      url: `${REPLIT_SIDECAR}/credential`,
+      format: { type: "json", subject_token_field_name: "access_token" },
+    },
+    universe_domain: "googleapis.com",
+  } as any,
+  projectId: "",
+} as any) : null;
 
 function _objectName(key: string): string {
-  // Mirror Python logic in state_store._object_name(key)
-  // PRIVATE_OBJECT_DIR: e.g. "/<bucket>/.private" → base = ".private"
+  // Mirror Python state_store._object_name():
+  // PRIVATE_OBJECT_DIR is like "/<bucket>/.private" — strip leading "/<bucket>/"
   const base = PRIVATE_DIR.replace(/^\/[^/]+\/?/, "").replace(/\/$/, "");
   return `${base ? base + "/" : ""}state/${key}.json`;
 }
@@ -52,12 +41,10 @@ function _objectName(key: string): string {
  * Times out after `timeoutMs` ms (default 3000).
  */
 export async function osGet(key: string, timeoutMs = 3000): Promise<unknown> {
-  const storage = _getStorage();
-  if (!storage) return null;
+  if (!_storage) return null;
   try {
-    const objectName = _objectName(key);
     const race = Promise.race([
-      storage.bucket(BUCKET_ID).file(objectName).download(),
+      _storage.bucket(BUCKET_ID).file(_objectName(key)).download(),
       new Promise<never>((_, rej) =>
         setTimeout(() => rej(new Error("os_timeout")), timeoutMs),
       ),
@@ -75,11 +62,9 @@ export async function osGet(key: string, timeoutMs = 3000): Promise<unknown> {
  * Times out after `timeoutMs` ms (default 5000).
  */
 export async function osSet(key: string, value: unknown, timeoutMs = 5000): Promise<boolean> {
-  const storage = _getStorage();
-  if (!storage) return false;
+  if (!_storage) return false;
   try {
-    const objectName = _objectName(key);
-    const file = storage.bucket(BUCKET_ID).file(objectName);
+    const file = _storage.bucket(BUCKET_ID).file(_objectName(key));
     if (value === null) {
       await Promise.race([
         file.delete({ ignoreNotFound: true }),
@@ -93,7 +78,8 @@ export async function osSet(key: string, value: unknown, timeoutMs = 5000): Prom
       ]);
     }
     return true;
-  } catch {
+  } catch (err) {
+    console.error("[ObjectStorage] osSet error:", (err as Error)?.message ?? err);
     return false;
   }
 }
