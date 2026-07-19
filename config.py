@@ -42,7 +42,7 @@ DAILY_LOSS_LIMIT = -30.0     # -$30 = 15% of $200 starting balance
 # BEARISH: FNG < 40 OR BTC below 4H EMA20  → LONGs blocked
 # BULLISH: FNG > 60 AND BTC above 4H EMA20 → SHORTs blocked
 # NEUTRAL: 40 ≤ FNG ≤ 60                   → both allowed, max 2 trades
-REGIME_BEARISH_FNG       = 35   # FNG threshold below = bearish (strict: <35 OR BTC<EMA20)
+REGIME_BEARISH_FNG       = 25   # FNG threshold below = bearish (Extreme Fear only: <25 OR BTC<EMA20)
 REGIME_BULLISH_FNG       = 60   # FNG threshold above = bullish
 REGIME_NEUTRAL_MAX_TRADES = 2   # max concurrent trades in choppy/neutral market
 
