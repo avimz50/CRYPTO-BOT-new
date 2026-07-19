@@ -1,5 +1,10 @@
 uploads = []
-generated = []
+
+[[generated]]
+id = "81bgT6n47PLCOgYojvKqW"
+uri = "file://artifacts/bot-dashboard/public/icon-512.png"
+type = "image"
+title = "robot trading bot icon"
 
 [[outputs]]
 id = "egCt1p49VbgCya_yQB0a-"
