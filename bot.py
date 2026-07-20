@@ -2404,6 +2404,12 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         print(f"[Swing] {symbol} {direction} נדחה — {_reason}", flush=True)
         return
 
+    # ── Swing חסום בשוק NEUTRAL — Swing צריכה מגמה ברורה ────────────────────
+    _swing_regime, _swing_fng, _, _ = get_market_regime()
+    if _swing_regime == 'NEUTRAL':
+        print(f"[Swing] {symbol} {direction} נדחה — NEUTRAL Regime, Swing דורשת BULL/BEAR (FNG={_swing_fng})", flush=True)
+        return
+
     # ── Fixed Sizing ──────────────────────────────────────────────────────────
     effective_margin = MARGIN        # $50
     pos_size         = POSITION_SIZE  # $500 (MARGIN × LEVERAGE)

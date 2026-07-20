@@ -109,3 +109,5 @@ timestamp,symbol,side,entry_price,exit_price,pnl_usd,exit_reason
 2026-07-13 05:02:01,ONDO/USDT,SHORT,0.3167,0.3162,0.79,MaxDuration
 2026-07-19 17:27:06,XRP/USDT,LONG,1.0997,1.095,-2.14,MaxDuration
 2026-07-19 17:27:08,SOL/USDT,LONG,76.54,76.11,-2.81,MaxDuration
+2026-07-19 19:01:47,RUVXY/USDT,LONG,25.411,25.42,0.18,MaxDuration
+2026-07-19 19:01:49,RDUOL/USDT,LONG,133.52,133.52,0.0,MaxDuration
