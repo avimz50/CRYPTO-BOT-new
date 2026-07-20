@@ -70,6 +70,7 @@ audit_report.json              ← closed trade history
 
 ## User preferences
 
+- המשתמש: אבי, זכר
 - Dark blue palette: `#070d1a` base, `#0a1628` panels, `#0d1f3c` cards, `#1e3a5f` borders, `#3b82f6` accent
 - Compact, data-dense UI with monospace numbers
 - Hebrew locale for clock (user originally requested — now using system locale)
