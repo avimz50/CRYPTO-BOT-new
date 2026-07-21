@@ -115,7 +115,7 @@ SMART_TIMEOUT_MIN_PROFIT_PCT = 1.0   # סף רווח מינימלי להמשך �
 
 # ── Max Duration — עצירה מוקדמת לעסקות Swing/Breakout ────────────────────────
 # סוגר עסקה שלא הגיעה ל-TP1/BE אחרי 60 דקות — חוסך $4-7 לעומת SL מלא ($10)
-SWING_MAX_DURATION_MIN = 90    # דקות מקסימום ללא TP1 — close at market
+SWING_MAX_DURATION_MIN = 150   # דקות מקסימום ללא TP1 — close at market
 
 # ── Fast-Loss Protection — זיהוי setup כושל מוקדם ──────────────────────────────
 # סוגר עסקה שמפסידה 5%+ מהמרג'ין בתוך 15 הדקות הראשונות
