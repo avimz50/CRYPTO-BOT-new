@@ -45,21 +45,24 @@ def calc_atr(df: pd.DataFrame, period: int = ATR_PERIOD) -> float:
 # ── SL / TP Level Calculator — Fixed % ────────────────────────────────────────
 def calc_targets(
     entry: float,
-    direction: str,   # 'LONG' or 'SHORT'
+    direction: str,          # 'LONG' or 'SHORT'
+    tp1_pct: float | None = None,  # override TP1_PCT from config (adaptive exit)
 ) -> dict:
     """
     Fixed-percentage SL/TP targets.
       SL  = SL_PCT  from entry (2%)
-      TP1 = TP1_PCT from entry (2%) — triggers Break-Even + 50% close
+      TP1 = tp1_pct arg (or TP1_PCT from config) — triggers Break-Even + 75% close
       TP2 = TP2_PCT from entry (4%) — final target (1:2 RR)
       BE  = entry price            — SL moves to entry when TP1 is hit
     """
     if entry <= 0:
         return {}
 
-    sl_dist  = entry * SL_PCT  / 100
-    tp1_dist = entry * TP1_PCT / 100
-    tp_dist  = entry * TP2_PCT / 100
+    eff_tp1_pct = tp1_pct if (tp1_pct is not None and tp1_pct > 0) else TP1_PCT
+
+    sl_dist  = entry * SL_PCT     / 100
+    tp1_dist = entry * eff_tp1_pct / 100
+    tp_dist  = entry * TP2_PCT    / 100
 
     if direction.upper() == 'LONG':
         sl_price  = round(entry - sl_dist,  8)
@@ -80,7 +83,7 @@ def calc_targets(
         'tp_price':  tp_price,
         'be_price':  be_price,
         'sl_pct':    SL_PCT,
-        'tp1_pct':   TP1_PCT,
+        'tp1_pct':   eff_tp1_pct,
         'tp_pct':    TP2_PCT,
         'sl_dist':   round(sl_dist,  8),
         'tp1_dist':  round(tp1_dist, 8),

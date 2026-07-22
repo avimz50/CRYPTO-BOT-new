@@ -30,6 +30,7 @@ from market_logic import (
     detect_rsi_divergence, score_candles,
     momentum_gate,
     adaptive_threshold,
+    adaptive_exit_params,
 )
 
 # ── אזור זמן ישראל — ZoneInfo עובד גם ב-Production ──
@@ -2404,13 +2405,18 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         print(f"[Swing] {symbol} {direction} נדחה — {_reason}", flush=True)
         return
 
+    # ── Adaptive Exit Parameters (FNG + BTC Regime) ───────────────────────────
+    _btc_regime_now          = get_btc_regime()
+    _dyn_tp1, _dyn_dur, _exit_lbl = adaptive_exit_params(fng_v, _btc_regime_now)
+    print(f"[AdaptiveExit] {symbol}: {_exit_lbl}", flush=True)
+
     # ── Fixed Sizing ──────────────────────────────────────────────────────────
     effective_margin = MARGIN        # $50
     pos_size         = POSITION_SIZE  # $500 (MARGIN × LEVERAGE)
     leverage         = LEVERAGE       # 10x
 
-    # ── Fixed SL/TP Targets ───────────────────────────────────────────────────
-    tgt       = se.calc_targets(price, direction)
+    # ── Dynamic SL/TP Targets (TP1 adapts to market conditions) ──────────────
+    tgt       = se.calc_targets(price, direction, tp1_pct=_dyn_tp1)
     sl_price  = tgt['sl_price']
     tp1_price = tgt['tp1_price']
     tp_price  = tgt['tp_price']
@@ -2471,6 +2477,7 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         'margin':               effective_margin,
         'leverage':             leverage,
         'fng_at_entry':         fng_v,
+        'max_duration_min':     _dyn_dur,
         'track':                'Swing',
         'vol_usd':              round(vol_usd),
         'change_24h':           round(change_24h, 2),
@@ -2500,12 +2507,13 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     msg = (
         f"*{dir_icon}  |  {symbol_spaced}*\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"📊 *ניקוד:* `{score}/100` | {asset_class} | FNG={fng_v}\n"
+        f"📊 *ניקוד:* `{score}/100` | {asset_class} | FNG={fng_v} | {_btc_regime_now}\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"💵 כניסה:  `{price:.6g}`\n"
         f"🛑 SL:     `{sl_price:.6g}` (-{sl_pct:.1f}%)\n"
-        f"🎯 TP1:    `{tp1_price:.6g}` (+{tp1_pct:.1f}%) → 🔒 BE auto\n"
+        f"🎯 TP1:    `{tp1_price:.6g}` (+{tp1_pct:.1f}%) → 🔒 BE auto ⚡ אדפטיבי\n"
         f"🎯 TP2:    `{tp_price:.6g}` (+{tp_pct:.1f}%)\n"
+        f"⏱ MaxDur: *{_dyn_dur}min*\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"🛡️ סיכון: `${est_loss_sl}` | 💰 רווח(TP1): `${est_profit_tp1}` | (TP2): `${est_profit_tp}`\n"
         f"💼 {leverage}x · ${effective_margin:.0f} מרג'ין · ${pos_size:.0f} נשלט\n"
@@ -3209,7 +3217,8 @@ def track_trades():
                     try:
                         _md_opened  = datetime.fromisoformat(trade.get('opened_at', now_il().isoformat()))
                         _md_elapsed = (now_il() - _md_opened).total_seconds() / 60
-                        if _md_elapsed >= SWING_MAX_DURATION_MIN:
+                        _md_limit   = trade.get('max_duration_min', SWING_MAX_DURATION_MIN)
+                        if _md_elapsed >= _md_limit:
                             _md_raw_pct = (current_price - entry) / entry * 100 \
                                           if direction == 'LONG' \
                                           else (entry - current_price) / entry * 100
@@ -3230,7 +3239,7 @@ def track_trades():
                             send_msg(
                                 f"⏱ *Max Duration Exit — {sym.replace('/USDT','')}* "
                                 f"{'🟢' if direction=='LONG' else '🔴'}\n"
-                                f"_TP1 לא הושג תוך {SWING_MAX_DURATION_MIN:.0f} דקות — יוצאים_\n\n"
+                                f"_TP1 לא הושג תוך {_md_limit:.0f} דקות — יוצאים_\n\n"
                                 f"כניסה: `{entry:.6g}` → יציאה: `{current_price:.6g}`\n"
                                 f"{_md_icon} *P&L: ${_md_pnl:+.2f}* ({_md_ret:+.1f}% על מרג'ין)\n"
                                 f"💼 {t_leverage}x · ${trade.get('margin', MARGIN):.0f} מרג'ין | {tbadge}\n"
@@ -3240,7 +3249,7 @@ def track_trades():
                             )
                             print(
                                 f"[MaxDuration] ⏱ {sym} {direction} — "
-                                f"{_md_elapsed:.0f}min ≥ {SWING_MAX_DURATION_MIN:.0f}min, no TP1 "
+                                f"{_md_elapsed:.0f}min ≥ {_md_limit:.0f}min (adaptive), no TP1 "
                                 f"→ exit P&L=${_md_pnl:+.2f}",
                                 flush=True
                             )

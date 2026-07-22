@@ -1053,6 +1053,71 @@ def adaptive_threshold(fng_value, btc_regime: str, direction: str
     return eff_min, rsi_long, rsi_short, label_str
 
 
+# ── Adaptive Exit Parameters ──────────────────────────────────────────────────
+# FNG band → (base_tp1_pct, base_max_dur_min)
+_EXIT_FNG_BANDS: list[tuple] = [
+    (19,  'Extreme Fear',  0.8,  90),
+    (39,  'Fear',          1.0, 120),
+    (59,  'Neutral',       1.0, 150),
+    (74,  'Greed',         1.5, 180),
+    (100, 'Extreme Greed', 2.0, 210),
+]
+
+# Regime → (tp1_pct delta, duration delta minutes)
+_EXIT_REGIME_DELTA: dict[str, tuple] = {
+    'BULL':    (+0.2, +30),
+    'BEAR':    (-0.2, -30),
+    'NEUTRAL': ( 0.0,   0),
+}
+
+
+def adaptive_exit_params(fng_value, regime: str) -> tuple[float, int, str]:
+    """
+    Compute adaptive exit parameters from current FNG + BTC regime.
+
+    Mirrors adaptive_threshold() logic but for exit management:
+      - Higher FNG (greed) + BULL regime → larger TP1, more time (trending market)
+      - Lower FNG (fear) + BEAR regime  → smaller TP1, less time (volatile market)
+
+    Robust fallback: FNG=None or out-of-range → treated as Neutral (50).
+
+    Returns:
+        (tp1_pct, max_duration_min, label_str)
+        tp1_pct          — TP1 trigger level (%), clamped 0.5–2.5
+        max_duration_min — max trade time without TP1 hit (min), clamped 60–240
+        label_str        — human-readable description for logs / Telegram
+    """
+    try:
+        fng_int = int(fng_value)
+        if not (0 <= fng_int <= 100):
+            raise ValueError
+    except (TypeError, ValueError):
+        fng_int = 50  # Neutral fallback — bot keeps trading even if FNG API is down
+
+    regime = (regime or 'NEUTRAL').upper()
+
+    base_tp1   = 1.0
+    base_dur   = 150
+    band_label = 'Neutral'
+    for max_fng, label, tp1, dur in _EXIT_FNG_BANDS:
+        if fng_int <= max_fng:
+            base_tp1   = tp1
+            base_dur   = dur
+            band_label = label
+            break
+
+    tp1_delta, dur_delta = _EXIT_REGIME_DELTA.get(regime, (0.0, 0))
+
+    eff_tp1 = round(max(0.5, min(2.5, base_tp1 + tp1_delta)), 1)
+    eff_dur = max(60, min(240, base_dur + dur_delta))
+
+    label_str = (
+        f"FNG={fng_int}({band_label}) | {regime} "
+        f"→ TP1={eff_tp1}% MaxDur={eff_dur}min"
+    )
+    return eff_tp1, eff_dur, label_str
+
+
 def _test_adaptive_threshold() -> None:
     """
     Dry-run sanity check.  Run directly:  python market_logic.py
