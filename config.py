@@ -32,7 +32,7 @@ POSITION_SIZE = MARGIN * LEVERAGE  # $500 controlled
 
 # ── Fixed SL / TP Percentages ──────────────────────────────────────────────────
 SL_PCT  = 2.0   # Stop Loss   = 2% from entry
-TP1_PCT = 2.0   # Take Profit 1 = 2% (triggers Break-Even + 75% close)
+TP1_PCT = 1.0   # Take Profit 1 = 1% (triggers Break-Even + 75% close)
 TP2_PCT = 4.0   # Take Profit 2 = 4% (final target, 1:2 RR)
 
 # ── Circuit Breaker ────────────────────────────────────────────────────────────
@@ -49,7 +49,7 @@ REGIME_NEUTRAL_MAX_TRADES = 2   # max concurrent trades in choppy/neutral market
 # ── Scoring Thresholds ─────────────────────────────────────────────────────────
 MIN_SCORE           = 75     # Entry threshold
 RSI_VETO_LONG       = 62     # Hard veto — LONG forbidden if RSI > 62 (overbought)
-RSI_VETO_SHORT      = 60     # Hard veto — SHORT forbidden if RSI < 60 (only short when overbought, not just neutral)
+RSI_VETO_SHORT      = 65     # Hard veto — SHORT forbidden if RSI < 65 (only short when clearly overbought)
 EMA_PROXIMITY_PCT   = 10.0   # Anti-chase: max % above EMA200
 VOL_EMA_BYPASS_MULT = 1.5    # Volume ≥ ×1.5 bypasses EMA proximity veto
 
