@@ -2188,6 +2188,19 @@ def is_direction_allowed(direction: str, context: str = '') -> tuple[bool, str]:
         return False, reason
 
     if regime == 'NEUTRAL':
+        # ── BTC Strong Uptrend — חוסם SHORTs כשBTC מעל EMA200 בשני גרפים ──────
+        if direction == 'SHORT':
+            _strong_up, _ema200_1h, _ema200_4h = check_btc_strong_uptrend()
+            if _strong_up:
+                reason = (
+                    f"NEUTRAL + BTC STRONG UPTREND "
+                    f"(מעל EMA200_1H={_ema200_1h:,.0f} & EMA200_4H={_ema200_4h:,.0f}) "
+                    f"→ SHORT נגד מגמה מאקרו — חסום"
+                )
+                if context:
+                    print(f"[RegimeGate/{context}] 🚫 {reason}", flush=True)
+                return False, reason
+
         # ── BTC Intraday Bias — חוסם SHORTs/LONGs נגד המגמה בשוק NEUTRAL ──────
         _intraday_bias, _btc_p, _btc_ema15m = get_btc_intraday_bias()
         if direction == 'SHORT' and _intraday_bias == 'BULLISH':
@@ -3445,7 +3458,24 @@ def track_trades():
                         )
 
                 # 2. TP1 — סגור 75%, הפעל Trailing על 25% נותרים
-                if tp1_hit(current_price):
+                # Wick Detection: בדוק High/Low של נר 1m האחרון —
+                # המוניטור רץ כל 60s ועלול להחמיץ שיא שהגיע ל-TP1 בין בדיקות
+                _tp1_check_price = current_price
+                if not trade.get('tp1_triggered'):
+                    try:
+                        _wicks = exchange.fetch_ohlcv(sym, '1m', limit=2)
+                        if _wicks and len(_wicks) >= 1:
+                            _wh = _wicks[-1][2]  # high of last 1m candle
+                            _wl = _wicks[-1][3]  # low of last 1m candle
+                            if direction == 'LONG' and _wh >= trade['tp1']:
+                                _tp1_check_price = trade['tp1']
+                                print(f"  [WickTP1] {sym} LONG wick high={_wh:.6g} ≥ TP1={trade['tp1']:.6g} → TP1 מופעל", flush=True)
+                            elif direction == 'SHORT' and _wl <= trade['tp1']:
+                                _tp1_check_price = trade['tp1']
+                                print(f"  [WickTP1] {sym} SHORT wick low={_wl:.6g} ≤ TP1={trade['tp1']:.6g} → TP1 מופעל", flush=True)
+                    except Exception as _wick_e:
+                        pass  # fallback שקט — wick detection הוא שיפור, לא חובה
+                if tp1_hit(_tp1_check_price):
                     dist_pct  = abs(current_price - entry) / entry * 100
                     tp1_pnl   = round(tp1_close * dist_pct / 100, 2)
                     tp1_pct_r = round(tp1_pnl / MARGIN * 100, 1)
