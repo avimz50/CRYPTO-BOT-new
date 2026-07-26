@@ -1056,17 +1056,17 @@ def adaptive_threshold(fng_value, btc_regime: str, direction: str
 # ── Adaptive Exit Parameters ──────────────────────────────────────────────────
 # FNG band → (base_tp1_pct, base_max_dur_min)
 _EXIT_FNG_BANDS: list[tuple] = [
-    (19,  'Extreme Fear',  0.8,  63),
-    (39,  'Fear',          1.0,  84),
-    (59,  'Neutral',       1.0, 105),
-    (74,  'Greed',         1.5, 126),
-    (100, 'Extreme Greed', 2.0, 147),
+    (19,  'Extreme Fear',  0.8,  72),
+    (39,  'Fear',          1.0,  96),
+    (59,  'Neutral',       1.0, 120),
+    (74,  'Greed',         1.5, 144),
+    (100, 'Extreme Greed', 2.0, 168),
 ]
 
 # Regime → (tp1_pct delta, duration delta minutes)
 _EXIT_REGIME_DELTA: dict[str, tuple] = {
-    'BULL':    (+0.2, +21),
-    'BEAR':    (-0.2, -21),
+    'BULL':    (+0.2, +24),
+    'BEAR':    (-0.2, -24),
     'NEUTRAL': ( 0.0,   0),
 }
 
@@ -1097,7 +1097,7 @@ def adaptive_exit_params(fng_value, regime: str) -> tuple[float, int, str]:
     regime = (regime or 'NEUTRAL').upper()
 
     base_tp1   = 1.0
-    base_dur   = 105
+    base_dur   = 120
     band_label = 'Neutral'
     for max_fng, label, tp1, dur in _EXIT_FNG_BANDS:
         if fng_int <= max_fng:
@@ -1109,7 +1109,7 @@ def adaptive_exit_params(fng_value, regime: str) -> tuple[float, int, str]:
     tp1_delta, dur_delta = _EXIT_REGIME_DELTA.get(regime, (0.0, 0))
 
     eff_tp1 = round(max(0.5, min(2.5, base_tp1 + tp1_delta)), 1)
-    eff_dur = max(42, min(168, base_dur + dur_delta))
+    eff_dur = max(48, min(192, base_dur + dur_delta))
 
     label_str = (
         f"FNG={fng_int}({band_label}) | {regime} "

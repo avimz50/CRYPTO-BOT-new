@@ -99,7 +99,7 @@ SCALP_MARGIN           = 50.0      # locked — same as MARGIN
 SCALP_POS_SIZE         = SCALP_MARGIN * SCALP_LEVERAGE   # = $500
 SCALP_TP_PCT           = 3.0
 SCALP_SL_PCT           = 1.5
-SCALP_MAX_DURATION_MIN = 42
+SCALP_MAX_DURATION_MIN = 48
 MAX_SCALP_TRADES       = 2
 
 # ── Stagnation Exit ────────────────────────────────────────────────────────────
@@ -115,7 +115,7 @@ SMART_TIMEOUT_MIN_PROFIT_PCT = 1.0   # סף רווח מינימלי להמשך �
 
 # ── Max Duration — עצירה מוקדמת לעסקות Swing/Breakout ────────────────────────
 # סוגר עסקה שלא הגיעה ל-TP1/BE אחרי 60 דקות — חוסך $4-7 לעומת SL מלא ($10)
-SWING_MAX_DURATION_MIN = 105   # דקות מקסימום ללא TP1 — close at market
+SWING_MAX_DURATION_MIN = 120   # דקות מקסימום ללא TP1 — close at market
 
 # ── Fast-Loss Protection — זיהוי setup כושל מוקדם ──────────────────────────────
 # סוגר עסקה שמפסידה 5%+ מהמרג'ין בתוך 15 הדקות הראשונות
@@ -160,7 +160,7 @@ CLIFF_TRAIL_PCT       = 1.5
 CLIFF_LEVERAGE        = 10
 CLIFF_MARGIN          = 50.0
 CLIFF_POS_SIZE        = CLIFF_MARGIN * CLIFF_LEVERAGE
-CLIFF_MAX_DURATION_MIN = 21
+CLIFF_MAX_DURATION_MIN = 24
 MAX_CLIFF_TRADES      = 2
 CLIFF_SCAN_INTERVAL   = 120
 
