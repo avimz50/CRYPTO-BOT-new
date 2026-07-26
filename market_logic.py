@@ -33,11 +33,107 @@ def get_fear_greed() -> tuple[int, str]:
         d = r.json()['data'][0]
         prev_val = _fng_cache['value']
         _fng_cache.update({'value': int(d['value']), 'label': d['value_classification'], 'ts': now})
+        _fng_api_state['ok'] = True
         if _fng_cache['value'] != prev_val:
             print(f"[FNG] {prev_val} → {_fng_cache['value']} – {_fng_cache['label']}")
     except Exception as e:
         print(f"[FNG] Refresh error: {e}")
+        _fng_api_state['ok'] = False
     return _fng_cache['value'], _fng_cache['label']
+
+
+# ── Synthetic FNG — real-time BTC-based Fear & Greed proxy ────────────────────
+_fng_api_state:     dict = {'ok': True}           # האם ה-API עלה בפעם האחרונה
+_synthetic_cache:   dict = {'value': 50, 'ts': 0.0}  # cache 5 דקות לסינתטי
+
+
+def compute_synthetic_fng(df_btc: pd.DataFrame) -> int:
+    """
+    מחשב FNG סינתטי 0-100 מנתוני OHLCV של BTC (4H).
+    RSI(40%) + כיוון נפח(25%) + תנודתיות ATR(20%) + מרחק EMA50(15%).
+    מחזיר 50 (Neutral) בכל שגיאה.
+    """
+    try:
+        close  = df_btc['close']
+        high   = df_btc['high']
+        low    = df_btc['low']
+        volume = df_btc['volume']
+
+        # RSI (40%) — RSI הוא כבר 0-100, ישמש ישירות
+        rsi_s = ta.rsi(close, length=14)
+        rsi_v = float(rsi_s.iloc[-1]) if rsi_s is not None and not pd.isna(rsi_s.iloc[-1]) else 50.0
+
+        # Volume trend (25%) — כיוון × עוצמה
+        price_dir = 1 if float(close.iloc[-1]) > float(close.iloc[-5]) else -1
+        avg_vol   = float(volume.iloc[-30:].mean())
+        rec_vol   = float(volume.iloc[-5:].mean())
+        vol_ratio = min(rec_vol / avg_vol, 3.0) if avg_vol > 0 else 1.0
+        vol_score = max(0.0, min(100.0, 50.0 + price_dir * (vol_ratio - 1.0) * 25.0))
+
+        # ATR ratio (20%) — תנודתיות גבוהה = פחד
+        atr_s = ta.atr(high, low, close, length=14)
+        if atr_s is not None:
+            atr_clean = atr_s.dropna()
+            atr_v     = float(atr_clean.iloc[-1]) if len(atr_clean) else float(close.iloc[-1]) * 0.02
+            atr_avg   = float(atr_clean.tail(30).mean()) if len(atr_clean) >= 5 else atr_v
+        else:
+            atr_v = atr_avg = float(close.iloc[-1]) * 0.02
+        atr_ratio = atr_v / atr_avg if atr_avg > 0 else 1.0
+        atr_score = max(0.0, min(100.0, 50.0 - (atr_ratio - 1.0) * 50.0))
+
+        # EMA50 distance (15%) — מעל EMA50=חמדנות, מתחת=פחד
+        ema50_s = ta.ema(close, length=50)
+        if ema50_s is not None and not pd.isna(ema50_s.iloc[-1]):
+            gap_pct   = (float(close.iloc[-1]) - float(ema50_s.iloc[-1])) / float(ema50_s.iloc[-1]) * 100.0
+            ema_score = max(0.0, min(100.0, 50.0 + gap_pct * 5.0))
+        else:
+            ema_score = 50.0
+
+        synthetic = rsi_v * 0.40 + vol_score * 0.25 + atr_score * 0.20 + ema_score * 0.15
+        return int(max(0, min(100, round(synthetic))))
+    except Exception as _e:
+        print(f"[SyntheticFNG] שגיאת חישוב: {_e}")
+        return 50
+
+
+def _fng_label(value: int) -> str:
+    """ממפה ערך FNG מספרי לתווית."""
+    if value < 20: return 'Extreme Fear'
+    if value < 40: return 'Fear'
+    if value < 60: return 'Neutral'
+    if value < 80: return 'Greed'
+    return 'Extreme Greed'
+
+
+def get_fng_blended(btc_df: pd.DataFrame = None) -> tuple[int, str]:
+    """
+    מחזיר FNG משולב: 70% רשמי (alternative.me) + 30% סינתטי (BTC בזמן אמת).
+    - API זמין + btc_df קיים  → blend 70/30 (עדכון כל 5 דקות לסינתטי)
+    - API נפל   + btc_df קיים  → 100% סינתטי (גיבוי מלא)
+    - btc_df=None              → רק רשמי (התנהגות קלאסית, ללא שינוי)
+    """
+    now = _time.time()
+
+    # רענן רשמי אם הcache פג (משתמש בלוגיקת get_fear_greed הקיימת)
+    get_fear_greed()
+    official_v = _fng_cache['value']
+    api_ok     = _fng_api_state['ok']
+
+    if btc_df is None:
+        return official_v, _fng_cache['label']
+
+    # רענן סינתטי אם עברו 5 דקות
+    if now - _synthetic_cache['ts'] >= 300:
+        synth_v = compute_synthetic_fng(btc_df)
+        _synthetic_cache.update({'value': synth_v, 'ts': now})
+        print(f"[FNG] Official={official_v} | Synthetic={synth_v} | API={'✓' if api_ok else '✗'}")
+    synth_v = _synthetic_cache['value']
+
+    blended = int(round(official_v * 0.70 + synth_v * 0.30)) if api_ok else synth_v
+    if not api_ok:
+        print(f"[FNG] API offline — גיבוי סינתטי: {blended}")
+
+    return blended, _fng_label(blended)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

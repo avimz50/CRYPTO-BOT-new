@@ -24,6 +24,7 @@ import gdrive_reporter
 from config import *
 from market_logic import (
     get_fear_greed,
+    get_fng_blended,
     sentiment_check, set_sentiment_thresholds,
     score_symbol, detect_fvg, detect_order_blocks,
     detect_flag, detect_bb_squeeze, detect_volume_buildup,
@@ -2124,26 +2125,29 @@ def get_market_regime() -> tuple[str, int, bool, float]:
         return c['regime'], c['fng_v'], c['btc_above'], c['ema20']
 
     # Fail-SAFE defaults — API failure → assume worst case to protect capital
-    fng_v    = 0      # treat unknown FNG as extreme fear → triggers BEARISH
+    fng_v     = 0      # treat unknown FNG as extreme fear → triggers BEARISH
     btc_above = False  # treat unknown BTC position as below EMA → triggers BEARISH
     ema20_4h  = _market_regime_cache.get('ema20', 0.0)
     _fng_ok   = False
     _btc_ok   = False
+    _df_btc   = None
 
+    # ── BTC קודם — נדרש גם לסינתטי FNG ──────────────────────────────────────
     try:
-        fng_v, _ = get_fear_greed()
-        _fng_ok  = True
-    except Exception as _fe:
-        print(f"[MarketRegime] FNG fetch failed: {_fe} — defaulting fng_v=0 (BEARISH safe)", flush=True)
-
-    try:
-        df_btc    = get_data('BTC/USDT', timeframe='4h', limit=60)
-        ema20_4h  = float(ta.ema(df_btc['close'], length=20).iloc[-1])
-        btc_price = float(df_btc['close'].iloc[-1])
+        _df_btc   = get_data('BTC/USDT', timeframe='4h', limit=60)
+        ema20_4h  = float(ta.ema(_df_btc['close'], length=20).iloc[-1])
+        btc_price = float(_df_btc['close'].iloc[-1])
         btc_above = btc_price > ema20_4h
         _btc_ok   = True
     except Exception as _be:
         print(f"[MarketRegime] BTC EMA20 fetch failed: {_be} — defaulting btc_above=False (BEARISH safe)", flush=True)
+
+    # ── FNG משולב (70% רשמי + 30% סינתטי BTC) ───────────────────────────────
+    try:
+        fng_v, _ = get_fng_blended(_df_btc)
+        _fng_ok  = True
+    except Exception as _fe:
+        print(f"[MarketRegime] FNG fetch failed: {_fe} — defaulting fng_v=0 (BEARISH safe)", flush=True)
 
     if fng_v < REGIME_BEARISH_FNG or not btc_above:
         regime = 'BEARISH'
