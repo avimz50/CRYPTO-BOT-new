@@ -36,13 +36,13 @@ TP1_PCT = 1.0   # Take Profit 1 = 1% (triggers Break-Even + 75% close)
 TP2_PCT = 4.0   # Take Profit 2 = 4% (final target, 1:2 RR)
 
 # ── Circuit Breaker ────────────────────────────────────────────────────────────
-DAILY_LOSS_LIMIT = -30.0     # -$30 = 15% of $200 starting balance
+DAILY_LOSS_LIMIT = -15.0     # -$15 = circuit breaker (3 max losses/day)
 
 # ── Market Regime Filter (FNG + BTC 4H EMA20) ──────────────────────────────────
 # BEARISH: FNG < 40 OR BTC below 4H EMA20  → LONGs blocked
 # BULLISH: FNG > 60 AND BTC above 4H EMA20 → SHORTs blocked
 # NEUTRAL: 40 ≤ FNG ≤ 60                   → both allowed, max 2 trades
-REGIME_BEARISH_FNG       = 25   # FNG threshold below = bearish (Extreme Fear only: <25 OR BTC<EMA20)
+REGIME_BEARISH_FNG       = 38   # FNG threshold below = bearish (<38 = Fear+Extreme Fear OR BTC<EMA20)
 REGIME_BULLISH_FNG       = 60   # FNG threshold above = bullish
 REGIME_NEUTRAL_MAX_TRADES = 2   # max concurrent trades in choppy/neutral market
 
@@ -99,7 +99,7 @@ SCALP_MARGIN           = 50.0      # locked — same as MARGIN
 SCALP_POS_SIZE         = SCALP_MARGIN * SCALP_LEVERAGE   # = $500
 SCALP_TP_PCT           = 3.0
 SCALP_SL_PCT           = 1.5
-SCALP_MAX_DURATION_MIN = 60
+SCALP_MAX_DURATION_MIN = 42
 MAX_SCALP_TRADES       = 2
 
 # ── Stagnation Exit ────────────────────────────────────────────────────────────
@@ -115,7 +115,7 @@ SMART_TIMEOUT_MIN_PROFIT_PCT = 1.0   # סף רווח מינימלי להמשך �
 
 # ── Max Duration — עצירה מוקדמת לעסקות Swing/Breakout ────────────────────────
 # סוגר עסקה שלא הגיעה ל-TP1/BE אחרי 60 דקות — חוסך $4-7 לעומת SL מלא ($10)
-SWING_MAX_DURATION_MIN = 150   # דקות מקסימום ללא TP1 — close at market
+SWING_MAX_DURATION_MIN = 105   # דקות מקסימום ללא TP1 — close at market
 
 # ── Fast-Loss Protection — זיהוי setup כושל מוקדם ──────────────────────────────
 # סוגר עסקה שמפסידה 5%+ מהמרג'ין בתוך 15 הדקות הראשונות
@@ -160,7 +160,7 @@ CLIFF_TRAIL_PCT       = 1.5
 CLIFF_LEVERAGE        = 10
 CLIFF_MARGIN          = 50.0
 CLIFF_POS_SIZE        = CLIFF_MARGIN * CLIFF_LEVERAGE
-CLIFF_MAX_DURATION_MIN = 30
+CLIFF_MAX_DURATION_MIN = 21
 MAX_CLIFF_TRADES      = 2
 CLIFF_SCAN_INTERVAL   = 120
 
