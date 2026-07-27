@@ -57,3 +57,6 @@ VAPID_PUBLIC_KEY = "BPP3imuD6A05tv24_Mdrju4_-C2mSXMWO0MdyUaF_kpRiLp4I3Dv_ertO4mi
 VAPID_SUBJECT = "mailto:admin@cryptobot.local"
 
 [userenv.development]
+
+[objectStorage]
+defaultBucketID = "replit-objstore-b6e24690-1f8c-415c-95bb-3d6e7f90eef0"

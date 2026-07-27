@@ -96,6 +96,9 @@ def _is_authorized(chat_id) -> bool:
 # ─── Fear & Greed Index — cache גלובלי (מתרענן כל שעה) ───────────────────────
 _fng_cache = {'value': 50, 'label': 'Neutral', 'ts': 0}
 
+# ─── Bot Pause Flag ────────────────────────────────────────────────────────────
+_bot_paused: bool = False   # /stop → True | /resume → False
+
 # ─── FNG State Tracker ──────────────────────────────────────────────────────────
 # None = לא ידוע (הפעלה ראשונה) | True = Extreme Fear | False = רגיל
 _extreme_fear_active: bool | None = None
@@ -1131,7 +1134,10 @@ def api_slots_post():
         'open_slots':    max(0, MAX_TRADES - n_open),
     })
 
-def send_msg(text):
+def send_msg(text, force: bool = False):
+    """שולח הודעת Telegram. force=True עוקף את מצב ה-pause (לאישורי /stop ו-/resume בלבד)."""
+    if _bot_paused and not force:
+        return
     try:
         bot.send_message(CHAT_ID, text, parse_mode='Markdown')
     except Exception as e:
@@ -5403,6 +5409,49 @@ def handle_ping(message):
              f"⚙️ {env} | עסקאות: {n} | Flask: port 8091")
 
 
+@bot.message_handler(commands=['stop'])
+def handle_stop(message):
+    """עוצר את כל הסריקות וההודעות האוטומטיות."""
+    if not _is_authorized(message.chat.id):
+        return
+    global _bot_paused
+    if _bot_paused:
+        send_msg("⚠️ הבוט כבר מושהה\\. שלח /resume להמשך\\.", force=True)
+        return
+    _bot_paused = True
+    with trades_lock:
+        n = len(active_trades)
+    send_msg(
+        f"⛔ *הבוט הושהה*\n"
+        f"{'─' * 28}\n\n"
+        f"🔇 כל הסריקות והודעות אוטומטיות — *מושבתות*\n"
+        f"📂 עסקאות פתוחות: *{n}* \\(לא מנוטרות עד /resume\\)\n\n"
+        f"▶️ שלח */resume* להמשך פעולה",
+        force=True
+    )
+    print(f"[BOT] ⛔ הושהה על ידי Telegram /stop — עסקאות פתוחות: {n}")
+
+
+@bot.message_handler(commands=['resume'])
+def handle_resume(message):
+    """מחדש את פעולת הבוט לאחר /stop."""
+    if not _is_authorized(message.chat.id):
+        return
+    global _bot_paused
+    if not _bot_paused:
+        send_msg("ℹ️ הבוט כבר פעיל\\. אין צורך ב\\-/resume\\.", force=True)
+        return
+    _bot_paused = False
+    send_msg(
+        f"✅ *הבוט חזר לפעולה*\n"
+        f"{'─' * 28}\n\n"
+        f"🔔 סריקות והודעות אוטומטיות — *פעילות*\n"
+        f"⏱ הסריקה הבאה תתחיל בציקל הקרוב",
+        force=True
+    )
+    print("[BOT] ✅ חודש על ידי Telegram /resume")
+
+
 @bot.message_handler(commands=['home', 'start', 'help', 'menu'])
 def handle_home(message):
     """מסך ראשי — כל הפקודות של הבוט."""
@@ -5940,16 +5989,17 @@ def trade_monitor_loop():
     """
     print("Trade monitor started — checking every 60s")
     while True:
-        try:
-            # ── FNG state change detection ──
-            check_fng_state_change()
+        if not _bot_paused:
+            try:
+                # ── FNG state change detection ──
+                check_fng_state_change()
 
-            if active_trades:
-                track_trades()
-                check_daily_report()
-                check_heartbeat()
-        except Exception as e:
-            print(f"Trade monitor error: {e}")
+                if active_trades:
+                    track_trades()
+                    check_daily_report()
+                    check_heartbeat()
+            except Exception as e:
+                print(f"Trade monitor error: {e}")
         time.sleep(60)
 
 # --- לולאת סריקת איתותים — Thread נפרד ---
@@ -6788,6 +6838,9 @@ def scalp_scan_loop():
     time.sleep(90)   # המתן שה-bot יתייצב לפני הסריקה הראשונה
 
     while True:
+        if _bot_paused:
+            time.sleep(60)
+            continue
         try:
             fng_v, fng_lbl, _ = sentiment_check("scalp_scan")
             if fng_v is None:
@@ -7250,6 +7303,8 @@ def top10_breakout_loop():
         if not first_run:
             time.sleep(TOP10_INTERVAL)
         first_run = False
+        if _bot_paused:
+            continue
 
         try:
             # ── 1. נתוני BTC + FNG ────────────────────────────────────────
@@ -7409,6 +7464,8 @@ def bubble_watch_scan_loop():
 
     while True:
         time.sleep(BUBBLE_SCAN_INTERVAL)
+        if _bot_paused:
+            continue
         try:
             # ── 1. בדיקות מקדימות ──────────────────────────────────────────
             if len(active_trades) >= MAX_TRADES:
@@ -7582,6 +7639,8 @@ def sol_watch_loop():
 
     while True:
         time.sleep(SOL_WATCH_INTERVAL)
+        if _bot_paused:
+            continue
         try:
             # ── נתוני BTC ──────────────────────────────────────────────────
             btc_above_ema = _btc_above_ema20_15m()
@@ -7705,6 +7764,8 @@ def major_watch_loop():
         if not first_run:
             time.sleep(INTERVAL)
         first_run = False
+        if _bot_paused:
+            continue
         try:
             btc_above_ema = _btc_above_ema20_15m()   # BTC trend filter (לשאר המטבעות)
             now_str       = now_il().strftime('%H:%M')
@@ -7880,6 +7941,9 @@ def scan_loop():
 
     print("Scan loop started — scanning every 60 minutes")
     while True:
+        if _bot_paused:
+            time.sleep(60)
+            continue
         try:
             check_daily_report()
             now_str = now_il().strftime('%H:%M:%S')
