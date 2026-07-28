@@ -3473,16 +3473,19 @@ def track_trades():
                 _tp1_check_price = current_price
                 if not trade.get('tp1_triggered'):
                     try:
-                        _wicks = exchange.fetch_ohlcv(sym, '1m', limit=2)
-                        if _wicks and len(_wicks) >= 1:
-                            _wh = _wicks[-1][2]  # high of last 1m candle
-                            _wl = _wicks[-1][3]  # low of last 1m candle
+                        _wicks = exchange.fetch_ohlcv(sym, '1m', limit=3)
+                        # בודק 2 נרות אחרונים — מוניטור רץ כל 60s, שיא יכול להיות בנר הקודם
+                        for _wc in (_wicks[-1], _wicks[-2]) if len(_wicks) >= 2 else (_wicks[-1],):
+                            _wh = _wc[2]  # high
+                            _wl = _wc[3]  # low
                             if direction == 'LONG' and _wh >= trade['tp1']:
                                 _tp1_check_price = trade['tp1']
                                 print(f"  [WickTP1] {sym} LONG wick high={_wh:.6g} ≥ TP1={trade['tp1']:.6g} → TP1 מופעל", flush=True)
+                                break
                             elif direction == 'SHORT' and _wl <= trade['tp1']:
                                 _tp1_check_price = trade['tp1']
                                 print(f"  [WickTP1] {sym} SHORT wick low={_wl:.6g} ≤ TP1={trade['tp1']:.6g} → TP1 מופעל", flush=True)
+                                break
                     except Exception as _wick_e:
                         pass  # fallback שקט — wick detection הוא שיפור, לא חובה
                 if tp1_hit(_tp1_check_price):
@@ -6733,6 +6736,11 @@ def open_cliff_trade(symbol: str, price: float, direction: str, move_pct: float,
         print(f"[Velocity] ⛔ ENABLE_VELOCITY_STRATEGY=False — {symbol} {direction} נדחה", flush=True)
         return
 
+    # ── Circuit Breaker ────────────────────────────────────────────────────────
+    if check_daily_circuit_breaker():
+        print(f"[Velocity] ⛔ Circuit Breaker — לא פותחים {symbol} (הפסד יומי ≤ ${DAILY_LOSS_LIMIT})", flush=True)
+        return
+
     with trades_lock:
         if any(t['symbol'] == symbol for t in active_trades):
             print(f"[Velocity] {symbol} כבר פתוח — skip")
@@ -7057,7 +7065,8 @@ def _coin_1h_breakout_above_4h_high(symbol: str) -> tuple[bool, float, float, fl
 # ── Breakout Strategy Constants ───────────────────────────────────────────────
 BREAKOUT_FNG_LONG_MIN         = 0    # FNG מינימום ל-LONG — BTC BULL + כל FNG → קונים!
 BREAKOUT_FNG_SHORT_MAX        = 65   # FNG מקסימום ל-SHORT (מעל = חמדנות, לא שורטים)
-RSI_VETO_SHORT                = 52   # RSI מינימום ל-SHORT — SHORT אסור אם RSI < 52 (oversold)
+# RSI_VETO_SHORT = 52  ← REMOVED: היה דורס את ערך config.py (65) גלובלית ופוגע ב-fillslots
+#                        Breakout משתמש ב-RSI_VETO_BREAKOUT_SHORT/BEAR_MIN/MAX בלבד
 BREAKOUT_MIN_VOL              = 1.5  # volume ratio מינימלי (150% מהממוצע = 50% מעל)
 RSI_VETO_BREAKOUT_LONG        = 62   # RSI מקסימום ל-LONG בפריצה — אסור אם RSI > 62 (overbought)
 RSI_VETO_BREAKOUT_SHORT       = 60   # RSI מינימום ל-SHORT בפריצה [NEUTRAL/BULL בלבד] — fade pumps
