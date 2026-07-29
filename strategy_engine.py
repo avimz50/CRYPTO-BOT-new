@@ -55,8 +55,12 @@ def calc_targets(
       TP2 = TP2_PCT from entry (4%) — final target (1:2 RR)
       BE  = entry price            — SL moves to entry when TP1 is hit
     """
-    if entry <= 0:
-        return {}
+    try:
+        entry = float(entry)
+    except (TypeError, ValueError):
+        raise ValueError(f"calc_targets: entry must be numeric, got {entry!r}")
+    if entry <= 0 or entry != entry:  # entry != entry catches NaN
+        raise ValueError(f"calc_targets: invalid entry price {entry!r}")
 
     eff_tp1_pct = tp1_pct if (tp1_pct is not None and tp1_pct > 0) else TP1_PCT
 

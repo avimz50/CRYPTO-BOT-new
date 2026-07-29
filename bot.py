@@ -384,6 +384,11 @@ daily_stats = {
     'close_reasons': {'TP': 0, 'TP1+Trail': 0, 'Trailing': 0, 'SL': 0, 'BE': 0, 'Manual': 0},
 }
 
+def add_daily_pnl(amount: float):
+    """מוסיף ל-daily_stats['total_pnl'] באופן אטומי (מוזן ל-Circuit Breaker — קריטי תחת ריבוי threads)."""
+    with trades_lock:
+        daily_stats['total_pnl'] = round(daily_stats.get('total_pnl', 0.0) + amount, 2)
+
 # שמירת תאריך הדוח האחרון שנשלח
 last_daily_report_date = None
 
@@ -1301,22 +1306,24 @@ def save_wallet():
         print(f"Wallet save error: {e}", flush=True)
 
 def wallet_deduct(amount: float = MARGIN):
-    """קיזוז מרג'ין בפתיחת עסקה. amount=MARGIN (ברירת מחדל $20)."""
-    wallet['balance']       = round(wallet.get('balance', STARTING_BALANCE) - amount, 2)
-    wallet['trades_opened'] = wallet.get('trades_opened', 0) + 1
-    _append_equity_point()
-    save_wallet()
+    """קיזוז מרג'ין בפתיחת עסקה. amount=MARGIN (ברירת מחדל $20). אטומי תחת trades_lock."""
+    with trades_lock:
+        wallet['balance']       = round(wallet.get('balance', STARTING_BALANCE) - amount, 2)
+        wallet['trades_opened'] = wallet.get('trades_opened', 0) + 1
+        _append_equity_point()
+        save_wallet()
 
 def wallet_credit(pnl_usd: float, amount: float = MARGIN):
-    """זיכוי מרג'ין + P&L בסגירת עסקה. amount צריך להתאים ל-wallet_deduct."""
-    wallet['balance']   = round(wallet.get('balance', STARTING_BALANCE) + amount + pnl_usd, 2)
-    wallet['total_pnl'] = round(wallet.get('total_pnl', 0.0) + pnl_usd, 2)
-    if pnl_usd >= 0:
-        wallet['total_wins']   = wallet.get('total_wins', 0) + 1
-    else:
-        wallet['total_losses'] = wallet.get('total_losses', 0) + 1
-    _append_equity_point()
-    save_wallet()
+    """זיכוי מרג'ין + P&L בסגירת עסקה. amount צריך להתאים ל-wallet_deduct. אטומי תחת trades_lock."""
+    with trades_lock:
+        wallet['balance']   = round(wallet.get('balance', STARTING_BALANCE) + amount + pnl_usd, 2)
+        wallet['total_pnl'] = round(wallet.get('total_pnl', 0.0) + pnl_usd, 2)
+        if pnl_usd >= 0:
+            wallet['total_wins']   = wallet.get('total_wins', 0) + 1
+        else:
+            wallet['total_losses'] = wallet.get('total_losses', 0) + 1
+        _append_equity_point()
+        save_wallet()
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -1357,14 +1364,15 @@ def place_order(trade: dict, margin: float = MARGIN) -> bool:
     """
     רושם עסקה חדשה:
       • בדיקת כפילות גלובלית — One Trade Per Symbol (חסין לכל סקאנר)
-      • מוסיף ל-active_trades (עם trades_lock)
-      • מנכה מרג'ין מהארנק (wallet_deduct)
+      • בדיקת יתרה + מוסיף ל-active_trades + מנכה מרג'ין — הכל אטומי תחת trades_lock
       • שומר active_trades ל-disk (save_active_trades)
-    מחזיר True בהצלחה, False אם נחסם (כפילות / יתרה).
+    מחזיר True בהצלחה, False אם נחסם (כפילות / MAX_TRADES / יתרה).
     """
     symbol = trade.get('symbol', '')
 
-    # ══ GLOBAL GUARDS — אטומי תחת trades_lock ══════════════════════════
+    # ══ GLOBAL GUARDS — בדיקה + רישום + ניכוי, הכל אטומי תחת trades_lock ═
+    # (מונע race בין threads: שתי עסקאות שנפתחות במקביל לא יכולות לקרוא
+    #  את אותה יתרה "לפני" הניכוי ושתיהן לעבור את הבדיקה)
     with trades_lock:
         # 1) One Trade Per Symbol
         existing_symbols = [t['symbol'] for t in active_trades]
@@ -1375,10 +1383,14 @@ def place_order(trade: dict, margin: float = MARGIN) -> bool:
         if len(active_trades) >= MAX_TRADES:
             print(f"[place_order] 🚫 {symbol} skipped — MAX_TRADES ({MAX_TRADES}) reached (atomic check).")
             return False
-        # ✅ Passed all guards — add to list
+        # 3) Balance check — אטומי יחד עם ההוספה והניכוי (מונע over-deduct)
+        if wallet.get('balance', STARTING_BALANCE) < margin:
+            print(f"[place_order] 🚫 {symbol} skipped — insufficient balance (atomic check).")
+            return False
+        # ✅ Passed all guards — add to list + deduct atomically
         active_trades.append(trade)
+        wallet_deduct(margin)
     # ═══════════════════════════════════════════════════════════════════
-    wallet_deduct(margin)
     save_active_trades()
     _fire_make_webhook(trade)   # Make.com webhook — fire-and-forget
     available = wallet.get('balance', STARTING_BALANCE)
