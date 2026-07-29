@@ -4,6 +4,7 @@ import json
 import csv
 import signal
 import sys
+import claude_gate
 
 print("[BOT-BEACON] bot.py process started — beginning imports", flush=True, file=sys.stderr)
 sys.stderr.flush()
@@ -2440,6 +2441,22 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         print(f"[Swing] {symbol} {direction} נדחה — {_reason}", flush=True)
         return
 
+    # ── Claude AI Gate ────────────────────────────────────────────────────────
+    _cl_regime_sw, _, _cl_btc_sw, _ = get_market_regime()
+    _cl_ok_sw, _cl_score_sw, _cl_reason_sw = claude_gate.claude_trade_gate(
+        symbol=symbol, direction=direction, strategy='Swing',
+        price=price, bot_score=int(score or 0),
+        regime=_cl_regime_sw, fng=int(fng_v or 50), btc_above_ema=_cl_btc_sw,
+        rsi=rsi, reason=str(reason or ''),
+        daily_pnl=daily_stats.get('total_pnl', 0.0),
+        open_trades=len(active_trades),
+    )
+    _cl_combined_sw = claude_gate.combined_score(int(score or 0), _cl_score_sw)
+    print(f"[ClaudeGate/Swing] {symbol} | bot={score} claude={_cl_score_sw} combined={_cl_combined_sw} | {_cl_reason_sw}", flush=True)
+    if not _cl_ok_sw or _cl_combined_sw < MIN_SCORE:
+        print(f"[ClaudeGate] ⛔ {symbol} Swing נדחה — combined={_cl_combined_sw} | {_cl_reason_sw}", flush=True)
+        return
+
     # ── Adaptive Exit Parameters (FNG + BTC Regime) ───────────────────────────
     _btc_regime_now          = get_btc_regime()
     _dyn_tp1, _dyn_dur, _exit_lbl = adaptive_exit_params(fng_v, _btc_regime_now)
@@ -2501,6 +2518,8 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         'peak_price':           price,
         'trailing_sl':          None,
         'score':                score,
+        'claude_score':         _cl_score_sw,
+        'claude_reason':        _cl_reason_sw,
         'atr':                  round(atr, 6),
         'atr_1h':               0.0,
         'timeframe':            timeframe,
@@ -4102,6 +4121,13 @@ def handle_status(message):
         f"_לסגירה ידנית: /close SYMBOL_"
     )
     send_msg(msg)
+
+@bot.message_handler(commands=['gate'])
+def handle_gate(message):
+    """סטטיסטיקות Claude AI Gate — /gate"""
+    if not _is_authorized(message.chat.id):
+        return
+    send_msg(claude_gate.gate_summary())
 
 @bot.message_handler(commands=['update'])
 def handle_update(message):
@@ -6588,6 +6614,20 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
         print(f"SCALP: insufficient balance (${wallet.get('balance', 0):.2f}) — skip {symbol}")
         return
 
+    # ── Claude AI Gate ────────────────────────────────────────────────────────
+    _cl_regime_sc, _, _cl_btc_sc, _ = get_market_regime()
+    _cl_ok_sc, _cl_score_sc, _cl_reason_sc = claude_gate.claude_trade_gate(
+        symbol=symbol, direction=direction, strategy='Scalp',
+        price=price, bot_score=0,
+        regime=_cl_regime_sc, fng=int(fng_v_now or 50), btc_above_ema=_cl_btc_sc,
+        rsi=None, reason=str(reason or ''),
+        daily_pnl=daily_stats.get('total_pnl', 0.0),
+        open_trades=len(active_trades),
+    )
+    if not _cl_ok_sc or _cl_score_sc < 62:
+        print(f"[ClaudeGate] ⛔ {symbol} Scalp נדחה — claude={_cl_score_sc} | {_cl_reason_sc}", flush=True)
+        return
+
     # ── מחירי SL / TP1 / TP ──────────────────────────────────────────────────
     tgt = se.calc_targets(price, direction)
     sl_price  = tgt['sl_price']
@@ -6614,6 +6654,8 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
         'peak_price':      price,
         'trailing_sl':     None,
         'score':           0,
+        'claude_score':    _cl_score_sc,
+        'claude_reason':   _cl_reason_sc,
         'atr':             0.0,
         'timeframe':       '15m',
         'rsi':             None,
@@ -6775,6 +6817,21 @@ def open_cliff_trade(symbol: str, price: float, direction: str, move_pct: float,
         print(f"[Velocity] {symbol} {direction} נדחה — {_reason_c}", flush=True)
         return
 
+    # ── Claude AI Gate ────────────────────────────────────────────────────────
+    _cl_regime_cl, _cl_fng_cl, _cl_btc_cl, _ = get_market_regime()
+    _cl_ok_cl, _cl_score_cl, _cl_reason_cl = claude_gate.claude_trade_gate(
+        symbol=symbol, direction=direction, strategy='Velocity',
+        price=price, bot_score=0,
+        regime=_cl_regime_cl, fng=int(_cl_fng_cl or 50), btc_above_ema=_cl_btc_cl,
+        rsi=None, reason=f"move={move_pct:.1f}% vol={vol_ratio:.1f}x",
+        extra={'RSI Divergence': str(rsi_divergence)},
+        daily_pnl=daily_stats.get('total_pnl', 0.0),
+        open_trades=len(active_trades),
+    )
+    if not _cl_ok_cl or _cl_score_cl < 60:
+        print(f"[ClaudeGate] ⛔ {symbol} Velocity נדחה — claude={_cl_score_cl} | {_cl_reason_cl}", flush=True)
+        return
+
     if direction == 'LONG':
         sl_price   = round(price * (1 - CLIFF_SL_PCT         / 100), 8)
         tp_price   = round(price * (1 + CLIFF_TP_PCT         / 100), 8)
@@ -6812,6 +6869,8 @@ def open_cliff_trade(symbol: str, price: float, direction: str, move_pct: float,
         'peak_price':      price,
         'trailing_sl':     trail_init,
         'score':           0,
+        'claude_score':    _cl_score_cl,
+        'claude_reason':   _cl_reason_cl,
         'atr':             0.0,
         'timeframe':       '5m',
         'rsi':             None,
@@ -7182,6 +7241,21 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
         print(f"[Breakout] {symbol} {direction} נדחה — {_reason_b}", flush=True)
         return
 
+    # ── Claude AI Gate ────────────────────────────────────────────────────────
+    _cl_regime_br, _, _cl_btc_br, _ = get_market_regime()
+    _cl_ok_br, _cl_score_br, _cl_reason_br = claude_gate.claude_trade_gate(
+        symbol=symbol, direction=direction, strategy='Breakout',
+        price=price, bot_score=0,
+        regime=_cl_regime_br, fng=int(fng_v or 50), btc_above_ema=_cl_btc_br,
+        rsi=rsi, reason=f"breakout h4={h4_level:.6g} vol={vol_ratio:.1f}x",
+        extra={'H4 Level': f"${h4_level:.6g}", 'Vol Ratio': f"{vol_ratio:.1f}x"},
+        daily_pnl=daily_stats.get('total_pnl', 0.0),
+        open_trades=len(active_trades),
+    )
+    if not _cl_ok_br or _cl_score_br < 62:
+        print(f"[ClaudeGate] ⛔ {symbol} Breakout נדחה — claude={_cl_score_br} | {_cl_reason_br}", flush=True)
+        return
+
     tgt_b     = se.calc_targets(price, direction)
     sl_pct    = tgt_b['sl_pct']
     tp_pct    = tgt_b['tp_pct']
@@ -7238,6 +7312,8 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
         'trailing_sl':     None,
         'score':           95,
         'atr':             atr_val,
+        'claude_score':    _cl_score_br,
+        'claude_reason':   _cl_reason_br,
         'timeframe':       'Breakout',
         'rsi':             round(rsi, 2) if rsi is not None else None,
         'ema200':          None,
