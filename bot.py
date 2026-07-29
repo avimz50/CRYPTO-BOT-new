@@ -2753,7 +2753,7 @@ def track_trades():
                     _ebtc  = f"{'מעל' if _emrg_btc_above else 'מתחת'} EMA20={_emrg_ema:.0f}"
                     wallet_credit(_epnl, _et.get('margin', MARGIN))
                     _log_closed_trade(_et, 'RegimeClose', _epnl, _ep)
-                    daily_stats['total_pnl'] += _epnl
+                    add_daily_pnl(_epnl)
                     if _epnl >= 0:
                         daily_stats['wins'] += 1
                     else:
@@ -2807,7 +2807,7 @@ def track_trades():
                     _ebtc  = f"מעל EMA20={_emrg_ema:.0f}"
                     wallet_credit(_epnl, _et.get('margin', MARGIN))
                     _log_closed_trade(_et, 'RegimeClose', _epnl, _ep)
-                    daily_stats['total_pnl'] += _epnl
+                    add_daily_pnl(_epnl)
                     if _epnl >= 0:
                         daily_stats['wins'] += 1
                     else:
@@ -2932,7 +2932,7 @@ def track_trades():
                             daily_stats['losses'] += 1
 
                     slip = trade.get('slippage_pct', 0.0)
-                    daily_stats['total_pnl'] += scalp_pnl_usd
+                    add_daily_pnl(scalp_pnl_usd)
                     wallet_credit(scalp_pnl_usd, scalp_mar)
                     _log_closed_trade(trade, close_reason, scalp_pnl_usd, current_price)
                     eq    = _get_equity()
@@ -3019,7 +3019,7 @@ def track_trades():
 
                     cliff_mar_t = trade.get('margin', CLIFF_MARGIN)
                     slip = trade.get('slippage_pct', 0.0)
-                    daily_stats['total_pnl'] += cliff_pnl_usd
+                    add_daily_pnl(cliff_pnl_usd)
                     wallet_credit(cliff_pnl_usd, cliff_mar_t)
                     _log_closed_trade(trade, close_reason, cliff_pnl_usd, current_price)
                     eq       = _get_equity()
@@ -3056,7 +3056,7 @@ def track_trades():
                         _exh_pnl     = round(pos_size * _exh_pnl_pct / 100, 2)
                         _exh_ret     = round(_exh_pnl_pct * t_leverage, 1)
                         daily_stats['wins'] += 1
-                        daily_stats['total_pnl'] += _exh_pnl
+                        add_daily_pnl(_exh_pnl)
                         daily_stats['close_reasons']['Exhaustion'] = (
                             daily_stats['close_reasons'].get('Exhaustion', 0) + 1)
                         wallet_credit(_exh_pnl, trade.get('margin', MARGIN))
@@ -3102,7 +3102,7 @@ def track_trades():
                             stag_pnl   = round(sign * pos_size * price_drift / 100, 2)
                             stag_pnl_r = round(sign * price_drift * t_leverage, 1)
                             pnl_icon   = "📈" if stag_pnl >= 0 else "📉"
-                            daily_stats['total_pnl'] += stag_pnl
+                            add_daily_pnl(stag_pnl)
                             if stag_pnl >= 0:
                                 daily_stats['wins'] += 1
                             else:
@@ -3149,7 +3149,7 @@ def track_trades():
                         if _fl_elapsed < FAST_LOSS_MINUTES and _fl_loss_margin >= FAST_LOSS_MARGIN_PCT and _fl_sl_ok:
                             _fl_pnl  = round(pos_size * _fl_raw_pct / 100, 2)
                             _fl_ret  = round(_fl_raw_pct * t_leverage, 1)
-                            daily_stats['total_pnl'] += _fl_pnl
+                            add_daily_pnl(_fl_pnl)
                             daily_stats['losses'] += 1
                             daily_stats['close_reasons']['FastLoss'] = \
                                 daily_stats['close_reasons'].get('FastLoss', 0) + 1
@@ -3212,7 +3212,7 @@ def track_trades():
                             if _rg_trigger:
                                 _rg_pnl  = round(pos_size * _rg_raw_pct / 100, 2)
                                 _rg_ret  = round(_rg_raw_pct * t_leverage, 1)
-                                daily_stats['total_pnl'] += _rg_pnl
+                                add_daily_pnl(_rg_pnl)
                                 daily_stats['losses'] += 1
                                 daily_stats['close_reasons']['ReversalGuard'] = \
                                     daily_stats['close_reasons'].get('ReversalGuard', 0) + 1
@@ -3260,7 +3260,7 @@ def track_trades():
                             _md_pnl  = round(pos_size * _md_raw_pct / 100, 2)
                             _md_ret  = round(_md_raw_pct * t_leverage, 1)
                             _md_icon = "📈" if _md_pnl >= 0 else "📉"
-                            daily_stats['total_pnl'] += _md_pnl
+                            add_daily_pnl(_md_pnl)
                             if _md_pnl >= 0:
                                 daily_stats['wins'] += 1
                             else:
@@ -3311,7 +3311,7 @@ def track_trades():
                             _to_pnl    = round(pos_size * _to_profit / 100, 2)
                             _to_icon   = "📈" if _to_pnl >= 0 else "📉"
                             _to_ret    = round(_to_profit * t_leverage, 1)
-                            daily_stats['total_pnl'] += _to_pnl
+                            add_daily_pnl(_to_pnl)
                             if _to_pnl >= 0:
                                 daily_stats['wins'] += 1
                             else:
@@ -3396,7 +3396,7 @@ def track_trades():
                         daily_stats['wins']  += 1
                     else:
                         daily_stats['losses'] += 1
-                    daily_stats['total_pnl'] += pnl_usd
+                    add_daily_pnl(pnl_usd)
                     daily_stats['close_reasons']['Trailing'] += 1
                     wallet_credit(pnl_usd, trade.get('margin', MARGIN))
                     _log_closed_trade(trade, 'Trailing', pnl_usd, current_price)
@@ -3465,7 +3465,7 @@ def track_trades():
                         trade['partial_25_triggered'] = True
                         trade['pos_size'] = round(pos_size - quarter_pos, 2)
                         trade['margin']   = round(trade.get('margin', MARGIN) - quarter_margin, 2)
-                        daily_stats['total_pnl'] += partial_pnl
+                        add_daily_pnl(partial_pnl)
                         wallet_credit(partial_pnl, quarter_margin)
                         save_active_trades()
                         print(f"  [Partial25] {sym}: סגר 25% @ {current_price:.6g} "
@@ -3512,7 +3512,7 @@ def track_trades():
                         trade['trailing_sl'] = current_price * 0.98
                     else:
                         trade['trailing_sl'] = current_price * 1.02
-                    daily_stats['total_pnl'] += tp1_pnl
+                    add_daily_pnl(tp1_pnl)
 
                     # TP1 hit → always move SL to Break Even (entry price)
                     trade['sl']           = entry
@@ -3550,7 +3550,7 @@ def track_trades():
                         _trade_margin = trade.get('margin', MARGIN)
                         loss_pct = round(loss / _trade_margin * 100, 1)
                         daily_stats['losses']    += 1
-                        daily_stats['total_pnl'] -= loss
+                        add_daily_pnl(-loss)
                         daily_stats['close_reasons']['SL'] += 1
                         wallet_credit(-loss, _trade_margin)   # מרג'ין חוזר פחות ההפסד
                         _log_closed_trade(trade, 'SL', -loss, current_price)
@@ -3592,7 +3592,7 @@ def track_trades():
                     tp_pnl   = round(remaining * dist_pct / 100, 2)
                     total    = round(trade['tp1_pnl'] + tp_pnl, 2)
                     daily_stats['wins']      += 1
-                    daily_stats['total_pnl'] += tp_pnl
+                    add_daily_pnl(tp_pnl)
                     daily_stats['close_reasons']['TP'] += 1
                     wallet_credit(total, trade.get('margin', MARGIN))
                     _log_closed_trade(trade, 'TP', total, current_price)
@@ -3626,7 +3626,7 @@ def track_trades():
                         daily_stats['wins'] += 1
                     else:
                         daily_stats['losses'] += 1
-                    daily_stats['total_pnl'] += half_pnl
+                    add_daily_pnl(half_pnl)
                     daily_stats['close_reasons']['TP1+Trail'] += 1
                     wallet_credit(total, trade.get('margin', MARGIN))
                     _log_closed_trade(trade, 'TP1+Trail', total, current_price)
@@ -4326,7 +4326,7 @@ def handle_close_button(call):
             daily_stats['wins'] += 1
         else:
             daily_stats['losses'] += 1
-        daily_stats['total_pnl'] = round(daily_stats.get('total_pnl', 0) + net_pnl_cb, 2)
+        add_daily_pnl(net_pnl_cb)
         save_active_trades()
         eq = _get_equity()
 
