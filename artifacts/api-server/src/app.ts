@@ -29,7 +29,7 @@ app.use(
 // Restrict CORS to Replit domains and localhost only.
 // Wildcard '*' would allow any third-party site to read trading telemetry
 // from a logged-in user's browser via cross-origin fetch.
-const _CORS_ALLOW = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$|^https:\/\/[a-z0-9-]+\.(replit\.app|replit\.dev|repl\.co)(\/.*)?$/i;
+const _CORS_ALLOW = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$|^https:\/\/([a-z0-9-]+\.)+replit\.app(\/.*)?$|^https:\/\/([a-z0-9-]+\.)+replit\.dev(\/.*)?$|^https:\/\/([a-z0-9-]+\.)+repl\.co(\/.*)?$/i;
 app.use(cors({
   origin: (origin, cb) => {
     // Allow server-to-server (no Origin header) and matching browser origins
