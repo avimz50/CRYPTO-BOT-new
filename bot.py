@@ -2660,6 +2660,19 @@ def _open_research_trade(
         print(f"[Research] ⛔ Regime gate blocked {symbol} {direction}: {regime_reason}", flush=True)
         return False
 
+    # ── Extreme Fear floor — רצפה קשיחה שקלוד לא יכול לעקוף ──────────────────
+    # FNG < 20 (Extreme Fear) + BTC מתחת EMA20(4H) → LONG חסום גם אם score=100
+    # SHORTs מותרים תמיד (כיוון עם המגמה בשוק פחד קיצוני)
+    if direction == 'LONG' and fng_v < 20:
+        _regime_str, _, _btc_above_ema, _ema20_val = get_market_regime()
+        if not _btc_above_ema:
+            print(
+                f"[Research] ⛔ Extreme Fear floor: FNG={fng_v}<20 + BTC מתחת EMA20={_ema20_val:.0f} "
+                f"— LONG חסום ({symbol})",
+                flush=True,
+            )
+            return False
+
     # ── Verify symbol is an active Bitget perpetual market ────────────────────
     try:
         mkts = exchange.markets or exchange.load_markets()
