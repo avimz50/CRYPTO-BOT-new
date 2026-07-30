@@ -78,6 +78,7 @@ exchange_md = ccxt.bitget({
     'options': {'defaultType': 'swap'},
 })
 print("[BOOT] ccxt exchange OK.", flush=True)
+claude_gate.set_exchange(exchange)   # enrich signals with live market data
 
 bot = telebot.TeleBot(os.environ['TELEGRAM_TOKEN'])
 CHAT_ID = os.environ['CHAT_ID']
@@ -2443,7 +2444,7 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
 
     # ── Claude AI Gate ────────────────────────────────────────────────────────
     _cl_regime_sw, _, _cl_btc_sw, _ = get_market_regime()
-    _cl_ok_sw, _cl_score_sw, _cl_reason_sw = claude_gate.claude_trade_gate(
+    _cl_ok_sw, _cl_score_sw, _cl_reason_sw, _cl_risk_sw = claude_gate.claude_trade_gate(
         symbol=symbol, direction=direction, strategy='Swing',
         price=price, bot_score=int(score or 0),
         regime=_cl_regime_sw, fng=int(fng_v or 50), btc_above_ema=_cl_btc_sw,
@@ -2520,6 +2521,7 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         'score':                score,
         'claude_score':         _cl_score_sw,
         'claude_reason':        _cl_reason_sw,
+        'claude_key_risk':      _cl_risk_sw,
         'atr':                  round(atr, 6),
         'atr_1h':               0.0,
         'timeframe':            timeframe,
@@ -2572,6 +2574,9 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         f"🛡️ סיכון: `${est_loss_sl}` | 💰 רווח(TP1): `${est_profit_tp1}` | (TP2): `${est_profit_tp}`\n"
         f"💼 {leverage}x · ${effective_margin:.0f} מרג'ין · ${pos_size:.0f} נשלט\n"
         f"💵 פנוי בארנק: `${free_cash:.2f}`"
+        + (f"\n🤖 *Dr\\. Sniper:* _{_cl_reason_sw}_"
+           + (f" · ⚠️ _{_cl_risk_sw}_" if _cl_risk_sw else "")
+           if _cl_reason_sw else "")
     )
 
     if df_3h is None:
@@ -6616,7 +6621,7 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
 
     # ── Claude AI Gate ────────────────────────────────────────────────────────
     _cl_regime_sc, _, _cl_btc_sc, _ = get_market_regime()
-    _cl_ok_sc, _cl_score_sc, _cl_reason_sc = claude_gate.claude_trade_gate(
+    _cl_ok_sc, _cl_score_sc, _cl_reason_sc, _cl_risk_sc = claude_gate.claude_trade_gate(
         symbol=symbol, direction=direction, strategy='Scalp',
         price=price, bot_score=0,
         regime=_cl_regime_sc, fng=int(fng_v_now or 50), btc_above_ema=_cl_btc_sc,
@@ -6656,6 +6661,7 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
         'score':           0,
         'claude_score':    _cl_score_sc,
         'claude_reason':   _cl_reason_sc,
+        'claude_key_risk': _cl_risk_sc,
         'atr':             0.0,
         'timeframe':       '15m',
         'rsi':             None,
@@ -6819,7 +6825,7 @@ def open_cliff_trade(symbol: str, price: float, direction: str, move_pct: float,
 
     # ── Claude AI Gate ────────────────────────────────────────────────────────
     _cl_regime_cl, _cl_fng_cl, _cl_btc_cl, _ = get_market_regime()
-    _cl_ok_cl, _cl_score_cl, _cl_reason_cl = claude_gate.claude_trade_gate(
+    _cl_ok_cl, _cl_score_cl, _cl_reason_cl, _cl_risk_cl = claude_gate.claude_trade_gate(
         symbol=symbol, direction=direction, strategy='Velocity',
         price=price, bot_score=0,
         regime=_cl_regime_cl, fng=int(_cl_fng_cl or 50), btc_above_ema=_cl_btc_cl,
@@ -6871,6 +6877,7 @@ def open_cliff_trade(symbol: str, price: float, direction: str, move_pct: float,
         'score':           0,
         'claude_score':    _cl_score_cl,
         'claude_reason':   _cl_reason_cl,
+        'claude_key_risk': _cl_risk_cl,
         'atr':             0.0,
         'timeframe':       '5m',
         'rsi':             None,
@@ -7243,7 +7250,7 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
 
     # ── Claude AI Gate ────────────────────────────────────────────────────────
     _cl_regime_br, _, _cl_btc_br, _ = get_market_regime()
-    _cl_ok_br, _cl_score_br, _cl_reason_br = claude_gate.claude_trade_gate(
+    _cl_ok_br, _cl_score_br, _cl_reason_br, _cl_risk_br = claude_gate.claude_trade_gate(
         symbol=symbol, direction=direction, strategy='Breakout',
         price=price, bot_score=0,
         regime=_cl_regime_br, fng=int(fng_v or 50), btc_above_ema=_cl_btc_br,
@@ -7314,6 +7321,7 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
         'atr':             atr_val,
         'claude_score':    _cl_score_br,
         'claude_reason':   _cl_reason_br,
+        'claude_key_risk': _cl_risk_br,
         'timeframe':       'Breakout',
         'rsi':             round(rsi, 2) if rsi is not None else None,
         'ema200':          None,
