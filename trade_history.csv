@@ -114,3 +114,4 @@ timestamp,symbol,side,entry_price,exit_price,pnl_usd,exit_reason
 2026-07-27 08:01:05,UNI/USDT,LONG,3.885,3.901,2.06,MaxDuration
 2026-07-27 08:40:46,BTC/USDT,LONG,65580.0,65166.44,-3.15,MaxDuration
 2026-07-27 18:20:45,SOL/USDT,LONG,77.38,75.58,-11.63,MaxDuration
+2026-07-30 13:30:56,RHIMS/USDT,SHORT,25.45,24.42,10.66,TP
