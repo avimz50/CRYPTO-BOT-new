@@ -5,6 +5,7 @@ import csv
 import signal
 import sys
 import claude_gate
+import claude_research
 
 print("[BOT-BEACON] bot.py process started — beginning imports", flush=True, file=sys.stderr)
 sys.stderr.flush()
@@ -78,7 +79,8 @@ exchange_md = ccxt.bitget({
     'options': {'defaultType': 'swap'},
 })
 print("[BOOT] ccxt exchange OK.", flush=True)
-claude_gate.set_exchange(exchange)   # enrich signals with live market data
+claude_gate.set_exchange(exchange)      # enrich gate signals with live market data
+claude_research.set_exchange(exchange)  # enrich research with live TA
 
 bot = telebot.TeleBot(os.environ['TELEGRAM_TOKEN'])
 CHAT_ID = os.environ['CHAT_ID']
@@ -2602,6 +2604,190 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ─── Dr. Sniper Research — execute callback (bypasses regime gate) ────────────
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _open_research_trade(
+    symbol:      str,
+    direction:   str,
+    claude_score: int,
+    reason:      str,
+    key_risk:    str,
+) -> bool:
+    """
+    Execute a trade found by Dr. Sniper Research.
+    Bypasses regime gate — Claude evaluated macro context holistically.
+    Uses adaptive TP1/duration (same as Swing), standard sizing.
+    """
+    # ── Deterministic input guards ────────────────────────────────────────────
+    direction = str(direction).strip().upper()
+    if direction not in ("LONG", "SHORT"):
+        print(f"[Research] ⛔ Invalid direction '{direction}' — abort", flush=True)
+        return False
+    try:
+        claude_score = int(claude_score)
+    except (TypeError, ValueError):
+        print(f"[Research] ⛔ Non-integer score — abort", flush=True)
+        return False
+    if not (0 <= claude_score <= 100):
+        print(f"[Research] ⛔ Score {claude_score} out of range — abort", flush=True)
+        return False
+    symbol = str(symbol).strip().upper()
+    if not symbol.endswith("/USDT") or len(symbol) < 6:
+        print(f"[Research] ⛔ Bad symbol '{symbol}' — abort", flush=True)
+        return False
+    reason   = str(reason).strip()[:200]
+    key_risk = str(key_risk).strip()[:200]
+
+    print(f"[Research] 🤖 Executing: {symbol} {direction} score={claude_score} | {reason}", flush=True)
+
+    # ── Bot paused? ───────────────────────────────────────────────────────────
+    if _bot_paused:
+        print(f"[Research] ⛔ Bot paused — skipping execution of {symbol}", flush=True)
+        return False
+
+    # ── Circuit breakers ──────────────────────────────────────────────────────
+    if check_daily_circuit_breaker():
+        print(f"[Research] ⛔ Circuit Breaker — skipping {symbol}", flush=True)
+        return False
+    if len(active_trades) >= MAX_TRADES:
+        print(f"[Research] ⛔ MAX_TRADES reached — skipping {symbol}", flush=True)
+        return False
+
+    # ── Market-regime gate (same deterministic check as all other trade types) ─
+    regime_ok, regime_reason = is_direction_allowed(direction, context='Research')
+    if not regime_ok:
+        print(f"[Research] ⛔ Regime gate blocked {symbol} {direction}: {regime_reason}", flush=True)
+        return False
+
+    # ── Verify symbol is an active Bitget perpetual market ────────────────────
+    try:
+        mkts = exchange.markets or exchange.load_markets()
+        if symbol not in mkts:
+            print(f"[Research] ⛔ {symbol} not in exchange markets — abort", flush=True)
+            return False
+        m = mkts[symbol]
+        if not (m.get('active', True) and m.get('quote') == 'USDT'):
+            print(f"[Research] ⛔ {symbol} not active USDT market — abort", flush=True)
+            return False
+    except Exception as _me:
+        print(f"[Research] ⚠️  Market check failed for {symbol}: {_me} — proceeding", flush=True)
+
+    # ── Balance ───────────────────────────────────────────────────────────────
+    if wallet.get('balance', STARTING_BALANCE) < MARGIN:
+        print(f"[Research] ⚠️  Insufficient balance — skipping {symbol}", flush=True)
+        return False
+
+    # ── Live price ────────────────────────────────────────────────────────────
+    try:
+        ticker = exchange.fetch_ticker(symbol)
+        price  = ticker.get('last') or ticker.get('close')
+        if not price:
+            print(f"[Research] ⚠️  No price for {symbol} — abort", flush=True)
+            return False
+    except Exception as e:
+        print(f"[Research] ⚠️  Price fetch error {symbol}: {e}", flush=True)
+        return False
+
+    fng_v = _fng_cache.get('value', 50)
+
+    # ── Adaptive exit parameters — same as Swing ──────────────────────────────
+    _btc_regime_now = get_btc_regime()
+    _dyn_tp1, _dyn_dur, _exit_lbl = adaptive_exit_params(fng_v, _btc_regime_now)
+    print(f"[Research/AdaptiveExit] {symbol}: {_exit_lbl}", flush=True)
+
+    tgt       = se.calc_targets(price, direction, tp1_pct=_dyn_tp1)
+    sl_price  = tgt['sl_price']
+    tp1_price = tgt['tp1_price']
+    tp_price  = tgt['tp_price']
+    be_price  = tgt['be_price']
+    sl_pct    = tgt['sl_pct']
+    tp1_pct   = tgt['tp1_pct']
+    tp_pct    = tgt['tp_pct']
+
+    trade = {
+        'symbol':               symbol,
+        'entry':                price,
+        'sl':                   sl_price,
+        'tp':                   tp_price,
+        'tp1':                  tp1_price,
+        'be_lvl':               be_price,
+        'sl_pct':               sl_pct,
+        'tp_pct':               tp_pct,
+        'direction':            direction,
+        'phase':                'initial',
+        'be_triggered':         False,
+        'tp1_triggered':        False,
+        'partial_25_triggered': False,
+        'tp1_pnl':              0.0,
+        'peak_price':           price,
+        'trailing_sl':          None,
+        'score':                0,
+        'claude_score':         claude_score,
+        'claude_reason':        reason,
+        'claude_key_risk':      key_risk,
+        'atr':                  0.0,
+        'atr_1h':               0.0,
+        'timeframe':            'Research',
+        'rsi':                  None,
+        'ema200':               None,
+        'score_breakdown':      reason,
+        'opened_at':            now_il().isoformat(timespec='seconds'),
+        'pos_size':             POSITION_SIZE,
+        'margin':               MARGIN,
+        'leverage':             LEVERAGE,
+        'fng_at_entry':         fng_v,
+        'max_duration_min':     _dyn_dur,
+        'track':                'Research',
+        'vol_usd':              0,
+        'change_24h':           0.0,
+        'slippage_pct':         0.0,
+        'ob_found':             False,
+        'ob_high':              None,
+        'ob_low':               None,
+        'ob_type':              None,
+    }
+
+    success = place_order(trade, MARGIN)
+    if not success:
+        return False
+
+    # Telegram notification
+    dir_icon  = "🟢 L O N G" if direction == 'LONG' else "🔴 S H O R T"
+    name      = symbol.replace('/USDT', '')
+    spaced    = " ".join(list(name))
+    free_cash = round(wallet.get('balance', 0), 2)
+    est_loss  = round(abs(sl_price  - price) / price * POSITION_SIZE, 2)
+    est_tp1   = round(abs(tp1_price - price) / price * POSITION_SIZE, 2)
+    est_tp2   = round(abs(tp_price  - price) / price * POSITION_SIZE, 2)
+
+    msg = (
+        f"*{dir_icon}  |  {spaced}*\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"🔬 *Dr\\. Sniper Research* — score `{claude_score}/100`\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"💵 כניסה:  `{price:.6g}`\n"
+        f"🛑 SL:     `{sl_price:.6g}` \\(-{sl_pct:.1f}%\\)\n"
+        f"🎯 TP1:    `{tp1_price:.6g}` \\(+{tp1_pct:.1f}%\\) → 🔒 BE auto\n"
+        f"🎯 TP2:    `{tp_price:.6g}` \\(+{tp_pct:.1f}%\\)\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"🛡️ סיכון: `${est_loss}` | 💰 TP1: `${est_tp1}` | TP2: `${est_tp2}`\n"
+        f"💼 {LEVERAGE}x · ${MARGIN:.0f} מרג'ין · ${POSITION_SIZE:.0f} נשלט\n"
+        f"💵 פנוי: `${free_cash:.2f}`\n"
+        f"🤖 _{reason}_"
+        + (f"\n⚠️ _{key_risk}_" if key_risk else "")
+    )
+    send_msg(msg)
+    dir_emoji = '🟢' if direction == 'LONG' else '🔴'
+    send_push(
+        title=f"{dir_emoji} Research Trade — {name} {direction}",
+        body=f"Dr. Sniper | @ {price:.6g} | score={claude_score}",
+        tag=f"open-{symbol}",
+    )
+    return True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # ─── RSI Reversal Guard — cache + helper ─────────────────────────────────────
 _rsi15_cache: dict = {}   # {sym: {'rsi': float, 'ts': float}}
 
@@ -4133,6 +4319,66 @@ def handle_gate(message):
     if not _is_authorized(message.chat.id):
         return
     send_msg(claude_gate.gate_summary())
+
+
+@bot.message_handler(commands=['research'])
+def handle_research(message):
+    """Dr. Sniper Research — /research | /research off | /research on"""
+    if not _is_authorized(message.chat.id):
+        return
+    parts = message.text.strip().split()
+    if len(parts) > 1:
+        sub = parts[1].lower()
+        if sub == 'off':
+            claude_research.set_auto_execute(False)
+            send_msg(
+                "🟡 *Research mode: ALERT\\-ONLY*\n"
+                "קלוד ישלח התראות אבל לא יפתח עסקאות אוטומטית\\.\n"
+                "הפעל שוב עם `/research on`"
+            )
+            return
+        if sub == 'on':
+            claude_research.set_auto_execute(True)
+            send_msg(
+                "🟢 *Research mode: AUTO\\-EXECUTE*\n"
+                "קלוד יפתח עסקאות כשסקור ≥ 78\\."
+            )
+            return
+        if sub == 'status':
+            send_msg(claude_research.research_summary())
+            return
+    # Run research now (manual trigger — works in DEV and PROD)
+    # When the bot is paused, run in alert-only mode so no trades are opened.
+    paused_now = _bot_paused
+    if paused_now:
+        send_msg(
+            "⏸ *בוט מושהה — Research יפעל במצב התראות בלבד*\n"
+            "ממצאים ישלחו כהתראה, ללא ביצוע עסקאות\\."
+        )
+    else:
+        send_msg(
+            "🔬 *Dr\\. Sniper Research מתחיל\\.\\.\\.*\n"
+            "אוסף נתונים מ\\-CoinGecko, exchange, DeFiLlama ועוד\\.\n"
+            "_עשוי לקחת כ\\-60 שניות_"
+        )
+    def _run(_paused=paused_now):
+        # Temporarily force alert-only if bot is paused; restore original setting after
+        _orig_auto = claude_research.is_auto_execute()
+        if _paused:
+            claude_research.set_auto_execute(False)
+        try:
+            claude_research.run_claude_research(
+                open_trades_count=len(active_trades),
+                daily_pnl=daily_stats.get('total_pnl', 0.0),
+                fng=_fng_cache.get('value', 50),
+                max_trades=MAX_TRADES,
+            )
+        except Exception as _re:
+            send_msg(f"⚠️ Research error: {_re}")
+        finally:
+            if _paused:
+                claude_research.set_auto_execute(_orig_auto)
+    threading.Thread(target=_run, daemon=True).start()
 
 @bot.message_handler(commands=['update'])
 def handle_update(message):
@@ -8032,6 +8278,33 @@ def watch_loop():
             _run_watch_check(symbol, entry, silent=True)
 
 
+def research_loop():
+    """
+    Dr. Sniper Autonomous Research — רץ כל 120 דקות ב-PROD בלבד.
+    מאחסן נתונים מ-CoinGecko, exchange, DeFiLlama, web ומחזיר המלצות.
+    שימוש ידני: /research (עובד גם ב-DEV).
+    """
+    if not IS_DEPLOYED:
+        print("⚠️  [DEV] Research loop DISABLED (IS_DEPLOYED=False). Use /research manually.", flush=True)
+        return
+    print("[Research] Loop started — running every 120 minutes (first run in 30min)", flush=True)
+    time.sleep(30 * 60)   # wait 30 min after startup before first run
+    while True:
+        if _bot_paused:
+            time.sleep(60)
+            continue
+        try:
+            claude_research.run_claude_research(
+                open_trades_count=len(active_trades),
+                daily_pnl=daily_stats.get('total_pnl', 0.0),
+                fng=_fng_cache.get('value', 50),
+                max_trades=MAX_TRADES,
+            )
+        except Exception as _rl_e:
+            print(f"[Research] Loop error: {_rl_e}", flush=True)
+        time.sleep(120 * 60)
+
+
 def scan_loop():
     """
     רץ בThread נפרד.
@@ -8376,6 +8649,18 @@ def main():
     major_watch_thread = threading.Thread(target=major_watch_loop, daemon=True)
     major_watch_thread.start()
 
+    # Thread 11 — Dr. Sniper Research: CoinGecko + TA + DeFiLlama + web, כל 120 דקות
+    claude_research.set_send_msg_fn(send_msg)
+    claude_research.set_execute_trade_fn(_open_research_trade)
+    claude_research.set_context_fns(
+        get_open_trades=lambda: len(active_trades),
+        get_daily_pnl=lambda: daily_stats.get('total_pnl', 0.0),
+        get_fng=lambda: _fng_cache.get('value', 50),
+    )
+    research_thread = threading.Thread(target=research_loop, daemon=True)
+    research_thread.name = "DrSniperResearch"
+    research_thread.start()
+
     if IS_DEPLOYED:
         send_msg(
             "🟢 *SYSTEM READY — Clean Base Rules 2026*\n"
@@ -8392,7 +8677,8 @@ def main():
             "  📡 Top20 Breakout: כל *15 דקות* ✅\n"
             "  🫧 Bubble Watch:   כל *15 דקות* ✅\n"
             "  ⚡ High-Velocity:  כל *2 דקות* ✅\n"
-            "  📍 מעקב SL/TP:    כל *60 שניות* ✅\n\n"
+            "  📍 מעקב SL/TP:    כל *60 שניות* ✅\n"
+            "  🔬 Dr\\. Sniper:    כל *120 דקות* ✅\n\n"
             f"📋 /home — תפריט ראשי\n"
             f"🖥 [פתח דאשבורד]({DASHBOARD_URL})"
         )
