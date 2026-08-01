@@ -18,6 +18,9 @@ import time
 import requests
 from collections import deque
 import anthropic
+import state_store
+
+GATE_STATS_FILE = "data/gate_stats.json"
 
 # ── singleton client (lazy-init) ─────────────────────────────────────────────
 _client: anthropic.Anthropic | None = None
@@ -68,15 +71,38 @@ Your job: evaluate trade signals with professional precision. You consider ALL a
 
 
 # ── stats ─────────────────────────────────────────────────────────────────────
-gate_stats: dict = {
-    'approved':        0,
-    'rejected':        0,
-    'fallback':        0,
-    'total_latency_ms': 0,
-    'calls':           0,
-    'web_searches':    0,
-    'last_decisions':  deque(maxlen=3),   # newest decisions for /gate display
-}
+def _load_gate_stats() -> dict:
+    """Load persisted gate stats from object storage; fall back to zeroes."""
+    default = {
+        'approved': 0, 'rejected': 0, 'fallback': 0,
+        'total_latency_ms': 0, 'calls': 0, 'web_searches': 0,
+        'last_decisions': [],
+    }
+    data = state_store.load_state('gate_stats', GATE_STATS_FILE, default)
+    # last_decisions stored as list → restore as deque
+    decisions = deque(data.get('last_decisions', []), maxlen=3)
+    return {
+        'approved':         int(data.get('approved', 0)),
+        'rejected':         int(data.get('rejected', 0)),
+        'fallback':         int(data.get('fallback', 0)),
+        'total_latency_ms': int(data.get('total_latency_ms', 0)),
+        'calls':            int(data.get('calls', 0)),
+        'web_searches':     int(data.get('web_searches', 0)),
+        'last_decisions':   decisions,
+    }
+
+
+def _save_gate_stats() -> None:
+    """Persist gate stats to object storage (best-effort)."""
+    try:
+        snapshot = {k: (list(v) if isinstance(v, deque) else v)
+                    for k, v in gate_stats.items()}
+        state_store.save_state('gate_stats', snapshot, GATE_STATS_FILE)
+    except Exception as _e:
+        print(f"[ClaudeGate] ⚠️  gate_stats save error: {_e}", flush=True)
+
+
+gate_stats: dict = _load_gate_stats()
 
 
 # ── FNG label ─────────────────────────────────────────────────────────────────
@@ -344,11 +370,13 @@ def claude_trade_gate(
             f"claude={claude_score} | {latency_ms}ms{web_note} | {reason_out}",
             flush=True,
         )
+        _save_gate_stats()
         return approved, claude_score, reason_out, key_risk
 
     except Exception as e:
         latency_ms = int((time.time() - t0) * 1000)
         gate_stats['fallback'] += 1
+        _save_gate_stats()
         print(
             f"[ClaudeGate] ⚠️  {symbol} error ({latency_ms}ms): {e} — fallback approve",
             flush=True,
