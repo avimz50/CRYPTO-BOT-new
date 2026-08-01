@@ -2654,24 +2654,19 @@ def _open_research_trade(
         print(f"[Research] ⛔ MAX_TRADES reached — skipping {symbol}", flush=True)
         return False
 
-    # ── Market-regime gate (same deterministic check as all other trade types) ─
-    regime_ok, regime_reason = is_direction_allowed(direction, context='Research')
-    if not regime_ok:
-        print(f"[Research] ⛔ Regime gate blocked {symbol} {direction}: {regime_reason}", flush=True)
-        return False
-
-    # ── Extreme Fear floor — רצפה קשיחה שקלוד לא יכול לעקוף ──────────────────
-    # FNG < 20 (Extreme Fear) + BTC מתחת EMA20(4H) → LONG חסום גם אם score=100
-    # SHORTs מותרים תמיד (כיוון עם המגמה בשוק פחד קיצוני)
-    if direction == 'LONG' and fng_v < 20:
-        _regime_str, _, _btc_above_ema, _ema20_val = get_market_regime()
-        if not _btc_above_ema:
-            print(
-                f"[Research] ⛔ Extreme Fear floor: FNG={fng_v}<20 + BTC מתחת EMA20={_ema20_val:.0f} "
-                f"— LONG חסום ({symbol})",
-                flush=True,
-            )
-            return False
+    # NOTE: No regime gate here — Claude evaluated macro context holistically
+    # (FNG, BTC trend, news, TA) inside its prompt. Blocking by regime would
+    # eliminate the core advantage of autonomous research: finding opportunities
+    # in ALL market conditions including Bearish Regime and Extreme Fear.
+    # MAX_TRADES, _bot_paused, and Circuit Breaker remain active for capital protection.
+    _regime_str, _, _btc_above_ema, _ema20_val = get_market_regime()
+    _fng_now = _fng_cache.get('value', 50)
+    print(
+        f"[Research] 🌐 Regime-free execution: {symbol} {direction} "
+        f"| BTC {'above' if _btc_above_ema else 'below'} EMA20={_ema20_val:.0f} "
+        f"| FNG={_fng_now} — Claude evaluated macro independently",
+        flush=True,
+    )
 
     # ── Verify symbol is an active Bitget perpetual market ────────────────────
     try:
