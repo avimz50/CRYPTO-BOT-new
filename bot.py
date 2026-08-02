@@ -367,9 +367,9 @@ trade_close_cooldown: dict       = {}
 TRADE_CLOSE_COOLDOWN_SEC: int    = 2 * 60 * 60   # 2 שעות
 
 # ─── MaxDuration Cooldown — cooldown ארוך אחרי יציאה בזמן (SOL loop) ────────
-# MaxDuration → 6 שעות המתנה — מונע SOL loop (9 עסקאות ב-4 ימים)
+# MaxDuration → 2 שעות המתנה — מונע SOL loop (9 עסקאות ב-4 ימים)
 max_duration_cooldown: dict      = {}
-MAX_DURATION_COOLDOWN_SEC: int   = 6 * 60 * 60   # 6 שעות
+MAX_DURATION_COOLDOWN_SEC: int   = 2 * 60 * 60   # 2 שעות
 
 # ─── Watch List — מעקב מטבעות ספציפיים כל 15 דקות ───────────────────────────
 # מבנה: { 'SOL/USDT': {'direction':'LONG','added_at':..., 'last_score':0, 'expires_at':...} }
