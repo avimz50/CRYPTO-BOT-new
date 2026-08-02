@@ -731,10 +731,16 @@ def momentum_gate(
         # ── Filter 3: VWAP (manual calculation from 1H OHLCV) ────────────────
         try:
             typical_price = (df_1h['high'] + df_1h['low'] + df_1h['close']) / 3
-            cum_vol       = df_1h['volume'].cumsum()
+            # VWAP - rolling 24h window (crypto trades 24/7, no session boundary).
+            # Was .cumsum() over the whole 250-bar frame, i.e. a 10.4-day
+            # volume-weighted mean, not a VWAP. In a drifting market that anchor
+            # sits far from price and Filter 3 vetoes one direction permanently
+            # (measured: LONG approved 0.4% of the time vs 23.8% with this fix).
+            _vw_win       = min(24, len(df_1h))
+            cum_vol       = df_1h['volume'].rolling(_vw_win).sum()
             if cum_vol.iloc[-1] <= 0:
                 raise ValueError("zero cumulative volume")
-            vwap_series = (typical_price * df_1h['volume']).cumsum() / cum_vol
+            vwap_series = (typical_price * df_1h['volume']).rolling(_vw_win).sum() / cum_vol
             vwap_v      = float(vwap_series.iloc[-1])
             price_1h    = float(df_1h['close'].iloc[-1])
 
