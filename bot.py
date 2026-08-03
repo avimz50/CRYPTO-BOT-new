@@ -8317,7 +8317,7 @@ def research_loop():
             )
         except Exception as _rl_e:
             print(f"[Research] Loop error: {_rl_e}", flush=True)
-        time.sleep(120 * 60)
+        time.sleep(1440 * 60)
 
 
 def scan_loop():
