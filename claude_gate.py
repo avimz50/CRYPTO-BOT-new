@@ -13,6 +13,7 @@ Model: claude-haiku-4-5 (fastest + cheapest)
 """
 
 import os
+import re
 import json
 import time
 import requests
@@ -279,6 +280,7 @@ def claude_trade_gate(
 
     t0          = time.time()
     web_searched = False
+    raw = ""
     try:
         messages = [{"role": "user", "content": prompt}]
 
@@ -292,40 +294,46 @@ def claude_trade_gate(
             messages=messages,
         )
 
-        # ── Handle one tool call (web search) ─────────────────────────────────
+        # -- Handle tool calls (web search) --
+        # Every tool_use block in the assistant turn needs a matching
+        # tool_result, or the API rejects the follow-up with
+        # "tool_use ids were found without tool_result blocks".
+        # The previous version answered only the first block, so any turn
+        # with two tool calls failed. Under fail-closed that silently
+        # blocks the trade.
         if response.stop_reason == "tool_use":
-            tool_block = next(
-                (b for b in response.content if b.type == "tool_use"), None
-            )
-            if tool_block and tool_block.name == "search_web":
-                query         = tool_block.input.get("query", symbol)
-                search_result = _search_web(query)
-                web_searched  = True
-                gate_stats['web_searches'] += 1
-                print(
-                    f"[ClaudeGate] 🔍 web search: '{query}' "
-                    f"→ {len(search_result)} chars",
-                    flush=True,
-                )
+            tool_blocks = [b for b in response.content if b.type == "tool_use"]
+            if tool_blocks:
+                tool_results = []
+                for tb in tool_blocks:
+                    if tb.name == "search_web":
+                        query  = tb.input.get("query", symbol)
+                        result = _search_web(query)
+                        web_searched = True
+                        gate_stats['web_searches'] += 1
+                        print(
+                            f"[ClaudeGate] search: '{query}' "
+                            f"-> {len(result)} chars",
+                            flush=True,
+                        )
+                    else:
+                        result = f"Tool '{tb.name}' unavailable - use data already provided."
+                    tool_results.append({
+                        "type":        "tool_result",
+                        "tool_use_id": tb.id,
+                        "content":     result,
+                    })
                 messages = messages + [
                     {"role": "assistant", "content": response.content},
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type":        "tool_result",
-                                "tool_use_id": tool_block.id,
-                                "content":     search_result,
-                            }
-                        ],
-                    },
+                    {"role": "user", "content": tool_results},
                 ]
+                # No tools on the follow-up: forces a text answer and bounds
+                # the exchange to a single search round.
                 response = client.messages.create(
                     model="claude-haiku-4-5",
                     system=CLAUDE_SYSTEM_PROMPT,
                     max_tokens=300,
                     timeout=10.0,
-                    tools=_TOOLS,
                     messages=messages,
                 )
 
@@ -339,7 +347,8 @@ def claude_trade_gate(
                 raw = raw[4:]
         raw = raw.strip()
 
-        parsed       = json.loads(raw)
+        _m = re.search(r'\{.*\}', raw, re.DOTALL)
+        parsed       = json.loads(_m.group(0) if _m else raw)
         claude_score = max(0, min(100, int(parsed.get("score", 70))))
         approved     = bool(parsed.get("approve", claude_score >= 65))
         reason_out   = str(parsed.get("reason",   ""))[:80]
@@ -382,6 +391,7 @@ def claude_trade_gate(
             f"[ClaudeGate] ⛔ {symbol} error ({latency_ms}ms): {e} — fail closed",
             flush=True,
         )
+        print(f"[ClaudeGate] raw reply was: {raw[:200]!r}", flush=True)
         return False, 0, "gate unavailable (API error) — fail closed", ""
 
 
