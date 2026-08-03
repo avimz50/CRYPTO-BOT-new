@@ -325,7 +325,18 @@ def claude_trade_gate(
                     })
                 messages = messages + [
                     {"role": "assistant", "content": response.content},
-                    {"role": "user", "content": tool_results},
+                    {"role": "user", "content": tool_results + [
+                        {
+                            "type": "text",
+                            "text": (
+                                "Now output your verdict. Reply with ONLY a raw JSON "
+                                "object and nothing else - no markdown, no analysis, "
+                                "no code fences. Exactly this shape:\n"
+                                '{"score": <int 0-100>, "approve": <true|false>, '
+                                '"reason": "<15 words max>", "key_risk": "<10 words max>"}'
+                            ),
+                        }
+                    ]},
                 ]
                 # No tools on the follow-up: forces a text answer and bounds
                 # the exchange to a single search round.
