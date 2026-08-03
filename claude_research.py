@@ -567,7 +567,19 @@ def run_claude_research(
 
             messages = messages + [
                 {"role": "assistant", "content": response.content},
-                {"role": "user",      "content": tool_results},
+                {"role": "user",      "content": tool_results + [
+                    {
+                        "type": "text",
+                        "text": (
+                            "You have all the data you need. Now output your verdict. "
+                            "Reply with ONLY a raw JSON object and nothing else — "
+                            "no markdown, no analysis, no code fences. Exactly this shape:\n"
+                            '{"candidates": [{"symbol": "XXX/USDT", "direction": "LONG", '
+                            '"score": <int 0-100>, "reason": "<15 words max>", '
+                            '"key_risk": "<10 words max>", "execute": <true|false>}]}'
+                        ),
+                    }
+                ]},
             ]
 
         latency = int(time.time() - t0)
