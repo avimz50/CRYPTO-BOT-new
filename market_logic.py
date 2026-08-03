@@ -96,6 +96,39 @@ def compute_synthetic_fng(df_btc: pd.DataFrame) -> int:
         return 50
 
 
+def get_fng_components() -> dict:
+    """Last known FNG inputs, recorded on a trade so the regime decision is
+    auditable afterwards. Read off the caches deliberately - reports exactly
+    what the gate saw, with no extra API calls."""
+    return {
+        'official':  _fng_cache.get('value'),
+        'synthetic': _synthetic_cache.get('value'),
+        'api_ok':    bool(_fng_api_state.get('ok', True)),
+    }
+
+
+def get_fng_regime(btc_df: pd.DataFrame = None) -> tuple[int, str]:
+    """FNG for regime decisions: the official index while the API is healthy,
+    the synthetic estimate only as a fallback when it is not.
+
+    Separate from get_fng_blended() because blending a BTC-momentum estimate
+    into a sentiment reading was lifting the regime above the bearish threshold
+    on short bounces. A momentum estimate is a reasonable stand-in when the
+    sentiment API is down; it is not a reasonable override of a sentiment
+    reading that is working."""
+    get_fear_greed()
+    official_v = _fng_cache['value']
+    if _fng_api_state['ok'] or btc_df is None:
+        return official_v, _fng_cache['label']
+
+    if _time.time() - _synthetic_cache['ts'] >= 300:
+        _synthetic_cache.update({'value': compute_synthetic_fng(btc_df),
+                                 'ts': _time.time()})
+    synth_v = _synthetic_cache['value']
+    print(f"[FNG] API offline - regime falling back to synthetic: {synth_v}")
+    return synth_v, _fng_label(synth_v)
+
+
 def _fng_label(value: int) -> str:
     """ממפה ערך FNG מספרי לתווית."""
     if value < 20: return 'Extreme Fear'

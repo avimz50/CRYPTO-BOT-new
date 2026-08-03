@@ -1,0 +1,73 @@
+Two changes. Both target the LONG bleed: 60 LONG trades, -$74.83, only
+1 of 60 reached its target while 46 timed out.
+
+ROOT CAUSE
+get_market_regime() in bot.py decides BEARISH/BULLISH using get_fng_blended(),
+which returns 70% official FNG + 30% synthetic FNG. The synthetic value is
+computed from BTC's own RSI/volume/ATR/EMA50-gap, and 60% of its weight sits on
+components structurally anchored near 50, so it reads far higher than the market
+during a downtrend. Worked example from real data: official FNG 29 (Fear),
+synthetic 62 -> blended 39, which clears the bearish threshold of 38 by one
+point. Regime stops being BEARISH, LONGs are allowed, and the bot buys BTC
+bounces inside a fear market.
+
+CHANGE 1 - market_logic.py
+Add two functions immediately BEFORE `def _fng_label(value: int) -> str:`
+(currently line 99):
+
+def get_fng_components() -> dict:
+    """Last known FNG inputs, recorded on a trade so the regime decision is
+    auditable afterwards. Read off the caches deliberately - reports exactly
+    what the gate saw, with no extra API calls."""
+    return {
+        'official':  _fng_cache.get('value'),
+        'synthetic': _synthetic_cache.get('value'),
+        'api_ok':    bool(_fng_api_state.get('ok', True)),
+    }
+
+
+def get_fng_regime(btc_df: pd.DataFrame = None) -> tuple[int, str]:
+    """FNG for regime decisions: the official index while the API is healthy,
+    the synthetic estimate only as a fallback when it is not.
+
+    Separate from get_fng_blended() because blending a BTC-momentum estimate
+    into a sentiment reading was lifting the regime above the bearish threshold
+    on short bounces. A momentum estimate is a reasonable stand-in when the
+    sentiment API is down; it is not a reasonable override of a sentiment
+    reading that is working."""
+    get_fear_greed()
+    official_v = _fng_cache['value']
+    if _fng_api_state['ok'] or btc_df is None:
+        return official_v, _fng_cache['label']
+
+    if _time.time() - _synthetic_cache['ts'] >= 300:
+        _synthetic_cache.update({'value': compute_synthetic_fng(btc_df),
+                                 'ts': _time.time()})
+    synth_v = _synthetic_cache['value']
+    print(f"[FNG] API offline - regime falling back to synthetic: {synth_v}")
+    return synth_v, _fng_label(synth_v)
+
+Do NOT modify or delete get_fng_blended - leave it exactly as it is.
+
+CHANGE 2 - bot.py
+(a) In the `from market_logic import (` block, add after `get_fng_blended,`:
+        get_fng_regime,
+        get_fng_components,
+
+(b) Line ~2169, inside get_market_regime(), change only this call:
+        fng_v, _ = get_fng_blended(_df_btc)
+    to:
+        fng_v, _ = get_fng_regime(_df_btc)
+    and update the Hebrew comment above it to say the regime uses the official
+    FNG, with synthetic only as a fallback.
+
+(c) In open_demo_trade's trade dict (~line 2539), add one line right after
+    'fng_at_entry':
+        'fng_components':       get_fng_components(),
+
+VERIFY, then paste me the output:
+  python3 -c "import ast;[ast.parse(open(f,encoding='utf-8').read()) for f in ('bot.py','market_logic.py')];print('SYNTAX_OK')"
+  git --no-pager diff --stat
+  git --no-pager diff market_logic.py bot.py
+
+Do NOT commit. Do NOT publish. I want to review the diff first.

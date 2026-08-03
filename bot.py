@@ -27,6 +27,8 @@ from config import *
 from market_logic import (
     get_fear_greed,
     get_fng_blended,
+    get_fng_regime,
+    get_fng_components,
     sentiment_check, set_sentiment_thresholds,
     score_symbol, detect_fvg, detect_order_blocks,
     detect_flag, detect_bb_squeeze, detect_volume_buildup,
@@ -2164,9 +2166,9 @@ def get_market_regime() -> tuple[str, int, bool, float]:
     except Exception as _be:
         print(f"[MarketRegime] BTC EMA20 fetch failed: {_be} — defaulting btc_above=False (BEARISH safe)", flush=True)
 
-    # ── FNG משולב (70% רשמי + 30% סינתטי BTC) ───────────────────────────────
+    # ── FNG לregime: רשמי בלבד (API זמין) — סינתטי רק כגיבוי כשהAPI נפל ────
     try:
-        fng_v, _ = get_fng_blended(_df_btc)
+        fng_v, _ = get_fng_regime(_df_btc)
         _fng_ok  = True
     except Exception as _fe:
         print(f"[MarketRegime] FNG fetch failed: {_fe} — defaulting fng_v=0 (BEARISH safe)", flush=True)
@@ -2535,6 +2537,7 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         'margin':               effective_margin,
         'leverage':             leverage,
         'fng_at_entry':         fng_v,
+        'fng_components':       get_fng_components(),
         'max_duration_min':     _dyn_dur,
         'track':                'Swing',
         'vol_usd':              round(vol_usd),

@@ -1,1 +1,1 @@
-{"approved": 0, "rejected": 0, "fallback": 12, "total_latency_ms": 0, "calls": 0, "web_searches": 18, "last_decisions": []}
+{"approved": 0, "rejected": 1, "fallback": 12, "total_latency_ms": 3689, "calls": 1, "web_searches": 21, "last_decisions": [{"ts": "08:57", "symbol": "SOL/USDT", "direction": "SHORT", "strategy": "Breakout", "score": 42, "approved": false, "reason": "RSI 50.6 neutral, weak vol ratio, missing funding data for confirmation", "key_risk": "Fear extreme may precede reversal; thin $14.2M volume unreli", "web": true, "latency_ms": 3689}]}
