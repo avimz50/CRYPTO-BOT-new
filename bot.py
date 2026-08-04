@@ -8361,7 +8361,7 @@ def research_loop():
             )
         except Exception as _rl_e:
             print(f"[Research] Loop error: {_rl_e}", flush=True)
-        time.sleep(1440 * 60)
+        time.sleep(480 * 60)   # 3 runs/day - enough samples to score the engine
 
 
 def scan_loop():

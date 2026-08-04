@@ -21,6 +21,7 @@ Callbacks registered from bot.py (after function definitions):
 import os
 import json
 import time
+import state_store
 import threading
 import requests
 from collections import deque
@@ -449,6 +450,46 @@ Empty list is correct when nothing meets the bar. Quality > quantity."""
 
 # ── Main research runner ──────────────────────────────────────────────────────
 
+RESEARCH_LOG_FILE = "data/research_log.json"
+
+
+def _record_recommendation(symbol, direction, score, reason, key_risk, executed):
+    """
+    Append one recommendation to a durable log so it can be scored later against
+    what the price actually did.
+
+    research_stats['last_candidates'] is a deque(maxlen=5) held in memory, so it
+    tells you nothing after a restart and nothing about older calls. Judging
+    whether this engine reads the market well needs the entry price at the moment
+    of the call, kept somewhere that survives a redeploy.
+    """
+    price = None
+    try:
+        if _exchange is not None:
+            price = float(_exchange.fetch_ticker(symbol)['last'])
+    except Exception as _pe:
+        print(f"[Research] price fetch failed for {symbol}: {_pe}", flush=True)
+    try:
+        log = state_store.load_state('research_log', RESEARCH_LOG_FILE, {'recs': []})
+        recs = log.get('recs', [])
+        recs.append({
+            'ts':        time.strftime('%Y-%m-%dT%H:%M:%S'),
+            'symbol':    symbol,
+            'direction': direction,
+            'score':     int(score),
+            'reason':    str(reason)[:200],
+            'key_risk':  str(key_risk)[:200],
+            'price':     price,
+            'executed':  bool(executed),
+        })
+        log['recs'] = recs[-400:]
+        state_store.save_state('research_log', log, RESEARCH_LOG_FILE)
+        print(f"[Research] logged {symbol} {direction} score={score} "
+              f"price={price} executed={executed}", flush=True)
+    except Exception as _le:
+        print(f"[Research] recommendation log failed: {_le}", flush=True)
+
+
 def run_claude_research(
     open_trades_count: int = 0,
     daily_pnl:         float = 0.0,
@@ -717,6 +758,8 @@ def _process_candidates(
             'ts': time.strftime('%H:%M'), 'symbol': symbol,
             'direction': direction, 'score': score, 'reason': reason,
         })
+        _record_recommendation(symbol, direction, score, reason,
+                               key_risk, executed=False)
 
         medal    = medals[i] if i < len(medals) else f"{i+1}\\."
         dir_icon = "📈" if direction == "LONG" else "📉"
