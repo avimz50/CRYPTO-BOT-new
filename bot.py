@@ -2180,6 +2180,13 @@ def get_market_regime() -> tuple[str, int, bool, float]:
     else:
         regime = 'NEUTRAL'
 
+    # Both directions can be blocked at once: BEARISH blocks LONG while the
+    # BTC Compass blocks SHORT on a strong BTC. A legitimate sit-this-out
+    # state, but silence makes it look identical to a fault.
+    if regime == 'BEARISH' and btc_above:
+        print(f"[MarketRegime] DUAL BLOCK - FNG={fng_v} < {REGIME_BEARISH_FNG} "
+              f"blocks LONG while BTC above EMA20 may block SHORT. Scanner "
+              f"may return zero signals; a decision, not a fault.", flush=True)
     _market_regime_cache = {'ts': now_ts, 'regime': regime, 'fng_v': fng_v,
                              'btc_above': btc_above, 'ema20': ema20_4h}
     _data_src = f"{'FNG✓' if _fng_ok else 'FNG✗(safe)'} {'BTC✓' if _btc_ok else 'BTC✗(safe)'}"
@@ -5150,6 +5157,37 @@ def _register_sol_trade(price: float, sl: float, tp: float, rsi: float | None):
         return
 
     # ── Fixed SL/TP (2% / 2% / 4%) — same rule as all other strategies ────────
+    # -- Gates: this path previously bypassed every one of them --
+    if check_daily_circuit_breaker():
+        print("[SOL] Circuit Breaker - skipping", flush=True)
+        return
+    with trades_lock:
+        if len(active_trades) >= MAX_TRADES:
+            print("[SOL] MAX_TRADES reached - skipping", flush=True)
+            return
+
+    _sol_ok, _sol_reason = is_direction_allowed('LONG', context='SOL')
+    if not _sol_ok:
+        print(f"[SOL] blocked - {_sol_reason}", flush=True)
+        return
+
+    _sol_fng, _, _ = sentiment_check("sol_open")
+    _sol_regime, _, _sol_btc_above, _ = get_market_regime()
+    _sol_gate_ok, _sol_cscore, _sol_creason, _ = claude_gate.claude_trade_gate(
+        symbol=sym, direction='LONG', strategy='SOL',
+        price=price, bot_score=100,
+        regime=_sol_regime, fng=int(_sol_fng or 50), btc_above_ema=_sol_btc_above,
+        rsi=rsi, reason='SOL breakout',
+        daily_pnl=daily_stats.get('total_pnl', 0.0),
+        open_trades=len(active_trades),
+    )
+    _sol_combined = claude_gate.combined_score(100, _sol_cscore)
+    print(f"[ClaudeGate/SOL] {sym} | bot=100 claude={_sol_cscore} "
+          f"combined={_sol_combined} | {_sol_creason}", flush=True)
+    if not _sol_gate_ok or _sol_combined < MIN_SCORE:
+        print(f"[ClaudeGate] {sym} SOL rejected - combined={_sol_combined}", flush=True)
+        return
+
     tgt_sol   = se.calc_targets(price, 'LONG')
     sl        = tgt_sol['sl_price']    # entry × 0.98
     tp        = tgt_sol['tp_price']    # entry × 1.04
@@ -5195,7 +5233,9 @@ def _register_sol_trade(price: float, sl: float, tp: float, rsi: float | None):
         'opened_at':       now_il().isoformat(timespec='seconds'),
         'pos_size':        POSITION_SIZE,
         'margin':          MARGIN,
-        'fng_at_entry':    None,
+        'fng_at_entry':    _sol_fng,
+        'fng_components':  get_fng_components(),
+        'track':           'SOL',
         'scalp':           False,
         'sol_strategy':    True,
     }
@@ -7575,7 +7615,8 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
         'sl_pct':          sl_pct,
         'tp_pct':          tp_pct,
         'direction':       direction,
-        'phase':           'initial',
+        'track':                'Breakout',
+        'be_triggered':    False,
         'be_triggered':    False,
         'tp1_triggered':   False,
         'tp1_pnl':         0.0,
