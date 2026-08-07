@@ -7,7 +7,7 @@ Claude independently scans the market every 2 hours using multi-source data:
   3. DECIDE    — Conviction score, then execute or alert
 
 Execution thresholds:
-  score ≥ 78 + execute=true  →  auto-execute via callback (if enabled)
+  score ≥ 72 + execute=true  →  auto-execute via callback (if enabled)
   score 65-77                →  Telegram alert only
   score < 65                 →  silent
 
@@ -432,7 +432,7 @@ SCORING CRITERIA:
 - Macro: use your knowledge of BTC dominance and altcoin cycles
 
 EXECUTION THRESHOLDS:
-- score ≥ 78: High conviction → set execute: true (will be auto-traded)
+- score ≥ 72: High conviction → set execute: true (will be auto-traded)
 - score 65-77: Interesting → set execute: false (human decides)
 - score < 65: Not worth it → exclude from output entirely
 
@@ -451,6 +451,13 @@ Empty list is correct when nothing meets the bar. Quality > quantity."""
 # ── Main research runner ──────────────────────────────────────────────────────
 
 RESEARCH_LOG_FILE = "data/research_log.json"
+
+# Auto-execute threshold. Lowered 78 -> 72 on 2026-08-07: across 16 runs the
+# engine scored candidates 65-76 and never once cleared 78, so the gate was
+# unreachable in practice rather than selective. 72 sits just under the
+# observed cluster. Raise it back if the executed trades underperform the
+# alerts that stay below it.
+RESEARCH_EXEC_MIN = 72
 
 
 def _record_recommendation(symbol, direction, score, reason, key_risk, executed):
@@ -775,7 +782,7 @@ def _process_candidates(
             or base.lower() in fundamental_evidence
         )
 
-        if do_exec and score >= 78 and executed < slots_available and _auto_execute and _execute_trade_fn:
+        if do_exec and score >= RESEARCH_EXEC_MIN and executed < slots_available and _auto_execute and _execute_trade_fn:
             if not has_ta:
                 print(
                     f"[Research] ⛔ {symbol} — no TA evidence (get_technical_data not called) "
