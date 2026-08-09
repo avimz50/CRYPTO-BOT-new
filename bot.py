@@ -2138,7 +2138,7 @@ def get_market_regime() -> tuple[str, int, bool, float]:
     """
     מחזיר (regime, fng_v, btc_above_ema20, ema20_4h) עם cache של 5 דקות.
 
-    BEARISH: FNG < REGIME_BEARISH_FNG(40) OR  BTC < EMA20(4H) → חוסם LONGs
+    BEARISH: FNG < REGIME_BEARISH_FNG(38) AND BTC < EMA20(4H) → חוסם LONGs
     BULLISH: FNG > REGIME_BULLISH_FNG(60) AND BTC > EMA20(4H) → חוסם SHORTs
     NEUTRAL: אחרת → שני הכיוונים מותרים, max_trades מוגבל ל-2
     """
@@ -2173,7 +2173,7 @@ def get_market_regime() -> tuple[str, int, bool, float]:
     except Exception as _fe:
         print(f"[MarketRegime] FNG fetch failed: {_fe} — defaulting fng_v=0 (BEARISH safe)", flush=True)
 
-    if fng_v < REGIME_BEARISH_FNG or not btc_above:
+    if fng_v < REGIME_BEARISH_FNG and not btc_above:
         regime = 'BEARISH'
     elif fng_v > REGIME_BULLISH_FNG and btc_above:
         regime = 'BULLISH'
@@ -8482,10 +8482,15 @@ def scan_loop():
                 sys_msg = f"מקסימום עסקאות פעיל ({MAX_TRADES}/{MAX_TRADES}) — ממתין לסגירת עסקה לפני פתיחה חדשה"
             elif signals_found == 0 and fng_v_loop < EXTREME_FEAR_THRESHOLD:
                 sys_msg = f"Extreme Fear: FNG={fng_v_loop} — חוקים קבועים פעילים, ממשיך לסרוק"
-            elif signals_found == 0 and btc_regime == 'BEAR':
-                sys_msg = f"BTC BEAR Regime — כל ה-LONGs חסומים; SHORTs בלבד מאושרים"
-            elif signals_found == 0 and btc_regime == 'BULL':
-                sys_msg = f"BTC BULL Regime — כל ה-SHORTs חסומים; LONGs בלבד מאושרים"
+            elif signals_found == 0 and not is_direction_allowed('LONG')[0]:
+                _l_why = is_direction_allowed('LONG')[1]
+                _s_ok, _s_why = is_direction_allowed('SHORT')
+                _blk = '\u05d7\u05e1\u05d5\u05dd'
+                sys_msg = 'LONG ' + _blk + ' \u2014 ' + _l_why + (
+                    ' | SHORT ' + _blk + ' \u2014 ' + _s_why if not _s_ok
+                    else ' | SHORT \u05de\u05d5\u05ea\u05e8 (\u05e1\u05e3 \u05d0\u05e4\u05e7\u05d8\u05d9\u05d1\u05d9 \u05d2\u05d1\u05d5\u05d4)')
+            elif signals_found == 0 and not is_direction_allowed('SHORT')[0]:
+                sys_msg = 'SHORT \u05d7\u05e1\u05d5\u05dd \u2014 ' + is_direction_allowed('SHORT')[1]
             elif signals_found == 0:
                 top = sorted(all_rejections, key=lambda x: x.get('best_score', 0), reverse=True)
                 best = top[0] if top else None
