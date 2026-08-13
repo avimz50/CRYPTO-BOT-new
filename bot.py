@@ -2173,7 +2173,7 @@ def get_market_regime() -> tuple[str, int, bool, float]:
     except Exception as _fe:
         print(f"[MarketRegime] FNG fetch failed: {_fe} — defaulting fng_v=0 (BEARISH safe)", flush=True)
 
-    if fng_v < REGIME_BEARISH_FNG and not btc_above:
+    if fng_v < REGIME_BEARISH_FNG or not btc_above:
         regime = 'BEARISH'
     elif fng_v > REGIME_BULLISH_FNG and btc_above:
         regime = 'BULLISH'

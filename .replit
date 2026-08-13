@@ -60,3 +60,19 @@ VAPID_SUBJECT = "mailto:admin@cryptobot.local"
 
 [objectStorage]
 defaultBucketID = "replit-objstore-b6e24690-1f8c-415c-95bb-3d6e7f90eef0"
+
+[[ports]]
+localPort = 8080
+externalPort = 8080
+
+[[ports]]
+localPort = 8081
+externalPort = 8081
+
+[[ports]]
+localPort = 8091
+externalPort = 3000
+
+[[ports]]
+localPort = 25712
+externalPort = 80
