@@ -693,6 +693,61 @@ def claude_sandbox_analysis(bubble_watch_list: list, btc_regime: str,
     return results
 
 
+REJECT_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "rejected_log.jsonl")
+REJECT_LOG_MAX_BYTES = 8 * 1024 * 1024
+REJECT_LOG_ZERO_SAMPLE = 5
+
+
+def log_rejections(all_rejections: list, fng_value: int, btc_regime: str) -> None:
+    """
+    Append rejected candidates to data/rejected_log.jsonl.
+
+    WHY THIS EXISTS
+        gate_stats.json keeps only the last 3 decisions and the scan report keeps
+        the top 5, so every candidate the bot turned down is discarded. Without
+        them it is impossible to test whether the filters and the score separate
+        good setups from bad ones - only whether they rank the survivors, which
+        we measured on 2026-08-13 and they do not (pearson -0.037, n=94).
+
+        Scored rejections are always kept: those are the ones that carry ranking
+        information. Blanket vetoes (score 0, all identical) are sampled so the
+        file stays small.
+
+    SAFETY
+        Wrapped in try/except - logging must never be able to break a scan.
+    """
+    try:
+        if not all_rejections:
+            return
+        os.makedirs(os.path.dirname(REJECT_LOG_PATH), exist_ok=True)
+        ts = now_il().isoformat(timespec="seconds")
+        scored = [r for r in all_rejections if (r.get("best_score") or 0) > 0]
+        zeros = [r for r in all_rejections if (r.get("best_score") or 0) <= 0]
+        rows = []
+        for r in scored + zeros[:REJECT_LOG_ZERO_SAMPLE]:
+            rows.append(json.dumps({
+                "ts": ts,
+                "symbol": r.get("symbol"),
+                "direction": r.get("direction"),
+                "score": r.get("best_score") or 0,
+                "reason": str(r.get("reason") or "")[:120],
+                "fng": fng_value,
+                "regime": btc_regime,
+            }, ensure_ascii=False))
+        if not rows:
+            return
+        with open(REJECT_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write("\n".join(rows) + "\n")
+        if os.path.getsize(REJECT_LOG_PATH) > REJECT_LOG_MAX_BYTES:
+            with open(REJECT_LOG_PATH, encoding="utf-8") as f:
+                keep = f.readlines()[-40000:]
+            with open(REJECT_LOG_PATH, "w", encoding="utf-8") as f:
+                f.writelines(keep)
+        print(f"[RejectLog] +{len(rows)} rows ({len(scored)} scored)", flush=True)
+    except Exception as _e:
+        print(f"[RejectLog] skipped: {_e}", flush=True)
+
+
 def save_scan_results(
     total_scanned: int,
     signals_found: int,
@@ -706,6 +761,7 @@ def save_scan_results(
     sandbox_analysis: list = None,
 ):
     """שומר last_scan_results.json לאחר כל סריקה."""
+    log_rejections(all_rejections, fng_value, btc_regime)
     import time as _t
     duration = round(_t.time() - scan_start_ts, 1)
 
