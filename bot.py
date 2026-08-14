@@ -2330,7 +2330,7 @@ _btc_parabolic_cache: dict = {'ts': 0.0, 'result': False, 'rsi': 0.0, 'ema': 0.0
 def is_btc_parabolic_bull() -> tuple[bool, float, float]:
     """
     האם BTC נמצא בעלייה פרבולית?
-    תנאי: BTC 4H מעל EMA200 AND BTC RSI(1H) > 60
+    תנאי: BTC 4H מעל EMA200 AND BTC RSI(1H) > 65
     אם כן — חוסם את כל האיתותים SHORT על אלטקוין.
 
     מחזיר: (is_parabolic: bool, rsi_1h: float, ema200_4h: float)
@@ -2348,10 +2348,10 @@ def is_btc_parabolic_bull() -> tuple[bool, float, float]:
         ema200   = float(ta.ema(df_4h['close'], length=200).iloc[-1])
         rsi_1h   = float(ta.rsi(df_1h['close'], length=14).iloc[-1])
         price_4h = float(df_4h['close'].iloc[-1])
-        result   = (price_4h > ema200) and (rsi_1h > 60)
+        result   = (price_4h > ema200) and (rsi_1h > 65)
         _btc_parabolic_cache = {'ts': now_ts, 'result': result, 'rsi': rsi_1h, 'ema': ema200}
         if result:
-            print(f"[BTC Compass] 🐂 PARABOLIC BULL — {price_4h:.0f} > EMA200={ema200:.0f} + RSI1H={rsi_1h:.1f}>60 → SHORTs חסומים")
+            print(f"[BTC Compass] 🐂 PARABOLIC BULL — {price_4h:.0f} > EMA200={ema200:.0f} + RSI1H={rsi_1h:.1f}>65 → SHORTs חסומים")
         else:
             print(f"[BTC Compass] no parabolic — RSI1H={rsi_1h:.1f} | price vs EMA200: {price_4h:.0f}/{ema200:.0f}")
         return result, rsi_1h, ema200
@@ -6451,11 +6451,11 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
     if direction == 'SHORT':
         _parabolic, _rsi_1h, _ema200 = is_btc_parabolic_bull()
         if _parabolic:
-            print(f"BTC COMPASS VETO: PARABOLIC BULL — RSI1H={_rsi_1h:.1f}>60 above EMA200 → skipping {len(candidates)} SHORT candidates")
+            print(f"BTC COMPASS VETO: PARABOLIC BULL — RSI1H={_rsi_1h:.1f}>65 above EMA200 → skipping {len(candidates)} SHORT candidates")
             for c in candidates:
                 rejected_out.append({
                     'symbol': c['symbol'], 'direction': direction, 'best_score': 0,
-                    'reason': f'BTC Parabolic Bull (EMA200 4H above + RSI1H={_rsi_1h:.1f}>60) — SHORTs חסומים',
+                    'reason': f'BTC Parabolic Bull (EMA200 4H above + RSI1H={_rsi_1h:.1f}>65) — SHORTs חסומים',
                     'scores': {},
                 })
             return 0
