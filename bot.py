@@ -6429,10 +6429,13 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
         return _scan_batch_inner(candidates, direction, btc_regime, rejected_out)
     finally:
         try:
+            _new = rejected_out[_before:]
             _fng = _market_regime_cache.get('fng_v', 0)
-            log_rejections(rejected_out[_before:], _fng, btc_regime)
-        except Exception:
-            pass
+            print(f"[RejectLog] batch {direction}: {len(_new)} rejections, "
+                  f"{len(candidates) if candidates else 0} candidates", flush=True)
+            log_rejections(_new, _fng, btc_regime)
+        except Exception as _le:
+            print(f"[RejectLog] wrapper error: {type(_le).__name__} {_le}", flush=True)
 
 
 def _scan_batch_inner(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
