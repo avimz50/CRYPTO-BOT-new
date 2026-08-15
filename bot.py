@@ -693,7 +693,7 @@ def claude_sandbox_analysis(bubble_watch_list: list, btc_regime: str,
     return results
 
 
-REJECT_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "rejected_log.jsonl")
+REJECT_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "artifacts", "bot-dashboard", "public", "rejected_log.jsonl")
 REJECT_LOG_MAX_BYTES = 8 * 1024 * 1024
 REJECT_LOG_ZERO_SAMPLE = 5
 
@@ -761,7 +761,6 @@ def save_scan_results(
     sandbox_analysis: list = None,
 ):
     """שומר last_scan_results.json לאחר כל סריקה."""
-    log_rejections(all_rejections, fng_value, btc_regime)
     import time as _t
     duration = round(_t.time() - scan_start_ts, 1)
 
@@ -6411,6 +6410,32 @@ def trade_monitor_loop():
 # --- לולאת סריקת איתותים — Thread נפרד ---
 
 def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
+    """
+    Thin wrapper around the scan that persists whatever it rejected.
+
+    WHY HERE AND NOT IN save_scan_results
+        save_scan_results() has not run in this instance since 2026-05-17
+        (last_scan_results.json is that old), so a hook there never fires.
+        This wrapper sits on the function that actually produces rejections,
+        and the try/finally catches every early return - regime veto, the
+        parabolic-bull veto, and the normal path.
+
+    Never raises: a logging failure must not be able to abort a scan.
+    """
+    if rejected_out is None:
+        rejected_out = []
+    _before = len(rejected_out)
+    try:
+        return _scan_batch_inner(candidates, direction, btc_regime, rejected_out)
+    finally:
+        try:
+            _fng = _market_regime_cache.get('fng_v', 0)
+            log_rejections(rejected_out[_before:], _fng, btc_regime)
+        except Exception:
+            pass
+
+
+def _scan_batch_inner(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
     """
     עוזר לסריקה: מריץ score_symbol על רשימת מועמדים.
     direction: 'LONG' או 'SHORT'
