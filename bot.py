@@ -693,7 +693,10 @@ def claude_sandbox_analysis(bubble_watch_list: list, btc_regime: str,
     return results
 
 
-REJECT_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "artifacts", "bot-dashboard", "public", "rejected_log.jsonl")
+# .json and not .jsonl: the dashboard static server only serves known
+# extensions, so a .jsonl request falls through to the SPA and the file
+# cannot be fetched from outside the deployment. Contents stay JSONL.
+REJECT_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "artifacts", "bot-dashboard", "public", "rejected_log.json")
 REJECT_LOG_MAX_BYTES = 8 * 1024 * 1024
 REJECT_LOG_ZERO_SAMPLE = 5
 
