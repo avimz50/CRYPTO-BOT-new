@@ -4835,6 +4835,44 @@ def handle_export_trades(message):
         send_msg(f"❌ שגיאה בשליחת הקובץ: {e}")
 
 
+@bot.message_handler(commands=['rejects'])
+def handle_rejects(message):
+    """
+    Send the rejection log as a Telegram attachment.
+
+    WHY TELEGRAM AND NOT A URL
+        The log is written on the deployment's own disk. The dashboard is a
+        static Vite build, so a file created at runtime is never part of the
+        served bundle, and there is no shell into the deployment. Telegram is
+        the only channel that reaches out of that container, and the bot
+        already uses it for trade_history.csv.
+    """
+    try:
+        # The log was written as .jsonl until 2026-08-17; keep reading the
+        # legacy name so the days collected under it are not orphaned.
+        cands = [REJECT_LOG_PATH, REJECT_LOG_PATH + 'l']
+        avail = [c for c in cands if os.path.isfile(c)]
+        if not avail:
+            send_msg(f"No rejection log yet at {REJECT_LOG_PATH}")
+            return
+        p = max(avail, key=lambda c: os.path.getsize(c))
+        n = sum(1 for _ in open(p, encoding="utf-8"))
+        scored = 0
+        for line in open(p, encoding="utf-8"):
+            try:
+                if (json.loads(line).get("score") or 0) > 0:
+                    scored += 1
+            except Exception:
+                pass
+        with open(p, "rb") as f:
+            bot.send_document(
+                CHAT_ID, f,
+                caption=f"rejected_log - {n} rows, {scored} with a real score"
+            )
+    except Exception as e:
+        send_msg(f"rejects export failed: {e}")
+
+
 @bot.message_handler(commands=['audit'])
 def handle_audit(message):
     """שולח דוח ניתוח AI מלא (Gemini) — פירוט עסקאות + המלצות.
