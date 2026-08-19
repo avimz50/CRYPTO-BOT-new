@@ -1,0 +1,124 @@
+# Crypto top-100 by market cap, as it stood around 1 January 2018.
+#
+# WHY THIS FILE EXISTS
+#   The whole point of the SIGNUM test is that a universe chosen TODAY is
+#   already a list of winners. This file freezes the universe at the start
+#   of the backtest window instead, so the coins that later died are still
+#   in the test and still able to lose money.
+#
+# HOW IT IS USED
+#   A ticker here that cannot be fetched is NOT skipped. It is recorded as a
+#   delisting and priced at a total loss from its last available bar.
+#   Silently dropping unfetchable tickers is exactly the bias being measured.
+#
+# ACCURACY CAVEAT — READ THIS
+#   This list is reconstructed from memory of the January 2018 rankings and
+#   is approximate: the tail beyond roughly the top 40 is the least reliable,
+#   and a few tickers have been reused by unrelated projects since.
+#   It is good enough to size the bias, not to publish. To do this properly,
+#   replace this file with a real dated snapshot (CoinGecko and
+#   coinmarketcap both expose historical rankings) and re-run. The script
+#   reads whatever is here, so swapping the file is the only step needed.
+#
+# One ticker per line. Blank lines and # comments are ignored.
+
+BTC
+ETH
+XRP
+BCH
+ADA
+LTC
+XEM
+MIOTA
+DASH
+XMR
+TRX
+BTG
+ICX
+QTUM
+ETC
+LSK
+XLM
+ZEC
+NEO
+EOS
+BNB
+OMG
+PPT
+USDT
+HSR
+VEN
+SNT
+BCN
+STRAT
+ZRX
+SC
+BTS
+KCS
+VERI
+DGB
+WAVES
+STEEM
+RHOC
+DOGE
+DCR
+ARDR
+KMD
+ARK
+PIVX
+DRGN
+GBYTE
+GNT
+BAT
+MONA
+ETN
+REP
+WTC
+GAS
+SALT
+FCT
+MAID
+SUB
+POWR
+BNT
+DGD
+KNC
+ETHOS
+NXT
+XVG
+ELF
+LRC
+PAY
+GNO
+CVC
+FUN
+AION
+NEBL
+SYS
+EMC
+XZC
+ZCL
+QASH
+MTL
+STORJ
+ENG
+RDD
+CND
+DENT
+WAX
+LINK
+PART
+MED
+SMART
+GXS
+EDG
+NAV
+VTC
+BAY
+UBQ
+GAME
+DNT
+MCO
+BTM
+NULS
+XPA
