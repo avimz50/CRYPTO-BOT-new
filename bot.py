@@ -4016,6 +4016,58 @@ def send_daily_report():
     msg += f"{'─' * 28}\n"
     msg += f"_הבוט פעיל ומסרוק כל שעה_ 🤖"
 
+    # ── Strategy Breakdown ───────────────────────────────────────────────────
+    # Group ALL audit entries (not just today) by track/strategy for a full picture
+    strategy_data: dict = {}
+    for t in trade_audit_log:
+        track = t.get('track') or t.get('strategy') or 'Swing'
+        if track not in strategy_data:
+            strategy_data[track] = {'count': 0, 'wins': 0, 'pnl': 0.0}
+        pnl_entry = t.get('pnl_usd', 0.0)
+        strategy_data[track]['count'] += 1
+        if pnl_entry > 0:
+            strategy_data[track]['wins'] += 1
+        strategy_data[track]['pnl'] = round(strategy_data[track]['pnl'] + pnl_entry, 2)
+
+    if strategy_data:
+        strat_msg = f"📊 *ביצועים לפי אסטרטגיה* \\(100 עסקאות אחרונות\\)\n"
+        strat_msg += f"{'─' * 28}\n\n"
+        STRATEGY_EMOJI = {
+            'Swing':     '🌊',
+            'Scalp':     '⚡',
+            'Breakout':  '🚀',
+            'Velocity':  '💨',
+            'Research':  '🔬',
+        }
+        for strat_name in ['Swing', 'Scalp', 'Breakout', 'Velocity', 'Research']:
+            if strat_name not in strategy_data:
+                continue
+            d = strategy_data[strat_name]
+            wr = round(d['wins'] / d['count'] * 100) if d['count'] > 0 else 0
+            pnl_s = d['pnl']
+            pnl_sign = '+' if pnl_s >= 0 else ''
+            pnl_color = '📈' if pnl_s >= 0 else '📉'
+            emoji = STRATEGY_EMOJI.get(strat_name, '📊')
+            strat_msg += (
+                f"{emoji} *{strat_name}*\n"
+                f"   עסקאות: {d['count']}  |  Win Rate: {wr}%\n"
+                f"   {pnl_color} P&L: *{pnl_sign}${pnl_s:.2f}*\n\n"
+            )
+        # also show any unexpected strategy names
+        for strat_name, d in strategy_data.items():
+            if strat_name in ('Swing','Scalp','Breakout','Velocity','Research'):
+                continue
+            wr = round(d['wins'] / d['count'] * 100) if d['count'] > 0 else 0
+            pnl_s = d['pnl']
+            pnl_sign = '+' if pnl_s >= 0 else ''
+            pnl_color = '📈' if pnl_s >= 0 else '📉'
+            strat_msg += (
+                f"📊 *{strat_name}*\n"
+                f"   עסקאות: {d['count']}  |  Win Rate: {wr}%\n"
+                f"   {pnl_color} P&L: *{pnl_sign}${pnl_s:.2f}*\n\n"
+            )
+        send_msg(strat_msg)
+
     send_msg(msg)
 
     # ── פירוט עסקאות סגורות היום ─────────────────────────────────────────────

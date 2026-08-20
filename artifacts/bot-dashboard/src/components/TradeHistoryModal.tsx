@@ -62,11 +62,35 @@ function fmtLeverage(t: AuditTrade): string {
   return t.leverage != null && isFinite(t.leverage) ? `${t.leverage}x` : "—";
 }
 
+const STRATEGY_ORDER = ["Swing", "Scalp", "Breakout", "Velocity", "Research"];
+const STRATEGY_ICON: Record<string, string> = {
+  Swing: "🌊", Scalp: "⚡", Breakout: "🚀", Velocity: "💨", Research: "🔬",
+};
+
+interface StratStats { count: number; wins: number; pnl: number; }
+
+function buildStrategyStats(trades: AuditTrade[]): Record<string, StratStats> {
+  const out: Record<string, StratStats> = {};
+  for (const t of trades) {
+    const key = t.track || t.strategy || "Swing";
+    if (!out[key]) out[key] = { count: 0, wins: 0, pnl: 0 };
+    out[key].count++;
+    if ((t.pnl_usd ?? 0) > 0) out[key].wins++;
+    out[key].pnl += isFinite(t.pnl_usd) ? t.pnl_usd : 0;
+  }
+  return out;
+}
+
 export function TradeHistoryModal({ trades, loading, onClose, stale, lastSuccessAt }: TradeHistoryModalProps) {
   const totalPnl = trades.reduce((s, t) => s + (isFinite(t.pnl_usd) ? t.pnl_usd : 0), 0);
   const wins     = trades.filter(t => t.pnl_usd > 0).length;
   const losses   = trades.filter(t => t.pnl_usd < 0).length;
   const winRate  = trades.length > 0 ? (wins / trades.length * 100).toFixed(0) : "—";
+  const stratStats = buildStrategyStats(trades);
+  const stratKeys  = [
+    ...STRATEGY_ORDER.filter(k => stratStats[k]),
+    ...Object.keys(stratStats).filter(k => !STRATEGY_ORDER.includes(k)),
+  ];
 
   const COLS = [
     "#", "PAIR", "DIR", "OPEN TIME", "ENTRY",
@@ -122,6 +146,39 @@ export function TradeHistoryModal({ trades, loading, onClose, stale, lastSuccess
             </button>
           </div>
         </div>
+
+        {/* Strategy Breakdown */}
+        {stratKeys.length > 0 && (
+          <div className="px-5 py-3 flex flex-wrap gap-3"
+            style={{ borderBottom: "1px solid #1e3a5f", background: "#071222" }}>
+            <span className="text-xs font-semibold self-center mr-1" style={{ color: "#64748b" }}>
+              BY STRATEGY
+            </span>
+            {stratKeys.map(key => {
+              const s = stratStats[key];
+              const wr = s.count > 0 ? Math.round(s.wins / s.count * 100) : 0;
+              const pnlPos = s.pnl >= 0;
+              const icon = STRATEGY_ICON[key] ?? "📊";
+              return (
+                <div key={key}
+                  className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs"
+                  style={{ background: "#0a1628", border: "1px solid #1e3a5f" }}>
+                  <span>{icon}</span>
+                  <span className="font-semibold" style={{ color: "#93c5fd" }}>{key}</span>
+                  <span style={{ color: "#475569" }}>·</span>
+                  <span style={{ color: "#94a3b8" }}>{s.count}T</span>
+                  <span style={{ color: "#475569" }}>·</span>
+                  <span style={{ color: wr >= 50 ? "#4ade80" : "#f87171" }}>{wr}%</span>
+                  <span style={{ color: "#475569" }}>·</span>
+                  <span className="font-mono font-bold"
+                    style={{ color: pnlPos ? "#4ade80" : "#f87171" }}>
+                    {pnlPos ? "+" : ""}{s.pnl.toFixed(2)}$
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* Table */}
         <div className="overflow-auto flex-1">
