@@ -2727,22 +2727,23 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
                     direction='LONG', score=0, atr=0, timeframe='4H', tf_reason='',
                     rsi=None, ema200=None, fng_v=None,
                     ob_found=None, ob_high=None, ob_low=None, df_ob=None,
-                    df_1h=None):
+                    df_1h=None) -> bool:
     """
     פותח עסקת Swing — גודל קבוע: $20 מרג'ין, 10x, $200 נשלט.
     SL=2% | TP1=2% (→ BE אוטומטי) | TP2=4% (RR 1:2).
+    מחזיר True רק אם העסקה נרשמה בפועל בארנק וברשימת העסקאות הפעילות.
     """
     # ── Daily Circuit Breaker ────────────────────────────────────────────────
     if check_daily_circuit_breaker():
         print(f"[SWING] ⛔ Circuit Breaker — לא פותחים {symbol} (הפסד יומי ≤ ${DAILY_LOSS_LIMIT})")
-        return
+        return False
 
     # ── RegimeClose Cooldown — מניעת פינג-פונג ───────────────────────────────
     _rc_ts = regime_close_cooldown.get(symbol, 0)
     if time.time() - _rc_ts < REGIME_CLOSE_COOLDOWN_SEC:
         _rc_min = int((REGIME_CLOSE_COOLDOWN_SEC - (time.time() - _rc_ts)) / 60)
         print(f"[RegimeCooldown] {symbol} בקולדאון {_rc_min}min — skip Swing", flush=True)
-        return
+        return False
 
     # ── נפח + שינוי 24h ───────────────────────────────────────────────────────
     vol_usd, change_24h = fetch_symbol_ticker_info(symbol)
@@ -2753,7 +2754,7 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
             f"נפח 24h: ${vol_usd/1e6:.1f}M | מינימום Swing: ${SWING_TRACK_VOL_MIN/1e6:.0f}M\n"
             f"_העסקה נדחתה — נזילות לא מספקת_"
         )
-        return
+        return False
 
     if fng_v is None:
         fng_v, _, _ = sentiment_check("open_trade")
@@ -2762,7 +2763,7 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     _allowed, _reason = is_direction_allowed(direction, context='Swing')
     if not _allowed:
         print(f"[Swing] {symbol} {direction} נדחה — {_reason}", flush=True)
-        return
+        return False
 
     # ── Claude AI Gate ────────────────────────────────────────────────────────
     _cl_regime_sw, _, _cl_btc_sw, _ = get_market_regime()
@@ -2778,7 +2779,7 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     print(f"[ClaudeGate/Swing] {symbol} | bot={score} claude={_cl_score_sw} combined={_cl_combined_sw} | {_cl_reason_sw}", flush=True)
     if not _cl_ok_sw or _cl_combined_sw < MIN_SCORE:
         print(f"[ClaudeGate] ⛔ {symbol} Swing נדחה — combined={_cl_combined_sw} | {_cl_reason_sw}", flush=True)
-        return
+        return False
 
     # ── Adaptive Exit Parameters (FNG + BTC Regime) ───────────────────────────
     _btc_regime_now          = get_btc_regime()
@@ -2805,7 +2806,7 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     if balance_snap < effective_margin:
         print(f"WALLET: insufficient balance (${balance_snap:.2f}) — skipping {symbol}")
         send_msg(f"⚠️ *יתרה נמוכה* — נדרש: ${effective_margin:.0f} | יש: ${balance_snap:.2f}")
-        return
+        return False
 
     # ── Order Block ───────────────────────────────────────────────────────────
     if ob_found is None:
@@ -2871,7 +2872,9 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     est_profit_tp1 = round(abs(tp1_price - price) / price * pos_size, 2)
     est_loss_sl    = round(abs(sl_price  - price) / price * pos_size, 2)
 
-    place_order(trade, effective_margin)
+    if not place_order(trade, effective_margin):
+        print(f"[SWING] {symbol} was not opened by place_order", flush=True)
+        return False
 
     # ── Telegram Notification ─────────────────────────────────────────────────
     ticker_base   = symbol.split('/')[0].upper()
@@ -2922,6 +2925,7 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     print(f"[SWING] Trade opened: {symbol} {direction} @ {price:.6g} | "
           f"SL={sl_pct:.1f}% TP1={tp1_pct:.1f}% TP2={tp_pct:.1f}% | "
           f"{leverage}x margin=${effective_margin:.0f} pos=${pos_size:.0f}")
+    return True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -7065,7 +7069,7 @@ def _scan_batch_inner(candidates, direction, btc_regime='NEUTRAL', rejected_out=
                     pass
 
                 # ── פתיחת עסקה ──────────────────────────────────────────────────
-                open_demo_trade(
+                opened = open_demo_trade(
                     symbol, price, breakdown,
                     chosen_df, direction=direction,
                     score=score, atr=atr,
@@ -7075,7 +7079,14 @@ def _scan_batch_inner(candidates, direction, btc_regime='NEUTRAL', rejected_out=
                     ob_found=_ob_f, ob_high=_ob_h, ob_low=_ob_l,
                     df_1h=df_1h,
                 )
-                found += 1
+                if opened:
+                    found += 1
+                else:
+                    rejected_out.append({
+                        'symbol': symbol, 'direction': direction, 'best_score': score,
+                        'reason': 'הכניסה נדחתה בשער סיכון סופי או בבדיקת יתרה',
+                        'scores': {'4H': score_4h, '1H': score_1h, '15m': score_15m},
+                    })
             else:
                 # ניקוד לא מספיק בכל הטיים-פריימים → דחייה
                 rejected_out.append({
