@@ -352,6 +352,10 @@ closed_trades_log  = []
 # Audit Log — מתמיד ל-trade_audit.json (100 עסקאות אחרונות)
 trade_audit_log: list[dict] = []
 
+# Validation Trial — a clean, durable sample of the next 100 closed paper trades.
+# It is intentionally separate from the rolling audit history.
+validation_trial: dict = {}
+
 # ─── Breakout SL Cooldown — מונע כניסה חוזרת אחרי SL ───────────────────────
 # מבנה: { 'BNB/USDT': timestamp_of_sl_exit }  →  5 שעות המתנה
 breakout_sl_cooldown: dict       = {}
@@ -822,7 +826,25 @@ _polling_last_activity: float = 0.0   # watchdog: updated on every Telegram upda
 def api_trades():
     # current_price מתעדכן כל 60s ע"י track_trades() — ללא קריאת API כאן
     with trades_lock:
-        snapshot = list(active_trades)
+        snapshot = []
+        for source in active_trades:
+            trade = dict(source)
+            entry = float(trade.get('entry', 0) or 0)
+            current = float(trade.get('current_price', entry) or entry)
+            remaining = _remaining_notional(trade)
+            raw_pct = (current - entry) / entry * 100 if entry else 0.0
+            direction_pct = raw_pct if trade.get('direction') == 'LONG' else -raw_pct
+            floating_gross = remaining * direction_pct / 100
+            accounting = trade.get('fee_accounting', {})
+            realized_gross = float(accounting.get('gross_pnl_usd', 0.0) or 0.0)
+            fees_paid = float(accounting.get('fees_usd', 0.0) or 0.0)
+            estimated_fees = fees_paid + (remaining * TAKER_FEE_RATE if accounting else 0.0)
+            trade['gross_pnl_usd'] = round(realized_gross + floating_gross, 2)
+            trade['estimated_exit_fee_usd'] = round(remaining * TAKER_FEE_RATE if accounting else 0.0, 2)
+            trade['estimated_fees_usd'] = round(estimated_fees, 2)
+            trade['net_pnl_usd'] = round(trade['gross_pnl_usd'] - trade['estimated_fees_usd'], 2)
+            trade['fee_rate_pct'] = round(TAKER_FEE_RATE * 100, 4) if accounting else 0.0
+            snapshot.append(trade)
     return flask_jsonify({
         'updated': now_il().strftime('%H:%M:%S'),
         'count':   len(snapshot),
@@ -849,6 +871,9 @@ def api_wallet():
     data['locked_balance']    = locked
     data['unrealized_pnl']    = unrealized
     data['realized_pnl']      = realized
+    data['fee_rate_pct']      = round(TAKER_FEE_RATE * 100, 4)
+    data['gross_total_pnl']   = round(wallet.get('gross_total_pnl', realized + wallet.get('total_fees_usd', 0.0)), 2)
+    data['total_fees_usd']    = round(wallet.get('total_fees_usd', 0.0), 2)
     data['starting']          = db.STARTING_BALANCE
     data['active_count']      = len(active_trades)
     return flask_jsonify(data)
@@ -871,6 +896,24 @@ def api_trade_audit():
         'count':   len(trade_audit_log),
         'trades':  list(trade_audit_log),
     })
+
+
+@flask_app.route('/api/validation_trial')
+def api_validation_trial():
+    """Serve the dedicated, chronological 100-trade validation sample."""
+    data = dict(validation_trial)
+    data['summary'] = _validation_summary(data.get('trades', []))
+    data['remaining'] = max(0, data.get('target', VALIDATION_TRIAL_TARGET) - len(data.get('trades', [])))
+    return flask_jsonify(data)
+
+
+@flask_app.route('/api/validation_trial/reset', methods=['POST'])
+def api_validation_trial_reset():
+    if not _require_internal_token():
+        return flask_jsonify({'ok': False, 'error': 'Forbidden'}), 403
+    trial = _reset_validation_trial()
+    return flask_jsonify({'ok': True, **trial})
+
 
 @flask_app.route('/api/active_trades')
 def api_active_trades():
@@ -1028,20 +1071,20 @@ def api_make_command():
         try:
             price      = exchange.fetch_ticker(symbol)['last']
             entry      = trade['entry']
-            _ps        = trade.get('pos_size', POSITION_SIZE)
+            _ps        = _remaining_notional(trade)
             direction  = trade.get('direction', 'LONG')
             raw_pct    = (price - entry) / entry * 100
             pnl_pct    = raw_pct if direction == 'LONG' else -raw_pct
-            net_pnl    = round(_ps * pnl_pct / 100, 2)
+            gross_pnl  = round(_ps * pnl_pct / 100, 2)
             with trades_lock:
                 if trade in active_trades:
                     active_trades.remove(trade)
-            wallet_credit(net_pnl, trade.get('margin', MARGIN))
-            _log_closed_trade(trade, 'Manual', net_pnl, price)
+            wallet_credit(gross_pnl, trade.get('margin', MARGIN))
+            record = _log_closed_trade(trade, 'Manual', gross_pnl, price)
             save_active_trades()
-            send_msg(f"✋ *Make סגר עסקה* — `{symbol}` @ `{price:.6g}` | P&L: `{net_pnl:+.2f}$`")
-            print(f"[Make→Bot] close_trade: {symbol} @ {price} pnl={net_pnl:+.2f}")
-            return flask_jsonify({'ok': True, 'action': 'trade_closed', 'price': price, 'pnl': net_pnl})
+            send_msg(f"✋ *Make סגר עסקה* — `{symbol}` @ `{price:.6g}` | Net: `{record['net_pnl_usd']:+.2f}$` (fees `${record['fees_usd']:.2f}`)")
+            print(f"[Make→Bot] close_trade: {symbol} @ {price} net={record['net_pnl_usd']:+.2f}")
+            return flask_jsonify({'ok': True, 'action': 'trade_closed', 'price': price, 'pnl': record['net_pnl_usd']})
         except Exception as e:
             return flask_jsonify({'ok': False, 'error': str(e)}), 500
 
@@ -1130,20 +1173,20 @@ def api_close_trade():
     try:
         price     = exchange.fetch_ticker(symbol)['last']
         entry     = trade['entry']
-        _ps       = trade.get('pos_size', POSITION_SIZE)
+        _ps       = _remaining_notional(trade)
         direction = trade.get('direction', 'LONG')
         raw_pct   = (price - entry) / entry * 100
         pnl_pct   = raw_pct if direction == 'LONG' else -raw_pct
-        net_pnl   = round(_ps * pnl_pct / 100, 2)
+        gross_pnl = round(_ps * pnl_pct / 100, 2)
         with trades_lock:
             if trade in active_trades:
                 active_trades.remove(trade)
-        wallet_credit(net_pnl, trade.get('margin', MARGIN))
-        _log_closed_trade(trade, 'Manual', net_pnl, price)
+        wallet_credit(gross_pnl, trade.get('margin', MARGIN))
+        record = _log_closed_trade(trade, 'Manual', gross_pnl, price)
         save_active_trades()
-        send_msg(f"🚪 *סגירה ידנית* — `{symbol}` @ `{price:.6g}`\nP&L: `{net_pnl:+.2f}$`")
-        print(f"[API/close] {symbol} @ {price} dir={direction} pnl={net_pnl:+.2f}", flush=True)
-        return flask_jsonify({'ok': True, 'symbol': symbol, 'price': price, 'pnl': net_pnl})
+        send_msg(f"🚪 *סגירה ידנית* — `{symbol}` @ `{price:.6g}`\nNet: `{record['net_pnl_usd']:+.2f}$` | fees: `${record['fees_usd']:.2f}`")
+        print(f"[API/close] {symbol} @ {price} dir={direction} net={record['net_pnl_usd']:+.2f}", flush=True)
+        return flask_jsonify({'ok': True, 'symbol': symbol, 'price': price, 'pnl': record['net_pnl_usd']})
     except Exception as e:
         return flask_jsonify({'ok': False, 'error': str(e)}), 500
 
@@ -1285,6 +1328,79 @@ def _unrealized_cached() -> float:
             total += (entry - curr) / entry * active_pos
     return round(total, 2)
 
+
+def _trial_default() -> dict:
+    started_at = now_il().isoformat(timespec='seconds')
+    return {
+        'target': VALIDATION_TRIAL_TARGET,
+        'status': 'active',
+        'started_at': started_at,
+        'id': f"{started_at}-{time.time_ns()}",
+        'completed_at': None,
+        'trades': [],
+    }
+
+
+def _validation_summary(trades: list[dict]) -> dict:
+    def _bucket(rows: list[dict]) -> dict:
+        net = round(sum(float(t.get('net_pnl_usd', t.get('pnl_usd', 0.0)) or 0.0) for t in rows), 2)
+        gross = round(sum(float(t.get('gross_pnl_usd', t.get('pnl_usd', 0.0)) or 0.0) for t in rows), 2)
+        fees = round(sum(float(t.get('fees_usd', 0.0) or 0.0) for t in rows), 2)
+        wins = sum(1 for t in rows if float(t.get('net_pnl_usd', t.get('pnl_usd', 0.0)) or 0.0) > 0)
+        return {
+            'trades': len(rows),
+            'wins': wins,
+            'losses': len(rows) - wins,
+            'win_rate': round(wins / len(rows) * 100, 1) if rows else 0.0,
+            'net_win_rate': round(wins / len(rows) * 100, 1) if rows else 0.0,
+            'gross_pnl_usd': gross,
+            'fees_usd': fees,
+            'net_pnl_usd': net,
+            'total_gross_pnl_usd': gross,
+            'total_fees_usd': fees,
+            'total_net_pnl_usd': net,
+        }
+
+    def _group(key: str) -> dict:
+        groups: dict[str, list[dict]] = {}
+        for row in trades:
+            label = str(row.get(key) or 'Unknown')
+            groups.setdefault(label, []).append(row)
+        return {label: _bucket(rows) for label, rows in groups.items()}
+
+    return {
+        **_bucket(trades),
+        'by_direction': _group('direction'),
+        'by_strategy': _group('track'),
+        'by_regime': _group('market_regime'),
+    }
+
+
+def _save_validation_trial():
+    validation_trial['summary'] = _validation_summary(validation_trial.get('trades', []))
+    validation_trial['remaining'] = max(0, validation_trial.get('target', VALIDATION_TRIAL_TARGET) - len(validation_trial.get('trades', [])))
+    state_store.save_state('validation_trial', validation_trial, VALIDATION_TRIAL_FILE)
+
+
+def _load_validation_trial():
+    global validation_trial
+    loaded = state_store.load_state('validation_trial', VALIDATION_TRIAL_FILE, _trial_default())
+    validation_trial = loaded if isinstance(loaded, dict) else _trial_default()
+    validation_trial.setdefault('target', VALIDATION_TRIAL_TARGET)
+    validation_trial.setdefault('status', 'active')
+    validation_trial.setdefault('id', validation_trial.get('started_at', now_il().isoformat(timespec='seconds')))
+    validation_trial.setdefault('trades', [])
+    _save_validation_trial()
+    print(f"[ValidationTrial] loaded: {len(validation_trial['trades'])}/{validation_trial['target']} trades", flush=True)
+
+
+def _reset_validation_trial() -> dict:
+    global validation_trial
+    validation_trial = _trial_default()
+    state_store.reset_state('validation_trial', validation_trial, VALIDATION_TRIAL_FILE)
+    _save_validation_trial()
+    return validation_trial
+
 def _equity_cached() -> float:
     """Equity מהיר מ-cache — ללא קריאת API.
     Formula (immutable, from database_manager):
@@ -1311,6 +1427,8 @@ def load_wallet():
         'balance':        STARTING_BALANCE,
         'starting':       STARTING_BALANCE,
         'total_pnl':      0.0,
+        'gross_total_pnl': 0.0,
+        'total_fees_usd': 0.0,
         'trades_opened':  0,
         'equity_history': [{'t': now_il().strftime('%m/%d %H:%M'), 'eq': STARTING_BALANCE}],
     }
@@ -1377,17 +1495,77 @@ def wallet_deduct(amount: float = MARGIN):
         _append_equity_point()
         save_wallet()
 
-def wallet_credit(pnl_usd: float, amount: float = MARGIN):
+
+def wallet_credit(pnl_usd: float, amount: float = MARGIN, count_result: bool = True):
     """זיכוי מרג'ין + P&L בסגירת עסקה. amount צריך להתאים ל-wallet_deduct. אטומי תחת trades_lock."""
     with trades_lock:
         wallet['balance']   = round(wallet.get('balance', STARTING_BALANCE) + amount + pnl_usd, 2)
         wallet['total_pnl'] = round(wallet.get('total_pnl', 0.0) + pnl_usd, 2)
-        if pnl_usd >= 0:
+        wallet['gross_total_pnl'] = round(wallet.get('gross_total_pnl', 0.0) + pnl_usd, 2)
+        if count_result and pnl_usd >= 0:
             wallet['total_wins']   = wallet.get('total_wins', 0) + 1
-        else:
+        elif count_result:
             wallet['total_losses'] = wallet.get('total_losses', 0) + 1
         _append_equity_point()
         save_wallet()
+
+
+def _charge_estimated_fee(fee_usd: float):
+    """Deduct an estimated paper-trading fee without treating it as a separate trade."""
+    fee = round(max(0.0, float(fee_usd)), 4)
+    if fee == 0:
+        return
+    with trades_lock:
+        wallet['balance'] = round(wallet.get('balance', STARTING_BALANCE) - fee, 2)
+        wallet['total_pnl'] = round(wallet.get('total_pnl', 0.0) - fee, 2)
+        wallet['total_fees_usd'] = round(wallet.get('total_fees_usd', 0.0) + fee, 4)
+        _append_equity_point()
+        save_wallet()
+    add_daily_pnl(-fee)
+
+
+def _ensure_fee_accounting(trade: dict, charge_entry_fee: bool = False) -> dict:
+    """Return a trade's fee ledger; existing positions remain legacy fee-free."""
+    accounting = trade.get('fee_accounting')
+    if isinstance(accounting, dict):
+        return accounting
+
+    notional = float(trade.get('pos_size', POSITION_SIZE) or POSITION_SIZE)
+    entry_fee = round(notional * TAKER_FEE_RATE, 4) if charge_entry_fee else 0.0
+    accounting = {
+        'fee_rate': TAKER_FEE_RATE,
+        'entry_fee_usd': entry_fee,
+        'exit_fee_usd': 0.0,
+        'fees_usd': entry_fee,
+        'gross_pnl_usd': 0.0,
+    }
+    trade['fee_accounting'] = accounting
+    trade['entry_fee_usd'] = entry_fee
+    trade['fees_paid_usd'] = entry_fee
+    trade['gross_pnl_usd'] = 0.0
+    trade['net_pnl_usd'] = round(-entry_fee, 4)
+    trade['fee_rate_pct'] = round(TAKER_FEE_RATE * 100, 4)
+    return accounting
+
+
+def _record_exit_leg(trade: dict, gross_pnl_usd: float, closed_notional: float) -> float:
+    """Record one filled exit leg and charge exactly one estimated taker fee for it."""
+    accounting = _ensure_fee_accounting(trade)
+    fee = round(max(0.0, float(closed_notional)) * TAKER_FEE_RATE, 4)
+    accounting['gross_pnl_usd'] = round(accounting.get('gross_pnl_usd', 0.0) + gross_pnl_usd, 4)
+    accounting['exit_fee_usd'] = round(accounting.get('exit_fee_usd', 0.0) + fee, 4)
+    accounting['fees_usd'] = round(accounting.get('fees_usd', 0.0) + fee, 4)
+    trade['gross_pnl_usd'] = accounting['gross_pnl_usd']
+    trade['fees_paid_usd'] = accounting['fees_usd']
+    trade['net_pnl_usd'] = round(accounting['gross_pnl_usd'] - accounting['fees_usd'], 4)
+    _charge_estimated_fee(fee)
+    return fee
+
+
+def _remaining_notional(trade: dict) -> float:
+    """Actual still-open notional used for the final exit fee."""
+    position = float(trade.get('pos_size', POSITION_SIZE) or POSITION_SIZE)
+    return position * 0.25 if trade.get('phase') == 'trailing' else position
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -1433,6 +1611,21 @@ def place_order(trade: dict, margin: float = MARGIN) -> bool:
     מחזיר True בהצלחה, False אם נחסם (כפילות / MAX_TRADES / יתרה).
     """
     symbol = trade.get('symbol', '')
+    direction = trade.get('direction', 'LONG')
+    allowed, reason = is_direction_allowed(direction, 'ValidationTrial')
+    regime, _, _, _ = get_market_regime()
+    if not allowed:
+        print(f"[place_order] 🚫 {symbol} {direction} blocked: {reason}", flush=True)
+        return False
+    if VALIDATION_TRIAL_ENABLED and regime == 'BULLISH' and direction == 'LONG':
+        score = float(trade.get('score', 0) or 0)
+        if score < VALIDATION_STRONG_LONG_MIN_SCORE:
+            print(
+                f"[place_order] 🚫 {symbol} LONG blocked — validation requires score "
+                f"≥{VALIDATION_STRONG_LONG_MIN_SCORE} in BULLISH market (got {score:.0f})",
+                flush=True,
+            )
+            return False
 
     # ══ GLOBAL GUARDS — בדיקה + רישום + ניכוי, הכל אטומי תחת trades_lock ═
     # (מונע race בין threads: שתי עסקאות שנפתחות במקביל לא יכולות לקרוא
@@ -1448,12 +1641,24 @@ def place_order(trade: dict, margin: float = MARGIN) -> bool:
             print(f"[place_order] 🚫 {symbol} skipped — MAX_TRADES ({MAX_TRADES}) reached (atomic check).")
             return False
         # 3) Balance check — אטומי יחד עם ההוספה והניכוי (מונע over-deduct)
-        if wallet.get('balance', STARTING_BALANCE) < margin:
+        entry_notional = float(trade.get('pos_size', margin * trade.get('leverage', LEVERAGE)) or 0)
+        entry_fee = round(entry_notional * TAKER_FEE_RATE, 4)
+        if wallet.get('balance', STARTING_BALANCE) < margin + entry_fee:
             print(f"[place_order] 🚫 {symbol} skipped — insufficient balance (atomic check).")
             return False
         # ✅ Passed all guards — add to list + deduct atomically
+        trade['market_regime'] = regime
+        trial_open = (
+            VALIDATION_TRIAL_ENABLED
+            and validation_trial.get('status') == 'active'
+            and len(validation_trial.get('trades', [])) < validation_trial.get('target', VALIDATION_TRIAL_TARGET)
+        )
+        trade['validation_trial'] = trial_open
+        trade['validation_trial_id'] = validation_trial.get('id') if trial_open else None
+        _ensure_fee_accounting(trade, charge_entry_fee=True)
         active_trades.append(trade)
         wallet_deduct(margin)
+        _charge_estimated_fee(entry_fee)
     # ═══════════════════════════════════════════════════════════════════
     save_active_trades()
     _fire_make_webhook(trade)   # Make.com webhook — fire-and-forget
@@ -1553,6 +1758,33 @@ def _load_audit_log():
     print(f"[AuditLog] נטען: {len(trade_audit_log)} עסקאות", flush=True)
 
 
+def _record_validation_trade(record: dict):
+    """Append only post-trial trades to the fixed 100-trade validation sample."""
+    if (
+        not record.get('validation_trial')
+        or record.get('validation_trial_id') != validation_trial.get('id')
+        or validation_trial.get('status') != 'active'
+    ):
+        return
+    trades = validation_trial.setdefault('trades', [])
+    if len(trades) >= validation_trial.get('target', VALIDATION_TRIAL_TARGET):
+        validation_trial['status'] = 'completed'
+        validation_trial['completed_at'] = validation_trial.get('completed_at') or now_il().isoformat(timespec='seconds')
+        _save_validation_trial()
+        return
+
+    trades.append(record)
+    if len(trades) >= validation_trial.get('target', VALIDATION_TRIAL_TARGET):
+        validation_trial['status'] = 'completed'
+        validation_trial['completed_at'] = now_il().isoformat(timespec='seconds')
+        send_msg(
+            f"🏁 *ניסוי 100 העסקאות הושלם*\n\n"
+            f"נסגרו {len(trades)}/{validation_trial['target']} עסקאות נייר.\n"
+            f"פתח את הדשבורד לתוצאות נטו אחרי עמלות."
+        )
+    _save_validation_trial()
+
+
 def _extract_prebreakout(breakdown: str) -> str:
     """מחלץ מ-score_breakdown אילו סיגנלים Pre-Breakout זוהו בכניסה."""
     signals = []
@@ -1596,6 +1828,11 @@ class TradeLogger:
 def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_price: float = None):
     """מוסיף עסקה סגורה ל-closed_trades_log + Audit Log מתמיד."""
     global closed_trades_log, trade_audit_log
+    _record_exit_leg(trade, pnl_usd, _remaining_notional(trade))
+    accounting = _ensure_fee_accounting(trade)
+    gross_pnl = round(accounting.get('gross_pnl_usd', pnl_usd), 2)
+    fees_usd = round(accounting.get('fees_usd', 0.0), 2)
+    net_pnl = round(gross_pnl - fees_usd, 2)
     entry_p    = trade['entry']
     close_p    = close_price or trade.get('current_price', entry_p)
     sl_at_open = trade.get('sl')
@@ -1645,7 +1882,12 @@ def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_pric
         'track':           trade.get('track', 'Swing'),
         'slippage_pct':    trade.get('slippage_pct', 0.0),
         'close_reason':    close_reason,
-        'pnl_usd':         round(pnl_usd, 2),
+        # pnl_usd remains for backwards compatibility and is now always net.
+        'pnl_usd':         net_pnl,
+        'gross_pnl_usd':   gross_pnl,
+        'fees_usd':        fees_usd,
+        'net_pnl_usd':     net_pnl,
+        'fee_rate_pct':    round(TAKER_FEE_RATE * 100, 4),
         'opened_at':       trade.get('opened_at', ''),
         'closed_at':       closed_at,
         # ── Entry Context (Audit) ────────────────────────────────────────
@@ -1654,9 +1896,12 @@ def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_pric
         'duration_min':    duration_m,
         'scalp':           trade.get('scalp', False),
         'volume_ratio':    trade.get('volume_ratio'),
+        'market_regime':   trade.get('market_regime', 'Unknown'),
+        'validation_trial': bool(trade.get('validation_trial')),
+        'validation_trial_id': trade.get('validation_trial_id'),
         # ── Auto-generated lesson ────────────────────────────────────────
         'lesson': _generate_lesson(
-            close_reason, pnl_usd, duration_m,
+            close_reason, net_pnl, duration_m,
             trade['direction'], trade.get('score', 0)
         ),
         # ── Pre-Breakout Signals שהובילו לכניסה ─────────────────────────
@@ -1674,6 +1919,7 @@ def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_pric
     # ── Audit Log (persistent, 100 עסקאות) ───────────────────────────────
     trade_audit_log.append(record)
     _save_audit_log()
+    _record_validation_trade(record)
 
     # ── CSV Trade History (trade_history.csv בשורש הפרויקט) ──────────────
     TradeLogger.log(
@@ -1681,19 +1927,20 @@ def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_pric
         side        = record['direction'],
         entry_price = record['entry_price'],
         exit_price  = record['close_price'],
-        pnl_usd     = record['pnl_usd'],
+        pnl_usd     = record['net_pnl_usd'],
         exit_reason = record['close_reason'],
     )
 
     # ── Web Push Notification ─────────────────────────────────────────────
     sym_short  = record['symbol'].replace('/USDT', '')
-    pnl_sign   = '+' if pnl_usd >= 0 else ''
-    win_emoji  = '✅' if pnl_usd >= 0 else '❌'
+    pnl_sign   = '+' if net_pnl >= 0 else ''
+    win_emoji  = '✅' if net_pnl >= 0 else '❌'
     send_push(
         title=f"{win_emoji} {sym_short} {record['direction']} נסגרה",
-        body=f"{pnl_sign}${pnl_usd:.2f} | {close_reason}",
+        body=f"{pnl_sign}${net_pnl:.2f} net | {close_reason}",
         tag=f"close-{record['symbol']}",
     )
+    return record
 
 def wallet_status_text() -> str:
     """מחזיר מחרוזת סטטוס ארנק לטלגרם — Available Balance ראשי."""
@@ -2263,6 +2510,12 @@ def is_direction_allowed(direction: str, context: str = '') -> tuple[bool, str]:
     """
     regime, fng_v, btc_above, ema20 = get_market_regime()
     btc_lbl = f"BTC {'מעל' if btc_above else 'מתחת'} EMA20(4H)={ema20:.0f}"
+
+    if VALIDATION_TRIAL_ENABLED and regime == 'NEUTRAL':
+        reason = "Validation Trial — NEUTRAL/sideways market, no new entries"
+        if context:
+            print(f"[RegimeGate/{context}] {reason}", flush=True)
+        return False, reason
 
     if regime == 'BEARISH' and direction == 'LONG':
         # הדגש את הסיבה הספציפית: BTC מתחת ל-EMA20 vs FNG
@@ -3030,7 +3283,7 @@ def track_trades():
                         continue
                     _ep    = (_batch_prices.get(_esym)
                               or float(exchange.fetch_ticker(_esym)['last']))
-                    _eps   = _et.get('pos_size', POSITION_SIZE)
+                    _eps   = _remaining_notional(_et)
                     _eraw  = (_ep - _et['entry']) / _et['entry'] * 100
                     _epnl  = round(_eps * _eraw / 100, 2)
                     _elev  = _et.get('leverage', LEVERAGE)
@@ -3038,7 +3291,7 @@ def track_trades():
                     _eicon = "📈" if _epnl >= 0 else "📉"
                     _ebtc  = f"{'מעל' if _emrg_btc_above else 'מתחת'} EMA20={_emrg_ema:.0f}"
                     wallet_credit(_epnl, _et.get('margin', MARGIN))
-                    _log_closed_trade(_et, 'RegimeClose', _epnl, _ep)
+                    _erecord = _log_closed_trade(_et, 'RegimeClose', _epnl, _ep)
                     add_daily_pnl(_epnl)
                     if _epnl >= 0:
                         daily_stats['wins'] += 1
@@ -3057,7 +3310,8 @@ def track_trades():
                         f"_שוק הפך BEARISH — סגירה אוטומטית להגנה על הון_\n"
                         f"FNG={_emrg_fng} | BTC {_ebtc}\n\n"
                         f"כניסה: `{_et['entry']:.6g}` → יציאה: `{_ep:.6g}`\n"
-                        f"{_eicon} *P&L: ${_epnl:+.2f}* ({_eret:+.1f}% מרג'ין)\n"
+                        f"ברוטו: `${_erecord['gross_pnl_usd']:+.2f}` | עמלה: `${_erecord['fees_usd']:.2f}`\n"
+                        f"{_eicon} *נטו: ${_erecord['net_pnl_usd']:+.2f}* ({_eret:+.1f}% מרג'ין)\n"
                         f"💼 Equity: `${_eeq:.2f}`"
                     )
                     print(
@@ -3084,7 +3338,7 @@ def track_trades():
                         continue
                     _ep    = (_batch_prices.get(_esym)
                               or float(exchange.fetch_ticker(_esym)['last']))
-                    _eps   = _et.get('pos_size', POSITION_SIZE)
+                    _eps   = _remaining_notional(_et)
                     _eraw  = (_et['entry'] - _ep) / _et['entry'] * 100   # SHORT P&L
                     _epnl  = round(_eps * _eraw / 100, 2)
                     _elev  = _et.get('leverage', LEVERAGE)
@@ -3092,7 +3346,7 @@ def track_trades():
                     _eicon = "📈" if _epnl >= 0 else "📉"
                     _ebtc  = f"מעל EMA20={_emrg_ema:.0f}"
                     wallet_credit(_epnl, _et.get('margin', MARGIN))
-                    _log_closed_trade(_et, 'RegimeClose', _epnl, _ep)
+                    _erecord = _log_closed_trade(_et, 'RegimeClose', _epnl, _ep)
                     add_daily_pnl(_epnl)
                     if _epnl >= 0:
                         daily_stats['wins'] += 1
@@ -3111,7 +3365,8 @@ def track_trades():
                         f"_שוק הפך BULLISH — סגירה אוטומטית להגנה על הון_\n"
                         f"FNG={_emrg_fng} | BTC {_ebtc}\n\n"
                         f"כניסה: `{_et['entry']:.6g}` → יציאה: `{_ep:.6g}`\n"
-                        f"{_eicon} *P&L: ${_epnl:+.2f}* ({_eret:+.1f}% מרג'ין)\n"
+                        f"ברוטו: `${_erecord['gross_pnl_usd']:+.2f}` | עמלה: `${_erecord['fees_usd']:.2f}`\n"
+                        f"{_eicon} *נטו: ${_erecord['net_pnl_usd']:+.2f}* ({_eret:+.1f}% מרג'ין)\n"
                         f"💼 Equity: `${_eeq:.2f}`"
                     )
                     print(
@@ -3675,7 +3930,10 @@ def track_trades():
                 if trail_sl_hit:
                     dist_pct = abs(current_price - entry) / entry * 100
                     sign     = 1 if profit_dir(current_price) else -1
-                    pnl_usd  = round(sign * pos_size * dist_pct / 100, 2)
+                    # After TP1 only the lifecycle remainder is still open.
+                    # Use it for both wallet settlement and the common fee ledger.
+                    settlement_notional = _remaining_notional(trade)
+                    pnl_usd  = round(sign * settlement_notional * dist_pct / 100, 2)
                     pnl_pct_r = round(sign * dist_pct * LEVERAGE, 1)
                     icon     = "📈" if pnl_usd >= 0 else "📉"
                     if pnl_usd >= 0:
@@ -3685,14 +3943,15 @@ def track_trades():
                     add_daily_pnl(pnl_usd)
                     daily_stats['close_reasons']['Trailing'] += 1
                     wallet_credit(pnl_usd, trade.get('margin', MARGIN))
-                    _log_closed_trade(trade, 'Trailing', pnl_usd, current_price)
+                    trailing_record = _log_closed_trade(trade, 'Trailing', pnl_usd, current_price)
                     ref = trade['peak_price']
                     eq  = _get_equity()
                     slip = trade.get('slippage_pct', 0.0)
                     send_msg(
                         f"📍 *Trailing Stop נגע — {sym}*\n"
                         f"{'שיא' if direction=='LONG' else 'שפל'}: `{ref:.6g}` → יציאה: `{current_price:.6g}`\n"
-                        f"{icon} *P&L: {pnl_usd:+.2f}$ ({pnl_pct_r:+.1f}% על מרג'ין)* | {tbadge}\n"
+                        f"ברוטו: `${trailing_record['gross_pnl_usd']:+.2f}` | עמלה: `${trailing_record['fees_usd']:.2f}`\n"
+                        f"{icon} *נטו: {trailing_record['net_pnl_usd']:+.2f}$ ({pnl_pct_r:+.1f}% על מרג'ין)* | {tbadge}\n"
                         f"💼 {t_leverage}x Isolated · Trailing {TRAIL_PCT}%\n"
                         f"📊 Slippage: {slip:.2f}% (Demo)\n"
                         f"💼 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance',0):.2f}`\n"
@@ -3752,18 +4011,22 @@ def track_trades():
                         trade['pos_size'] = round(pos_size - quarter_pos, 2)
                         trade['margin']   = round(trade.get('margin', MARGIN) - quarter_margin, 2)
                         add_daily_pnl(partial_pnl)
-                        wallet_credit(partial_pnl, quarter_margin)
+                        wallet_credit(partial_pnl, quarter_margin, count_result=False)
+                        partial_fee = _record_exit_leg(trade, partial_pnl, quarter_pos)
                         save_active_trades()
                         print(f"  [Partial25] {sym}: סגר 25% @ {current_price:.6g} "
                               f"(שיא={trade['peak_price']:.6g} ירד {drop_from_peak:.1f}%) "
-                              f"PnL={partial_pnl:+.2f}$")
+                              f"gross={partial_pnl:+.2f}$ fee=${partial_fee:.2f}")
                         send_msg(
                             f"⚡ *Partial Close 25% — {sym}*\n\n"
                             f"המחיר הגיע ל\\+{peak_profit_pct:.1f}% ואז ירד {drop_from_peak:.1f}% מהשיא\n"
                             f"סגרנו 25% מהפוזיציה @ `{current_price:.6g}`\n"
-                            f"💰 P&L חלקי: *{partial_pnl:+.2f}$*\n"
+                            f"💰 ברוטו: *{partial_pnl:+.2f}$* | עמלה: `${partial_fee:.2f}`\n"
                             f"75% נשאר פתוח · SL: `{trade['sl']:.6g}`"
                         )
+                        # Recalculate sizes next monitor pass. This prevents TP1 from
+                        # using the pre-partial notional and charging/double-closing it.
+                        continue
 
                 # 2. TP1 — סגור 75%, הפעל Trailing על 25% נותרים
                 # Wick Detection: בדוק High/Low של נר 1m האחרון —
@@ -3799,6 +4062,10 @@ def track_trades():
                     else:
                         trade['trailing_sl'] = current_price * 1.02
                     add_daily_pnl(tp1_pnl)
+                    tp1_fee = _record_exit_leg(trade, tp1_pnl, tp1_close)
+                    # 75% is a real filled exit. Credit its gross P&L now while
+                    # keeping the released margin locked until the final 25% closes.
+                    wallet_credit(tp1_pnl, 0, count_result=False)
 
                     # TP1 hit → always move SL to Break Even (entry price)
                     trade['sl']           = entry
@@ -3806,7 +4073,7 @@ def track_trades():
                     send_msg(
                         f"🎯 *TP1 הושג — {sym}!*\n"
                         f"מחיר: `{current_price:.6g}` | {direction} | {tbadge}\n"
-                        f"75% נסגרו · ✅ *Profit at TP1: +${tp1_pnl}* (+{tp1_pct_r}%)\n"
+                        f"75% נסגרו · ברוטו: *+${tp1_pnl}* | עמלה: `${tp1_fee:.2f}`\n"
                         f"🔒 *SL הועבר ל-BE אוטומטית!* `{entry:.6g}` — הון מוגן\n"
                         f"📍 Trailing SL: `{trade['trailing_sl']:.6g}` | שאר 25% ממשיכים ל-TP2\n"
                         f"📈 סה\"כ היום: ${round(daily_stats['total_pnl'], 2):+}"
@@ -3876,12 +4143,12 @@ def track_trades():
                 if tp_full_hit(current_price):
                     dist_pct = abs(current_price - entry) / entry * 100
                     tp_pnl   = round(remaining * dist_pct / 100, 2)
-                    total    = round(trade['tp1_pnl'] + tp_pnl, 2)
+                    total    = round(trade.get('tp1_pnl', 0) + tp_pnl, 2)
                     daily_stats['wins']      += 1
                     add_daily_pnl(tp_pnl)
                     daily_stats['close_reasons']['TP'] += 1
-                    wallet_credit(total, trade.get('margin', MARGIN))
-                    _log_closed_trade(trade, 'TP', total, current_price)
+                    wallet_credit(tp_pnl, trade.get('margin', MARGIN))
+                    _log_closed_trade(trade, 'TP', tp_pnl, current_price)
                     eq = _get_equity()
                     est_tp_full = round(abs(current_price - entry) / entry * remaining, 2)
                     slip = trade.get('slippage_pct', 0.0)
@@ -3906,7 +4173,7 @@ def track_trades():
                     dist_pct  = abs(current_price - entry) / entry * 100
                     sign      = 1 if profit_dir(current_price) else -1
                     half_pnl  = round(sign * remaining * dist_pct / 100, 2)
-                    total     = round(trade['tp1_pnl'] + half_pnl, 2)
+                    total     = round(trade.get('tp1_pnl', 0) + half_pnl, 2)
                     icon      = "📈" if half_pnl >= 0 else "📉"
                     if half_pnl >= 0:
                         daily_stats['wins'] += 1
@@ -3914,8 +4181,8 @@ def track_trades():
                         daily_stats['losses'] += 1
                     add_daily_pnl(half_pnl)
                     daily_stats['close_reasons']['TP1+Trail'] += 1
-                    wallet_credit(total, trade.get('margin', MARGIN))
-                    _log_closed_trade(trade, 'TP1+Trail', total, current_price)
+                    wallet_credit(half_pnl, trade.get('margin', MARGIN))
+                    _log_closed_trade(trade, 'TP1+Trail', half_pnl, current_price)
                     eq = _get_equity()
                     ref_price = trade['peak_price']
                     slip = trade.get('slippage_pct', 0.0)
@@ -4639,32 +4906,18 @@ def handle_close(message):
         current_price = ticker['last']
         entry         = trade['entry']
 
-        # חישוב P&L בפועל
-        _ps_m = trade.get('pos_size', POSITION_SIZE)   # per-trade position size
-        if trade.get('tp1_triggered'):
-            # 25% פוזיציה נסגרת עכשיו, 75% כבר נסגר ב-TP1
-            rem_m    = _ps_m * 0.25
-            half_pnl = round(rem_m * (current_price - entry) / entry * 100 / 100, 2)
-            total    = round(trade.get('tp1_pnl', 0) + half_pnl, 2)
-            pnl_str  = f"TP1 + יציאה: *{'+' if total>=0 else ''}${total}*"
-        else:
-            pct     = (current_price - entry) / entry * 100
-            pnl     = round(_ps_m * pct / 100, 2)
-            pnl_str = f"P&L: *{'+' if pnl>=0 else ''}${pnl}* ({pct:+.2f}%)"
-
-        # חישוב P&L נטו לארנק
-        if trade.get('tp1_triggered'):
-            net_pnl = round(trade.get('tp1_pnl', 0) + round(_ps_m * 0.25 * (current_price - entry) / entry, 2), 2)
-        else:
-            direction_m = trade.get('direction', 'LONG')
-            raw_pct     = (current_price - entry) / entry * 100
-            pnl_pct_m   = raw_pct if direction_m == 'LONG' else -raw_pct
-            net_pnl     = round(_ps_m * pnl_pct_m / 100, 2)
+        # TP1 was already realized when hit; settle only the remaining filled size.
+        _ps_m       = _remaining_notional(trade)
+        direction_m = trade.get('direction', 'LONG')
+        raw_pct     = (current_price - entry) / entry * 100
+        pnl_pct_m   = raw_pct if direction_m == 'LONG' else -raw_pct
+        gross_pnl   = round(_ps_m * pnl_pct_m / 100, 2)
 
         with trades_lock:
             active_trades.remove(trade)
-        wallet_credit(net_pnl, trade.get('margin', MARGIN))
-        _log_closed_trade(trade, 'Manual', net_pnl, current_price)
+        wallet_credit(gross_pnl, trade.get('margin', MARGIN))
+        add_daily_pnl(gross_pnl)
+        record = _log_closed_trade(trade, 'Manual', gross_pnl, current_price)
         eq = _get_equity()
         save_active_trades()
         if current_price >= entry:
@@ -4676,7 +4929,8 @@ def handle_close(message):
         send_msg(
             f"🚪 *סגירה ידנית — {symbol}*\n\n"
             f"כניסה: `{entry:.4f}` → יציאה: `{current_price:.4f}`\n"
-            f"{pnl_str}\n"
+            f"ברוטו: `${record['gross_pnl_usd']:+.2f}` | עמלה: `${record['fees_usd']:.2f}`\n"
+            f"*נטו: `${record['net_pnl_usd']:+.2f}`*\n"
             f"💼 {LEVERAGE}x Isolated\n"
             f"💼 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance',0):.2f}`\n"
             f"סה\"כ היום: ${round(daily_stats.get('total_pnl', 0), 2):+}"
@@ -4712,34 +4966,31 @@ def handle_close_button(call):
         direction_cb  = trade.get('direction', 'LONG')
         _ps_cb        = trade.get('pos_size', POSITION_SIZE)
 
-        # P&L נטו
-        if trade.get('tp1_triggered'):
-            raw_pct_cb  = (current_price - entry) / entry * 100
-            half_pnl_cb = round(_ps_cb * 0.25 * (raw_pct_cb if direction_cb == 'LONG' else -raw_pct_cb) / 100, 2)
-            net_pnl_cb  = round(trade.get('tp1_pnl', 0) + half_pnl_cb, 2)
-        else:
-            raw_pct_cb = (current_price - entry) / entry * 100
-            pnl_pct_cb = raw_pct_cb if direction_cb == 'LONG' else -raw_pct_cb
-            net_pnl_cb = round(_ps_cb * pnl_pct_cb / 100, 2)
+        # TP1 was already realized when hit; settle only the remaining filled size.
+        _ps_cb      = _remaining_notional(trade)
+        raw_pct_cb  = (current_price - entry) / entry * 100
+        pnl_pct_cb  = raw_pct_cb if direction_cb == 'LONG' else -raw_pct_cb
+        gross_pnl_cb = round(_ps_cb * pnl_pct_cb / 100, 2)
 
         with trades_lock:
             active_trades.remove(trade)
-        wallet_credit(net_pnl_cb, trade.get('margin', MARGIN))
-        _log_closed_trade(trade, 'Manual', net_pnl_cb, current_price)
+        wallet_credit(gross_pnl_cb, trade.get('margin', MARGIN))
+        record = _log_closed_trade(trade, 'Manual', gross_pnl_cb, current_price)
         daily_stats['close_reasons']['Manual'] += 1
-        if net_pnl_cb >= 0:
+        if record['net_pnl_usd'] >= 0:
             daily_stats['wins'] += 1
         else:
             daily_stats['losses'] += 1
-        add_daily_pnl(net_pnl_cb)
+        add_daily_pnl(gross_pnl_cb)
         save_active_trades()
         eq = _get_equity()
 
-        pnl_icon = "📈" if net_pnl_cb >= 0 else "📉"
+        pnl_icon = "📈" if record['net_pnl_usd'] >= 0 else "📉"
         send_msg(
             f"🚪 *Button Close — {symbol}*\n"
             f"כניסה: `{entry:.6g}` → יציאה: `{current_price:.6g}`\n"
-            f"{pnl_icon} P&L: *${net_pnl_cb:+.2f}*\n"
+            f"ברוטו: `${record['gross_pnl_usd']:+.2f}` | עמלה: `${record['fees_usd']:.2f}`\n"
+            f"{pnl_icon} Net: *${record['net_pnl_usd']:+.2f}*\n"
             f"💼 Equity: `${eq:.2f}` | יתרה: `${wallet.get('balance',0):.2f}`"
         )
         # מחק את הכפתור מההודעה המקורית
@@ -4749,7 +5000,7 @@ def handle_close_button(call):
                                           reply_markup=None)
         except Exception:
             pass
-        print(f"[ButtonClose] {symbol} closed via button at {current_price}, P&L={net_pnl_cb:+.2f}")
+        print(f"[ButtonClose] {symbol} closed via button at {current_price}, net={record['net_pnl_usd']:+.2f}")
 
     except Exception as e:
         print(f"[ButtonClose] Error: {e}")
@@ -8759,20 +9010,40 @@ def reconcile_with_exchange():
                 # optional metadata from local record (sl/tp/score/strategy/...).
                 # This ensures financial fields (entry/size/side) are always
                 # accurate even if the bot restarted mid-trade.
+                # After a partial close or TP1, local pos_size represents the
+                # lifecycle basis used by the monitor (the final remainder is a
+                # percentage of this value). The exchange reports only the
+                # already-reduced remainder, so replacing it here would apply
+                # the TP1/partial multiplier a second time after restart.
+                lifecycle_managed = bool(
+                    local.get('partial_25_triggered')
+                    or local.get('tp1_triggered')
+                    or local.get('phase') == 'trailing'
+                )
+                lifecycle_pos_size = local.get('pos_size', pos_size) if lifecycle_managed else pos_size
+                lifecycle_margin = local.get('margin', margin) if lifecycle_managed else margin
                 trade = {
                     'symbol':        sym,
                     'direction':     direction,
                     'entry':         entry,
-                    'pos_size':      pos_size,
-                    'margin':        margin,
+                    'pos_size':      lifecycle_pos_size,
+                    'margin':        lifecycle_margin,
                     'leverage':      lev,
                     'current_price': local.get('current_price', entry),
                 }
                 # Overlay optional metadata that only the bot tracks
-                _META_KEYS = ('sl', 'tp', 'tp1', 'score', 'strategy', 'track',
-                              'timeframe', 'open_time', 'scalp',
-                              'atr', 'fng_at_entry',
-                              'score_breakdown', 'imported')
+                _META_KEYS = (
+                    'sl', 'tp', 'tp1', 'score', 'strategy', 'track',
+                    'timeframe', 'open_time', 'opened_at', 'scalp',
+                    'atr', 'fng_at_entry', 'score_breakdown', 'imported',
+                    # Lifecycle/financial state must survive an exchange reconciliation.
+                    'phase', 'tp1_triggered', 'tp1_pnl', 'tp1_price',
+                    'partial_25_triggered', 'partial_25_pnl',
+                    'peak_price', 'trailing_sl', 'be_triggered',
+                    'fee_accounting', 'entry_fee_usd', 'fees_paid_usd',
+                    'gross_pnl_usd', 'net_pnl_usd', 'fee_rate_pct',
+                    'market_regime', 'validation_trial', 'validation_trial_id',
+                )
                 for k in _META_KEYS:
                     if k in local:
                         trade[k] = local[k]
@@ -8842,6 +9113,7 @@ def main():
     maybe_bootstrap_baseline() # ← אם זו הפעלה ראשונה לגרסה הזו — איפוס ל-$200
     load_active_trades()       # ← שחזור עסקאות פעילות (Object Storage → disk)  [MUST be before load_wallet]
     _load_audit_log()          # ← שחזור Audit Log (Object Storage → disk)
+    _load_validation_trial()   # ← ניסוי נפרד של 100 עסקאות, נשמר גם אחרי הפעלה מחדש
     reconcile_with_exchange()  # ← בנייה מחדש של active_trades מהעמדות הפתוחות ב-Bitget [MUST be before load_wallet]
     load_wallet()              # ← טעינת ארנק — חייב לאחר reconcile כדי ש-locked יהיה מדויק
 

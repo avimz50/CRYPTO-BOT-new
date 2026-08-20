@@ -62,6 +62,19 @@ function fmtLeverage(t: AuditTrade): string {
   return t.leverage != null && isFinite(t.leverage) ? `${t.leverage}x` : "—";
 }
 
+/** Resolve the best available net P&L value for a trade */
+function resolveNetPnl(t: AuditTrade): number {
+  if (t.net_pnl_usd != null && isFinite(t.net_pnl_usd)) return t.net_pnl_usd;
+  if (isFinite(t.pnl_usd)) return t.pnl_usd;
+  return 0;
+}
+
+/** Resolve gross P&L (before fees) */
+function resolveGrossPnl(t: AuditTrade): number | null {
+  if (t.gross_pnl_usd != null && isFinite(t.gross_pnl_usd)) return t.gross_pnl_usd;
+  return null;
+}
+
 const STRATEGY_ORDER = ["Swing", "Scalp", "Breakout", "Velocity", "Research"];
 const STRATEGY_ICON: Record<string, string> = {
   Swing: "🌊", Scalp: "⚡", Breakout: "🚀", Velocity: "💨", Research: "🔬",
@@ -75,27 +88,38 @@ function buildStrategyStats(trades: AuditTrade[]): Record<string, StratStats> {
     const key = t.track || t.strategy || "Swing";
     if (!out[key]) out[key] = { count: 0, wins: 0, pnl: 0 };
     out[key].count++;
-    if ((t.pnl_usd ?? 0) > 0) out[key].wins++;
-    out[key].pnl += isFinite(t.pnl_usd) ? t.pnl_usd : 0;
+    const net = resolveNetPnl(t);
+    if (net > 0) out[key].wins++;
+    out[key].pnl += net;
   }
   return out;
 }
 
 export function TradeHistoryModal({ trades, loading, onClose, stale, lastSuccessAt }: TradeHistoryModalProps) {
-  const totalPnl = trades.reduce((s, t) => s + (isFinite(t.pnl_usd) ? t.pnl_usd : 0), 0);
-  const wins     = trades.filter(t => t.pnl_usd > 0).length;
-  const losses   = trades.filter(t => t.pnl_usd < 0).length;
-  const winRate  = trades.length > 0 ? (wins / trades.length * 100).toFixed(0) : "—";
+  // Use net P&L for all aggregate stats
+  const totalNetPnl   = trades.reduce((s, t) => s + resolveNetPnl(t), 0);
+  const totalGrossPnl = trades.reduce((s, t) => {
+    const g = resolveGrossPnl(t);
+    return s + (g ?? resolveNetPnl(t));
+  }, 0);
+  const totalFees     = trades.reduce((s, t) => s + (t.fees_usd != null && isFinite(t.fees_usd) ? t.fees_usd : 0), 0);
+  const hasFeeData    = trades.some(t => t.fees_usd != null || t.gross_pnl_usd != null);
+
+  const wins    = trades.filter(t => resolveNetPnl(t) > 0).length;
+  const losses  = trades.filter(t => resolveNetPnl(t) < 0).length;
+  const winRate = trades.length > 0 ? (wins / trades.length * 100).toFixed(0) : "—";
+
   const stratStats = buildStrategyStats(trades);
   const stratKeys  = [
     ...STRATEGY_ORDER.filter(k => stratStats[k]),
     ...Object.keys(stratStats).filter(k => !STRATEGY_ORDER.includes(k)),
   ];
 
-  const COLS = [
-    "#", "PAIR", "DIR", "OPEN TIME", "ENTRY",
-    "CLOSE TIME", "EXIT", "LEVERAGE", "VOLUME", "DURATION", "P&L $", "P&L %", "REASON",
-  ];
+  const COLS = hasFeeData
+    ? ["#", "PAIR", "DIR", "OPEN TIME", "ENTRY", "CLOSE TIME", "EXIT",
+       "LEVERAGE", "VOLUME", "DURATION", "GROSS P&L", "FEES", "NET P&L", "P&L %", "REASON"]
+    : ["#", "PAIR", "DIR", "OPEN TIME", "ENTRY", "CLOSE TIME", "EXIT",
+       "LEVERAGE", "VOLUME", "DURATION", "NET P&L", "P&L %", "REASON"];
 
   return (
     <div
@@ -126,10 +150,13 @@ export function TradeHistoryModal({ trades, loading, onClose, stale, lastSuccess
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-4 text-xs">
               {[
-                { label: "Total P&L", value: `${totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}$`, color: totalPnl >= 0 ? "#4ade80" : "#f87171" },
-                { label: "Win Rate",  value: `${winRate}%`,  color: "#93c5fd" },
-                { label: "Wins",      value: String(wins),   color: "#4ade80" },
-                { label: "Losses",    value: String(losses), color: "#f87171" },
+                { label: "Net P&L",  value: `${totalNetPnl >= 0 ? "+" : ""}${totalNetPnl.toFixed(2)}$`,   color: totalNetPnl >= 0 ? "#4ade80" : "#f87171" },
+                ...(hasFeeData ? [
+                  { label: "Est. Fees", value: totalFees > 0 ? `-$${totalFees.toFixed(2)}` : "$0.00",   color: "#94a3b8" },
+                ] : []),
+                { label: "Win Rate", value: `${winRate}%`,  color: "#93c5fd" },
+                { label: "Wins",     value: String(wins),   color: "#4ade80" },
+                { label: "Losses",   value: String(losses), color: "#f87171" },
               ].map(({ label, value, color }) => (
                 <div key={label} className="text-center hidden sm:block">
                   <div className="font-mono font-bold" style={{ color }}>{value}</div>
@@ -146,6 +173,26 @@ export function TradeHistoryModal({ trades, loading, onClose, stale, lastSuccess
             </button>
           </div>
         </div>
+
+        {/* Fee disclosure banner — shown when fee data is available */}
+        {hasFeeData && (
+          <div className="px-5 py-2 flex items-center gap-2 text-xs"
+            style={{ background: "rgba(148,163,184,0.06)", borderBottom: "1px solid #1e3a5f" }}>
+            <span style={{ color: "#94a3b8" }}>ℹ️</span>
+            <span style={{ color: "#94a3b8" }}>
+              P&amp;L shown as net (after fees). Gross P&amp;L and estimated exchange fees are disclosed per trade.
+              Total estimated fees: <span className="font-mono font-semibold" style={{ color: "#fbbf24" }}>
+                {totalFees > 0 ? `$${totalFees.toFixed(2)}` : "$0.00"}
+              </span>
+              {totalGrossPnl !== totalNetPnl && (
+                <> · Gross: <span className="font-mono font-semibold"
+                  style={{ color: totalGrossPnl >= 0 ? "#86efac" : "#fca5a5" }}>
+                  {totalGrossPnl >= 0 ? "+" : ""}{totalGrossPnl.toFixed(2)}$
+                </span></>
+              )}
+            </span>
+          </div>
+        )}
 
         {/* Strategy Breakdown */}
         {stratKeys.length > 0 && (
@@ -188,7 +235,7 @@ export function TradeHistoryModal({ trades, loading, onClose, stale, lastSuccess
                 {COLS.map(h => (
                   <th key={h}
                     className="px-3 py-2.5 text-left font-semibold uppercase tracking-wide whitespace-nowrap"
-                    style={{ color: "#64748b" }}>
+                    style={{ color: h === "NET P&L" ? "#93c5fd" : "#64748b" }}>
                     {h}
                   </th>
                 ))}
@@ -215,11 +262,13 @@ export function TradeHistoryModal({ trades, loading, onClose, stale, lastSuccess
                 </tr>
               ) : (
                 [...trades].reverse().map((t, i) => {
-                  const pnl    = isFinite(t.pnl_usd) ? t.pnl_usd : 0;
-                  const win    = pnl > 0;
-                  const pnlPct = calcPnlPct(t);
-                  const reason = (t.close_reason ?? "—").toUpperCase();
-                  const badge  = reasonBadge(reason);
+                  const netPnl  = resolveNetPnl(t);
+                  const grossPnl = resolveGrossPnl(t);
+                  const fees    = t.fees_usd != null && isFinite(t.fees_usd) ? t.fees_usd : null;
+                  const win     = netPnl > 0;
+                  const pnlPct  = calcPnlPct(t);
+                  const reason  = (t.close_reason ?? "—").toUpperCase();
+                  const badge   = reasonBadge(reason);
 
                   return (
                     <tr key={i}
@@ -258,12 +307,29 @@ export function TradeHistoryModal({ trades, loading, onClose, stale, lastSuccess
                       <td className="px-3 py-2.5 font-mono whitespace-nowrap" style={{ color: "#94a3b8" }}>
                         {fmtDuration(t.duration_min)}
                       </td>
+                      {/* Gross P&L — only when fee data is present */}
+                      {hasFeeData && (
+                        <td className="px-3 py-2.5 font-mono whitespace-nowrap"
+                          style={{ color: (grossPnl ?? netPnl) >= 0 ? "#86efac" : "#fca5a5" }}>
+                          {grossPnl != null
+                            ? `${grossPnl >= 0 ? "+" : ""}${grossPnl.toFixed(2)}$`
+                            : `${netPnl >= 0 ? "+" : ""}${netPnl.toFixed(2)}$`}
+                        </td>
+                      )}
+                      {/* Fees — only when fee data is present */}
+                      {hasFeeData && (
+                        <td className="px-3 py-2.5 font-mono whitespace-nowrap"
+                          style={{ color: "#94a3b8" }}>
+                          {fees != null ? `-$${fees.toFixed(2)}` : "—"}
+                        </td>
+                      )}
+                      {/* Net P&L — primary, always shown, prominent */}
                       <td className="px-3 py-2.5 font-mono font-bold whitespace-nowrap"
-                        style={{ color: win ? "#4ade80" : pnl === 0 ? "#facc15" : "#f87171" }}>
-                        {pnl >= 0 ? "+" : ""}{pnl.toFixed(2)}$
+                        style={{ color: win ? "#4ade80" : netPnl === 0 ? "#facc15" : "#f87171" }}>
+                        {netPnl >= 0 ? "+" : ""}{netPnl.toFixed(2)}$
                       </td>
                       <td className="px-3 py-2.5 font-mono"
-                        style={{ color: win ? "#86efac" : pnl === 0 ? "#fde68a" : "#fca5a5" }}>
+                        style={{ color: win ? "#86efac" : netPnl === 0 ? "#fde68a" : "#fca5a5" }}>
                         {pnlPct != null
                           ? `${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}%`
                           : "—"}

@@ -12,6 +12,7 @@ HOT_CANDIDATES_FILE = 'artifacts/bot-dashboard/public/hot_candidates.json'
 ACTIVE_TRADES_FILE  = 'artifacts/bot-dashboard/public/active_trades.json'
 WALLET_FILE         = 'artifacts/bot-dashboard/public/wallet.json'
 AUDIT_LOG_FILE      = 'artifacts/bot-dashboard/public/trade_audit.json'
+VALIDATION_TRIAL_FILE = 'artifacts/bot-dashboard/public/validation_trial.json'
 SCAN_REPORT_FILE    = 'artifacts/bot-dashboard/public/last_scan_results.json'
 FNG_SETTINGS_FILE   = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fng_settings.json')
 CONFIG_FILE         = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
@@ -29,6 +30,14 @@ GEMINI_KEY  = os.environ.get('AI_INTEGRATIONS_GEMINI_API_KEY', '')
 LEVERAGE      = 10
 MARGIN        = 50.0         # $50 margin per trade
 POSITION_SIZE = MARGIN * LEVERAGE  # $500 controlled
+
+# ── Paper-trading cost model / validation trial ────────────────────────────────
+# Estimated Bitget USDT perpetual taker fee. This is an explicit paper-trading
+# assumption, not an exchange-reported account fee.
+TAKER_FEE_RATE = 0.0006          # 0.06% per filled side
+VALIDATION_TRIAL_TARGET = 100
+VALIDATION_TRIAL_ENABLED = True
+VALIDATION_STRONG_LONG_MIN_SCORE = 85
 
 # ── Fixed SL / TP Percentages ──────────────────────────────────────────────────
 SL_PCT  = 2.0   # Stop Loss   = 2% from entry

@@ -17,7 +17,16 @@ function fmt(n: number) {
   return n.toLocaleString();
 }
 
+function fmtUsd(n: number, signed = true): string {
+  if (!isFinite(n)) return "—";
+  const sign = n >= 0 ? (signed ? "+" : "") : "-";
+  return `${sign}$${Math.abs(n).toFixed(2)}`;
+}
+
 export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSuccessAt }: ActiveTradesTableProps) {
+  // Compute totals for footer summary
+  const hasFeeData = trades.some(t => t.estimated_fees_usd != null || t.net_pnl_usd != null);
+
   return (
     <div className="rounded-xl overflow-hidden"
       style={{ background: "#0a1628", border: "1px solid #1e3a5f" }}>
@@ -43,9 +52,13 @@ export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSucce
         <table className="w-full text-xs">
           <thead>
             <tr style={{ background: "#0d1f3c", borderBottom: "1px solid #1e3a5f" }}>
-              {["COIN ↗", "DIR", "LEVERAGE", "AMOUNT", "ENTRY", "CURR PRICE", "SL", "BE Target", "Final TP", "EST. PROFIT", "LIVE P&L", "STATUS"].map(h => (
+              {[
+                "COIN ↗", "DIR", "LEVERAGE", "AMOUNT", "ENTRY", "CURR PRICE",
+                "SL", "BE Target", "Final TP", "EST. PROFIT",
+                "GROSS P&L", "EST. FEES", "NET P&L", "STATUS",
+              ].map(h => (
                 <th key={h} className="px-3 py-2 text-left font-semibold uppercase tracking-wide whitespace-nowrap"
-                  style={{ color: "#64748b" }}>
+                  style={{ color: h === "NET P&L" ? "#93c5fd" : "#64748b" }}>
                   {h}
                 </th>
               ))}
@@ -55,7 +68,7 @@ export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSucce
             {loading && trades.length === 0 ? (
               [...Array(2)].map((_, i) => (
                 <tr key={i} style={{ borderBottom: "1px solid #0d1f3c" }}>
-                  {[...Array(11)].map((_, j) => (
+                  {[...Array(14)].map((_, j) => (
                     <td key={j} className="px-3 py-3">
                       <div className="h-3 rounded animate-pulse" style={{ background: "#0d1f3c", width: "60%" }} />
                     </td>
@@ -64,7 +77,7 @@ export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSucce
               ))
             ) : trades.length === 0 ? (
               <tr>
-                <td colSpan={12} className="px-4 py-6 text-center text-xs"
+                <td colSpan={14} className="px-4 py-6 text-center text-xs"
                   style={{ color: "#475569" }}>
                   No active trades
                 </td>
@@ -78,10 +91,16 @@ export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSucce
                 const posSize = t.pos_size ?? 500;
                 // After TP1: only 25% of position remains open; tp1_pnl is already realized in wallet
                 const activeSize = t.tp1_triggered ? posSize * 0.25 : posSize;
-                const pnlUsd = t.tp1_triggered
+                const computedPnl = t.tp1_triggered
                   ? (t.tp1_pnl ?? 0) + activeSize * pnlPct / 100
                   : activeSize * pnlPct / 100;
-                const tp1Price = (t as any).tp1 ?? t.tp;
+
+                // Prefer server-supplied gross/fee/net; fall back to computed
+                const grossPnl = t.gross_pnl_usd ?? computedPnl;
+                const estFees  = t.estimated_fees_usd ?? null;
+                const netPnl   = t.net_pnl_usd ?? (estFees != null ? grossPnl - estFees : grossPnl);
+
+                const tp1Price = ((t as unknown) as Record<string, unknown>).tp1 as number ?? t.tp;
                 const estProfit = tp1Price && t.entry
                   ? Math.abs(tp1Price - t.entry) / t.entry * posSize
                   : null;
@@ -117,10 +136,10 @@ export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSucce
                     <td className="px-3 py-2.5 font-mono" style={{ color: "#cbd5e1" }}>${amount}</td>
                     <td className="px-3 py-2.5 font-mono" style={{ color: "#cbd5e1" }}>{fmt(t.entry)}</td>
                     <td className="px-3 py-2.5 font-mono font-semibold"
-                      style={{ color: pnlUsd >= 0 ? "#4ade80" : "#f87171" }}>
+                      style={{ color: netPnl >= 0 ? "#4ade80" : "#f87171" }}>
                       {fmt(cp)}
                       <span className="ml-1 text-xs font-normal opacity-60">
-                        {pnlUsd >= 0 ? "▲" : "▼"}
+                        {netPnl >= 0 ? "▲" : "▼"}
                       </span>
                     </td>
                     <td className="px-3 py-2.5 font-mono" style={{ color: "#f87171" }}>
@@ -138,13 +157,22 @@ export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSucce
                     <td className="px-3 py-2.5 font-mono" style={{ color: "#93c5fd" }}>
                       {estProfit != null ? `+$${estProfit.toFixed(2)}` : "—"}
                     </td>
-                    <td className="px-3 py-2.5 font-mono font-bold"
-                      style={{ color: pnlUsd >= 0 ? "#4ade80" : "#f87171" }}>
-                      {pnlUsd >= 0 ? "+" : ""}{pnlUsd.toFixed(2)}$
-                      <span className="text-xs font-normal ml-1"
-                        style={{ color: pnlUsd >= 0 ? "#86efac" : "#fca5a5", opacity: 0.7 }}>
+                    {/* Gross P&L */}
+                    <td className="px-3 py-2.5 font-mono"
+                      style={{ color: grossPnl >= 0 ? "#86efac" : "#fca5a5" }}>
+                      {fmtUsd(grossPnl)}
+                      <span className="text-xs font-normal ml-1 opacity-60">
                         ({pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%)
                       </span>
+                    </td>
+                    {/* Est. Fees */}
+                    <td className="px-3 py-2.5 font-mono" style={{ color: "#94a3b8" }}>
+                      {estFees != null ? `-$${estFees.toFixed(2)}` : "—"}
+                    </td>
+                    {/* Net P&L — prominent */}
+                    <td className="px-3 py-2.5 font-mono font-bold"
+                      style={{ color: netPnl >= 0 ? "#4ade80" : "#f87171" }}>
+                      {fmtUsd(netPnl)}
                     </td>
                     <td className="px-3 py-2.5">
                       <span className="flex items-center gap-1.5" style={{ color: "#4ade80" }}>
@@ -158,6 +186,56 @@ export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSucce
               })
             )}
           </tbody>
+          {/* Summary footer — only shown when fee data is available */}
+          {hasFeeData && trades.length > 0 && (() => {
+            const totalGross = trades.reduce((s, t) => {
+              const cp = t.current_price ?? t.entry;
+              const rawPct = (cp - t.entry) / t.entry * 100;
+              const pnlPct = t.direction === "LONG" ? rawPct : -rawPct;
+              const posSize = t.pos_size ?? 500;
+              const activeSize = t.tp1_triggered ? posSize * 0.25 : posSize;
+              const computed = t.tp1_triggered
+                ? (t.tp1_pnl ?? 0) + activeSize * pnlPct / 100
+                : activeSize * pnlPct / 100;
+              return s + (t.gross_pnl_usd ?? computed);
+            }, 0);
+            const totalFees = trades.reduce((s, t) => s + (t.estimated_fees_usd ?? 0), 0);
+            const totalNet  = trades.reduce((s, t) => {
+              const cp = t.current_price ?? t.entry;
+              const rawPct = (cp - t.entry) / t.entry * 100;
+              const pnlPct = t.direction === "LONG" ? rawPct : -rawPct;
+              const posSize = t.pos_size ?? 500;
+              const activeSize = t.tp1_triggered ? posSize * 0.25 : posSize;
+              const computed = t.tp1_triggered
+                ? (t.tp1_pnl ?? 0) + activeSize * pnlPct / 100
+                : activeSize * pnlPct / 100;
+              const gross = t.gross_pnl_usd ?? computed;
+              const fees  = t.estimated_fees_usd ?? 0;
+              return s + (t.net_pnl_usd ?? gross - fees);
+            }, 0);
+            return (
+              <tfoot>
+                <tr style={{ background: "#071222", borderTop: "1px solid #1e3a5f" }}>
+                  <td colSpan={10} className="px-3 py-2 text-xs font-semibold"
+                    style={{ color: "#64748b" }}>
+                    TOTAL (floating)
+                  </td>
+                  <td className="px-3 py-2 font-mono text-xs"
+                    style={{ color: totalGross >= 0 ? "#86efac" : "#fca5a5" }}>
+                    {fmtUsd(totalGross)}
+                  </td>
+                  <td className="px-3 py-2 font-mono text-xs" style={{ color: "#94a3b8" }}>
+                    {totalFees > 0 ? `-$${totalFees.toFixed(2)}` : "—"}
+                  </td>
+                  <td className="px-3 py-2 font-mono font-bold text-xs"
+                    style={{ color: totalNet >= 0 ? "#4ade80" : "#f87171" }}>
+                    {fmtUsd(totalNet)}
+                  </td>
+                  <td />
+                </tr>
+              </tfoot>
+            );
+          })()}
         </table>
       </div>
     </div>

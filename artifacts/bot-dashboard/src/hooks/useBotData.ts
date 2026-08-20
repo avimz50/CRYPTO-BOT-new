@@ -41,6 +41,17 @@ export interface BotTrade {
   trailing_sl: number | null;
   timeframe?: string;
   leverage?: number;
+  /** Gross P&L before fees (supplied by Flask when available) */
+  gross_pnl_usd?: number;
+  /** Estimated exchange fees in USD (supplied by Flask when available) */
+  estimated_fees_usd?: number;
+  /** Projected fee for closing the currently open remainder */
+  estimated_exit_fee_usd?: number;
+  /** Net P&L after fees (supplied by Flask when available) */
+  net_pnl_usd?: number;
+  strategy?: string;
+  track?: string;
+  market_regime?: string;
 }
 
 export interface TradesData {
@@ -106,13 +117,21 @@ export interface AuditTrade {
   rr_achieved?: number;
   score?: number;
   close_reason: string;
+  /** Legacy gross P&L (may be absent for old trades) */
   pnl_usd: number;
+  /** Gross P&L before fees */
+  gross_pnl_usd?: number;
+  /** Estimated exchange fees in USD */
+  fees_usd?: number;
+  /** Net P&L after fees — preferred display value */
+  net_pnl_usd?: number;
   opened_at: string;
   closed_at: string;
   fng_at_entry?: number;
   duration_min?: number;
   strategy?: string;
   track?: string;
+  market_regime?: string;
   lesson?: string;
 }
 
@@ -126,6 +145,7 @@ export interface WalletData {
   balance: number;
   starting: number;
   total_pnl: number;
+  total_fees_usd?: number;
   trades_opened: number;
   equity_history: Array<{ t: string; eq: number }>;
   available_balance?: number;
@@ -248,6 +268,48 @@ export function useFngSettings() { return usePoll<FngSettings>("/api/fng_setting
 export function useAudit(enabled: boolean)  { return usePoll<AuditData>("/api/trade_audit", 60_000, enabled); }
 export function useBotLog(enabled: boolean) { return usePoll<BotLogData>("/api/bot_log",      5_000, enabled); }
 
+// ── Validation Trial types ─────────────────────────────────────
+
+export interface TrialTrade {
+  direction: "LONG" | "SHORT";
+  strategy?: string;
+  track?: string;
+  market_regime?: string;
+  gross_pnl_usd: number;
+  fees_usd: number;
+  net_pnl_usd: number;
+  /** Fallback for older payloads that only have pnl_usd */
+  pnl_usd?: number;
+}
+
+export interface TrialSummary {
+  total_trades?: number;
+  wins?: number;
+  losses?: number;
+  win_rate?: number;
+  net_win_rate?: number;
+  total_gross_pnl_usd?: number;
+  total_fees_usd?: number;
+  total_net_pnl_usd?: number;
+  total_pnl_usd?: number;
+  by_direction?: Record<string, { count: number; net_pnl_usd: number }>;
+  by_strategy?: Record<string, { count: number; net_pnl_usd: number; wins: number }>;
+  by_regime?: Record<string, { count: number; net_pnl_usd: number }>;
+  [key: string]: unknown;
+}
+
+export interface ValidationTrialData {
+  target: number;
+  status: "running" | "completed" | "failed" | string;
+  started_at: string | null;
+  trades: TrialTrade[];
+  summary: TrialSummary;
+}
+
+export function useValidationTrial() {
+  return usePoll<ValidationTrialData>("/api/validation_trial", 30_000);
+}
+
 // ── Actions ────────────────────────────────────────────────────
 
 /** POST /api/sync — triggers /status message to Telegram from the bot */
@@ -309,4 +371,21 @@ export async function saveBotSettings(payload: {
   }).catch(() => {/* ignore */});
 
   return true;
+}
+
+/** POST /api/validation_trial/reset — resets the validation trial */
+export async function resetValidationTrial(): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const r = await fetch("/api/validation_trial/reset", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    if (r.ok) return { ok: true };
+    const body = await r.json().catch(() => ({})) as { error?: string };
+    return { ok: false, error: body.error ?? `HTTP ${r.status}` };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
 }

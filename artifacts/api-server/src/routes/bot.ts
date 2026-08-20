@@ -178,7 +178,8 @@ router.get("/active_trades", requireSession, async (_req, res) => {
 
 /** Close-price series for a single symbol — used by dashboard mini charts */
 router.get("/price_history/:symbol", requireSession, (req, res) => {
-  const symbol = decodeURIComponent(req.params.symbol ?? "");
+  const rawSymbol = Array.isArray(req.params.symbol) ? req.params.symbol[0] : req.params.symbol;
+  const symbol = decodeURIComponent(rawSymbol ?? "");
   const hist   = _priceHistory.get(symbol) ?? [];
   res.json({ symbol, count: hist.length, series: hist });
 });
@@ -466,6 +467,56 @@ router.get("/fng", requireSession, async (_req, res) => {
     updated_at: _fngCache.updated_at,
     time_until_update: _fngCache.time_until_update,
   });
+});
+
+// ── Validation Trial ─────────────────────────────────────────────────────────
+
+/**
+ * GET /api/validation_trial
+ * Proxies Flask GET /api/validation_trial.
+ * Shape: { target, status, started_at, trades:[{direction,strategy,track,market_regime,gross_pnl_usd,fees_usd,net_pnl_usd,pnl_usd,...}], summary:{...} }
+ */
+router.get("/validation_trial", requireSession, async (_req, res) => {
+  const data = await fetchFromFlask(
+    "/api/validation_trial",
+    path.join(PUBLIC, "validation_trial.json"),
+    { target: 100, status: "active", started_at: null, trades: [], summary: {} },
+  );
+  res.json(data);
+});
+
+/**
+ * POST /api/validation_trial/reset
+ * Proxies Flask POST /api/validation_trial/reset.
+ * Returns {ok: true} on success or {ok: false, error: "..."} on failure.
+ */
+router.post("/validation_trial/reset", requireSession, (req, res) => {
+  const body = JSON.stringify(req.body ?? {});
+  const internalToken = INTERNAL_API_SECRET ? { "X-Internal-Token": INTERNAL_API_SECRET } : {};
+  const options = {
+    hostname: BOT_FLASK_HOST,
+    port: BOT_FLASK_PNUM,
+    path: "/api/validation_trial/reset",
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(body),
+      ...internalToken,
+    },
+    timeout: 8000,
+  };
+  const proxyReq = _botHttp.request(options, (r) => {
+    let data = "";
+    r.on("data", (c) => (data += c));
+    r.on("end", () => {
+      try { res.status(r.statusCode ?? 200).json(JSON.parse(data)); }
+      catch { res.status(500).json({ ok: false, error: "invalid response from bot" }); }
+    });
+  });
+  proxyReq.on("error", () => res.status(503).json({ ok: false, error: "Bot not reachable" }));
+  proxyReq.on("timeout", () => { proxyReq.destroy(); res.status(504).json({ ok: false, error: "timeout" }); });
+  proxyReq.write(body);
+  proxyReq.end();
 });
 
 // Telegram webhook — receives Telegram updates in production (webhook mode)

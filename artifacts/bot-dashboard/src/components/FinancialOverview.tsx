@@ -12,6 +12,10 @@ interface FinancialOverviewProps {
   isMobile?: boolean;
   stale?: boolean;
   lastSuccessAt?: number | null;
+  /** Total estimated fees across all closed trades (from validation_trial or audit) */
+  totalEstFees?: number | null;
+  /** Net P&L (after fees) — if supplied, overrides the computed realized-based total */
+  totalNetPnl?: number | null;
 }
 
 function safe(n: number | null | undefined): number {
@@ -32,15 +36,16 @@ function fmtPct(n: number | null): string {
 
 export function FinancialOverview({
   starting, equity, realized, unrealized, equityHistory, loading, onShowHistory, isMobile,
-  stale, lastSuccessAt,
+  stale, lastSuccessAt, totalEstFees, totalNetPnl,
 }: FinancialOverviewProps) {
   const eq  = equity;
   const st  = starting;
   const rl  = safe(realized);
   const unr = safe(unrealized);
 
-  // Total P&L = realized closed-trade P&L (not equity delta which includes unrealized)
-  const totalPnl = rl !== 0 ? rl : (eq != null && st != null ? eq - st : null);
+  // Total P&L: prefer net (after fees) when supplied, else use realized closed-trade P&L
+  const basePnl  = totalNetPnl != null ? totalNetPnl : rl !== 0 ? rl : (eq != null && st != null ? eq - st : null);
+  const totalPnl = basePnl;
   const totalPct = totalPnl != null && st != null && st > 0 ? (totalPnl / st) * 100 : null;
 
   const isProfit     = (totalPnl ?? 0) >= 0;
@@ -102,14 +107,25 @@ export function FinancialOverview({
 
             <div className="flex justify-between items-baseline">
               <span className="text-xs uppercase tracking-wide" style={{ color: "#64748b" }}>
-                Total P&L
+                Net P&L {totalNetPnl != null ? "(after fees)" : ""}
               </span>
-              <span className="font-mono font-bold"
+              <span className={`font-mono font-bold ${isMobile ? "text-base" : "text-lg"}`}
                 style={{ color: isProfit ? "#4ade80" : "#f87171" }}>
                 {fmtUsd(totalPnl, true)}
                 {totalPct != null && ` (${fmtPct(totalPct)})`}
               </span>
             </div>
+
+            {totalEstFees != null && totalEstFees > 0 && (
+              <div className="flex justify-between items-baseline">
+                <span className="text-xs uppercase tracking-wide" style={{ color: "#64748b" }}>
+                  Est. Total Fees
+                </span>
+                <span className="font-mono text-xs font-semibold" style={{ color: "#fbbf24" }}>
+                  −${totalEstFees.toFixed(2)}
+                </span>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-2 pt-2" style={{ borderTop: "1px solid #1e3a5f" }}>
               <div className="rounded-lg p-2 text-center"

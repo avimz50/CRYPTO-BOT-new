@@ -7,11 +7,13 @@ import { ActiveTradesTable } from "@/components/ActiveTradesTable";
 import { ScanStatus } from "@/components/ScanStatus";
 import { BotSettings } from "@/components/BotSettings";
 import { TradeHistoryModal } from "@/components/TradeHistoryModal";
+import { TrialProgressCard } from "@/components/TrialProgressCard";
 import { LogsView } from "@/components/LogsView";
 import { StaleBadge } from "@/components/StaleBadge";
 import {
   useStatus, useTrades, useScan, useSlots,
   useWallet, useFngSettings, useAudit, useBotLog,
+  useValidationTrial,
 } from "@/hooks/useBotData";
 
 function useIsMobile() {
@@ -107,6 +109,7 @@ function AuthenticatedApp() {
   const { data: fngSettings } = useFngSettings();
   const { data: audit, loading: auditLoading, stale: auditStale, lastSuccessAt: auditLastOk } = useAudit(showHistory);
   const { data: logs,  loading: logsLoading  } = useBotLog(activeNav === "Logs");
+  const { data: trial, loading: trialLoading, stale: trialStale, lastSuccessAt: trialLastOk, refetch: refetchTrial } = useValidationTrial();
 
   const isOnline = status != null;
   const equityHistory = wallet?.equity_history?.map(p => p.eq) ?? [];
@@ -115,8 +118,9 @@ function AuthenticatedApp() {
   const starting = status?.starting ?? wallet?.starting                     ?? null;
   const realized = status?.realized ?? wallet?.total_pnl                    ?? 0;
 
-  // Flask /api/status always returns unrealized: 0 — compute from trades instead.
-  // Uses the same formula as ActiveTradesTable so the two panels always agree.
+  // Flask /api/status always returns unrealized: 0 — compute the remaining
+  // position only. Fees already paid are realized in wallet; subtract only the
+  // projected final exit fee so Floating P&L is a meaningful net estimate.
   const activeTrades = trades?.trades ?? [];
   const unrealized = activeTrades.length > 0
     ? activeTrades.reduce((sum, t) => {
@@ -126,10 +130,8 @@ function AuthenticatedApp() {
         const posSize = t.pos_size ?? 500;
         // After TP1: only 25% of position remains open; tp1_pnl is already realized in wallet
         const activeSize = t.tp1_triggered ? posSize * 0.25 : posSize;
-        const pnlUsd  = t.tp1_triggered
-          ? (t.tp1_pnl ?? 0) + activeSize * pnlPct / 100
-          : activeSize * pnlPct / 100;
-        return sum + pnlUsd;
+        const floatingGross = activeSize * pnlPct / 100;
+        return sum + floatingGross - (t.estimated_exit_fee_usd ?? 0);
       }, 0)
     : (status?.unrealized ?? wallet?.unrealized_pnl ?? 0);
 
@@ -200,6 +202,8 @@ function AuthenticatedApp() {
                       : walletStale ? walletLastOk
                       : statusLastOk ?? walletLastOk
                   }
+                  totalEstFees={wallet?.total_fees_usd ?? null}
+                  totalNetPnl={wallet?.total_pnl ?? null}
                 />
 
                 {/* On mobile: FNG + Quick Stats in a compact 2-up row */}
@@ -258,11 +262,30 @@ function AuthenticatedApp() {
                   stale={scanStale}
                   lastSuccessAt={scanLastOk}
                 />
+
+                {/* Trial progress card — mobile: show inline after scan */}
+                {isMobile && (
+                  <TrialProgressCard
+                    data={trial}
+                    loading={trialLoading}
+                    stale={trialStale}
+                    lastSuccessAt={trialLastOk}
+                    onReset={refetchTrial}
+                  />
+                )}
               </div>
 
               {/* Right column — desktop only */}
               {!isMobile && (
                 <div className="space-y-3">
+                  <TrialProgressCard
+                    data={trial}
+                    loading={trialLoading}
+                    stale={trialStale}
+                    lastSuccessAt={trialLastOk}
+                    onReset={refetchTrial}
+                  />
+
                   <div className="rounded-xl p-4"
                     style={{ background: "#0a1628", border: "1px solid #1e3a5f" }}>
                     <div className="flex items-center gap-2 mb-2">

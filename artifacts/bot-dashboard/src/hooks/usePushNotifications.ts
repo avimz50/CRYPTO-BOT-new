@@ -57,7 +57,9 @@ export function usePushNotifications() {
       const reg = await navigator.serviceWorker.ready;
       const subscription = await reg.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicKey),
+        // TS 5.7's stricter typed-array generics need the browser BufferSource
+        // view here; the helper always returns an ArrayBuffer-backed Uint8Array.
+        applicationServerKey: urlBase64ToUint8Array(publicKey) as unknown as BufferSource,
       });
 
       const saveRes = await fetch(`${API_BASE}/api/push/subscribe`, {
