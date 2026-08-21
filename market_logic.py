@@ -914,26 +914,38 @@ def score_symbol(df_3h, df_1h, symbol: str, direction: str = 'LONG',
         score += m_pts
         parts.append(f"MACD={m_pts}/15")
 
-        # ── 3. RSI Safety Gate + Scoring — 10 pts ────────────────────────────
-        # STRICT: LONG forbidden if RSI > 55 | SHORT forbidden if RSI < 45
+        # ── 3. RSI Gate + Scoring — 10 pts ───────────────────────────────────
+        # Hard veto only at truly extreme levels (FOMO / panic entries)
+        # Moderate overbought/oversold → 0 pts for RSI, scoring continues on other criteria
         _rvl = rsi_veto_long  if rsi_veto_long  is not None else RSI_VETO_LONG
         _rvs = rsi_veto_short if rsi_veto_short is not None else RSI_VETO_SHORT
-        if direction == 'LONG' and rsi_v > _rvl:
-            return 0, f"RSI Safety Gate: LONG אסור (RSI={rsi_v:.1f} > {_rvl} — overbought)", atr_v
-        if direction == 'SHORT' and rsi_v < _rvs:
-            return 0, f"RSI Safety Gate: SHORT אסור (RSI={rsi_v:.1f} < {_rvs} — oversold)", atr_v
+        _RSI_EXTREME_LONG  = 88   # above this: genuine FOMO — hard block
+        _RSI_EXTREME_SHORT = 12   # below this: genuine panic — hard block
+        if direction == 'LONG' and rsi_v > _RSI_EXTREME_LONG:
+            return 0, f"RSI Extreme: LONG חסום (RSI={rsi_v:.1f} > {_RSI_EXTREME_LONG} — FOMO)", atr_v
+        if direction == 'SHORT' and rsi_v < _RSI_EXTREME_SHORT:
+            return 0, f"RSI Extreme: SHORT חסום (RSI={rsi_v:.1f} < {_RSI_EXTREME_SHORT} — panic)", atr_v
 
-        # Scoring — within the allowed RSI window
-        if direction == 'LONG':
-            rsi_ideal = 25 <= rsi_v <= 48   # oversold zone = best LONG setup
-            rsi_ok    = 20 <= rsi_v <= 62   # full allowed window
+        # Soft RSI gate: above soft limit → 0 pts but scoring continues
+        _rsi_above_soft = (direction == 'LONG'  and rsi_v > _rvl)
+        _rsi_below_soft = (direction == 'SHORT' and rsi_v < _rvs)
+
+        if _rsi_above_soft or _rsi_below_soft:
+            # RSI is elevated/depressed but not extreme — other criteria can still carry the score
+            r_pts = 0
+            parts.append(f"RSI=0/10(={rsi_v:.0f}⚠️)")
         else:
-            rsi_ideal = 55 <= rsi_v <= 75   # overbought zone = best SHORT setup
-            rsi_ok    = 40 <= rsi_v <= 80   # full allowed window
+            # Normal RSI scoring — within the soft-limit window
+            if direction == 'LONG':
+                rsi_ideal = 25 <= rsi_v <= 48   # oversold zone = best LONG setup
+                rsi_ok    = 20 <= rsi_v <= 62   # full allowed window
+            else:
+                rsi_ideal = 55 <= rsi_v <= 75   # overbought zone = best SHORT setup
+                rsi_ok    = 40 <= rsi_v <= 80   # full allowed window
+            r_pts = 10 if rsi_ideal else (5 if rsi_ok else 0)
+            parts.append(f"RSI={r_pts}/10(={rsi_v:.0f})")
 
-        r_pts = 10 if rsi_ideal else (5 if rsi_ok else 0)
         score += r_pts
-        parts.append(f"RSI={r_pts}/10(={rsi_v:.0f})")
 
         # ── 4. Bollinger Bands — 20 pts ───────────────────────────────────────
         try:
