@@ -2777,7 +2777,10 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     )
     _cl_combined_sw = claude_gate.combined_score(int(score or 0), _cl_score_sw)
     print(f"[ClaudeGate/Swing] {symbol} | bot={score} claude={_cl_score_sw} combined={_cl_combined_sw} | {_cl_reason_sw}", flush=True)
-    if not _cl_ok_sw or _cl_combined_sw < MIN_SCORE:
+    # combined ≥ 80: strong technical signal overrides Claude's binary veto (advisory only)
+    # combined 75-79: still require Claude approval
+    # combined < 75: always reject
+    if _cl_combined_sw < MIN_SCORE or (not _cl_ok_sw and _cl_combined_sw < 80):
         print(f"[ClaudeGate] ⛔ {symbol} Swing נדחה — combined={_cl_combined_sw} | {_cl_reason_sw}", flush=True)
         return False
 
@@ -5587,7 +5590,8 @@ def _register_sol_trade(price: float, sl: float, tp: float, rsi: float | None):
     _sol_combined = claude_gate.combined_score(100, _sol_cscore)
     print(f"[ClaudeGate/SOL] {sym} | bot=100 claude={_sol_cscore} "
           f"combined={_sol_combined} | {_sol_creason}", flush=True)
-    if not _sol_gate_ok or _sol_combined < MIN_SCORE:
+    # combined ≥ 80: strong technical signal overrides Claude's binary veto (advisory only)
+    if _sol_combined < MIN_SCORE or (not _sol_gate_ok and _sol_combined < 80):
         print(f"[ClaudeGate] {sym} SOL rejected - combined={_sol_combined}", flush=True)
         return
 
@@ -8218,8 +8222,12 @@ def top10_breakout_loop():
                     continue
 
                 # RSI Filter — Breakout with high volume allows RSI up to 78
+                # In BULLISH regime, raise limit to 75: bull runs have naturally elevated RSI
                 if direction == 'LONG':
-                    _rsi_limit = RSI_VETO_BREAKOUT_LONG if vol_ratio >= VOL_EMA_BYPASS_MULT else RSI_VETO_LONG
+                    if btc_above_ema:
+                        _rsi_limit = 75   # BULLISH regime — trending coins have RSI 70-90
+                    else:
+                        _rsi_limit = RSI_VETO_BREAKOUT_LONG if vol_ratio >= VOL_EMA_BYPASS_MULT else RSI_VETO_LONG
                     if rsi is not None and rsi > _rsi_limit:
                         print(f"[Top10 Breakout] {sym} LONG RSI veto ({rsi:.0f} > {_rsi_limit})")
                         continue

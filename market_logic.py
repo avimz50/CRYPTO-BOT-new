@@ -1173,6 +1173,17 @@ def adaptive_threshold(fng_value, btc_regime: str, direction: str
     # ── Regime + direction delta ──────────────────────────────────────────
     regime_delta = _REGIME_DIR_DELTA.get((btc_regime, direction), 0)
 
+    # ── RSI Regime Correction: bull runs naturally have elevated RSI ──────
+    # BULL+LONG  → raise rsi_long  by +13 (e.g. 65 → 78, 63 → 76)
+    # BEAR+SHORT → lower rsi_short by  -8 (e.g. 58 → 50) — allow more OS entries
+    _rsi_regime_delta = 0
+    if btc_regime == 'BULL' and direction == 'LONG':
+        _rsi_regime_delta = +13
+    elif btc_regime == 'BEAR' and direction == 'SHORT':
+        _rsi_regime_delta = -8
+    rsi_long  = max(55, min(85, rsi_long  + _rsi_regime_delta))
+    rsi_short = max(45, min(75, rsi_short - _rsi_regime_delta))
+
     # ── Compute & clamp ───────────────────────────────────────────────────
     eff_min = MIN_SCORE + fng_delta + regime_delta
     eff_min = max(60, min(95, eff_min))
@@ -1182,7 +1193,8 @@ def adaptive_threshold(fng_value, btc_regime: str, direction: str
                    if fng_delta != 0 else f"FNG={fng_int}({band_label})")
     regime_part = (f"{btc_regime}+{direction}→{regime_delta:+d}"
                    if regime_delta != 0 else "")
-    parts       = [p for p in [fng_part, regime_part] if p]
+    rsi_part    = (f"RSI_L≤{rsi_long}" if _rsi_regime_delta != 0 else "")
+    parts       = [p for p in [fng_part, regime_part, rsi_part] if p]
     label_str   = " | ".join(parts) or "Neutral"
 
     return eff_min, rsi_long, rsi_short, label_str
