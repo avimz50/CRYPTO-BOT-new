@@ -2776,12 +2776,14 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         open_trades=len(active_trades),
     )
     _cl_combined_sw = claude_gate.combined_score(int(score or 0), _cl_score_sw)
-    print(f"[ClaudeGate/Swing] {symbol} | bot={score} claude={_cl_score_sw} combined={_cl_combined_sw} | {_cl_reason_sw}", flush=True)
+    # Use the same adaptive threshold as the scoring gate (e.g. 69 in BULL+Greed, not hardcoded 75)
+    _eff_min_sw, _, _, _ = adaptive_threshold(fng_v or 50, _cl_regime_sw, direction)
+    print(f"[ClaudeGate/Swing] {symbol} | bot={score} claude={_cl_score_sw} combined={_cl_combined_sw} eff_min={_eff_min_sw} | {_cl_reason_sw}", flush=True)
     # combined ≥ 80: strong technical signal overrides Claude's binary veto (advisory only)
-    # combined 75-79: still require Claude approval
-    # combined < 75: always reject
-    if _cl_combined_sw < MIN_SCORE or (not _cl_ok_sw and _cl_combined_sw < 80):
-        print(f"[ClaudeGate] ⛔ {symbol} Swing נדחה — combined={_cl_combined_sw} | {_cl_reason_sw}", flush=True)
+    # combined eff_min–79: still require Claude approval
+    # combined < eff_min: always reject
+    if _cl_combined_sw < _eff_min_sw or (not _cl_ok_sw and _cl_combined_sw < 80):
+        print(f"[ClaudeGate] ⛔ {symbol} Swing נדחה — combined={_cl_combined_sw} eff_min={_eff_min_sw} | {_cl_reason_sw}", flush=True)
         return False
 
     # ── Adaptive Exit Parameters (FNG + BTC Regime) ───────────────────────────
@@ -5588,11 +5590,13 @@ def _register_sol_trade(price: float, sl: float, tp: float, rsi: float | None):
         open_trades=len(active_trades),
     )
     _sol_combined = claude_gate.combined_score(100, _sol_cscore)
+    # Use adaptive threshold to match the scoring gate (not hardcoded MIN_SCORE)
+    _eff_min_sol, _, _, _ = adaptive_threshold(_sol_fng or 50, _sol_regime, 'LONG')
     print(f"[ClaudeGate/SOL] {sym} | bot=100 claude={_sol_cscore} "
-          f"combined={_sol_combined} | {_sol_creason}", flush=True)
+          f"combined={_sol_combined} eff_min={_eff_min_sol} | {_sol_creason}", flush=True)
     # combined ≥ 80: strong technical signal overrides Claude's binary veto (advisory only)
-    if _sol_combined < MIN_SCORE or (not _sol_gate_ok and _sol_combined < 80):
-        print(f"[ClaudeGate] {sym} SOL rejected - combined={_sol_combined}", flush=True)
+    if _sol_combined < _eff_min_sol or (not _sol_gate_ok and _sol_combined < 80):
+        print(f"[ClaudeGate] {sym} SOL rejected - combined={_sol_combined} eff_min={_eff_min_sol}", flush=True)
         return
 
     tgt_sol   = se.calc_targets(price, 'LONG')
