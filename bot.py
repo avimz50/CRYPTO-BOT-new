@@ -6947,6 +6947,7 @@ def _scan_batch_inner(candidates, direction, btc_regime='NEUTRAL', rejected_out=
             score, breakdown, atr = score_symbol(
                 df_4h, df_1h, symbol, direction, fng_v=fng_v_scan,
                 rsi_veto_long=eff_rsi_long, rsi_veto_short=eff_rsi_short,
+                change_24h=candidate.get('change'),
             )
             score_4h  = score
             score_1h  = 0
@@ -6963,6 +6964,7 @@ def _scan_batch_inner(candidates, direction, btc_regime='NEUTRAL', rejected_out=
                 score_1h, breakdown_1h, atr_1h = score_symbol(
                     df_1h, df_15m, symbol, direction, fng_v=fng_v_scan,
                     rsi_veto_long=eff_rsi_long, rsi_veto_short=eff_rsi_short,
+                    change_24h=candidate.get('change'),
                 )
                 print(f"  4H={score_4h} < {eff_min} → try 1H: {score_1h}")
                 if score_1h > best_score:
@@ -6982,6 +6984,7 @@ def _scan_batch_inner(candidates, direction, btc_regime='NEUTRAL', rejected_out=
                     score_15m, breakdown_15m, atr_15m = score_symbol(
                         df_15m, df_1h, symbol, direction, fng_v=fng_v_scan,
                         rsi_veto_long=eff_rsi_long, rsi_veto_short=eff_rsi_short,
+                        change_24h=candidate.get('change'),
                     )
                     print(f"  1H={score_1h} < {eff_min} → try 15m: {score_15m}")
                     if score_15m > best_score:

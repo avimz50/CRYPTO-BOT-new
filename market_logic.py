@@ -813,7 +813,8 @@ def momentum_gate(
 def score_symbol(df_3h, df_1h, symbol: str, direction: str = 'LONG',
                  fng_v: int = None,
                  rsi_veto_long: int = None,
-                 rsi_veto_short: int = None) -> tuple[int, str, float]:
+                 rsi_veto_short: int = None,
+                 change_24h: float = None) -> tuple[int, str, float]:
     """
     Professional scoring system 0–100+ points.
 
@@ -930,6 +931,7 @@ def score_symbol(df_3h, df_1h, symbol: str, direction: str = 'LONG',
         _rsi_above_soft = (direction == 'LONG'  and rsi_v > _rvl)
         _rsi_below_soft = (direction == 'SHORT' and rsi_v < _rvs)
 
+        rsi_ideal = False
         if _rsi_above_soft or _rsi_below_soft:
             # RSI is elevated/depressed but not extreme — other criteria can still carry the score
             r_pts = 0
@@ -1064,6 +1066,67 @@ def score_symbol(df_3h, df_1h, symbol: str, direction: str = 'LONG',
         score = max(0, min(100, score + fng_adj))
         sign  = f"+{fng_adj}" if fng_adj >= 0 else str(fng_adj)
         parts.append(f"FNG={fng_v}({sign})")
+
+        # ── 9. Late-entry protection ────────────────────────────────────────
+        # Do not chase a move after most of it has already happened. Elevated
+        # RSI alone is a soft penalty; a large 24h move without a nearby order
+        # block or flag/breakout confirmation receives a stronger penalty.
+        late_penalty = 0
+        late_reasons = []
+        try:
+            chg_24h = float(change_24h) if change_24h is not None else None
+        except (TypeError, ValueError):
+            chg_24h = None
+
+        if direction == 'LONG':
+            if rsi_v >= 78:
+                late_penalty += 10
+                late_reasons.append(f"RSI={rsi_v:.0f}")
+            elif rsi_v >= 70:
+                late_penalty += 5
+                late_reasons.append(f"RSI={rsi_v:.0f}")
+
+            if chg_24h is not None and chg_24h >= 25:
+                return 0, (
+                    f"Late Entry VETO: LONG already +{chg_24h:.1f}%/24h "
+                    "— wait for pullback"
+                ), atr_v
+            if chg_24h is not None and chg_24h >= 15:
+                late_penalty += 10
+                late_reasons.append(f"24h=+{chg_24h:.1f}%")
+                if not is_flag and not ob_hit:
+                    late_penalty += 10
+                    late_reasons.append("no Flag/near OB")
+
+        else:  # SHORT — symmetric protection against chasing a completed dump
+            if rsi_v <= 22:
+                late_penalty += 10
+                late_reasons.append(f"RSI={rsi_v:.0f}")
+            elif rsi_v <= 30:
+                late_penalty += 5
+                late_reasons.append(f"RSI={rsi_v:.0f}")
+
+            if chg_24h is not None and chg_24h <= -25:
+                return 0, (
+                    f"Late Entry VETO: SHORT already {chg_24h:.1f}%/24h "
+                    "— wait for bounce"
+                ), atr_v
+            if chg_24h is not None and chg_24h <= -15:
+                late_penalty += 10
+                late_reasons.append(f"24h={chg_24h:.1f}%")
+                if not is_flag and not ob_hit:
+                    late_penalty += 10
+                    late_reasons.append("no Flag/near OB")
+
+        if late_penalty:
+            score -= late_penalty
+            parts.append(
+                f"LateEntry=-{late_penalty}({'+'.join(late_reasons)})"
+            )
+        else:
+            parts.append("LateEntry=0")
+
+        score = max(0, score)
 
         breakdown = " | ".join(parts) + f"  →  TOTAL={score}/100"
         if score >= MIN_SCORE:
