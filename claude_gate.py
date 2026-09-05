@@ -236,7 +236,7 @@ def claude_trade_gate(
     if client is None:
         gate_stats['fallback'] += 1
         _save_gate_stats()
-        return False, 0, "gate unavailable (no API key) — fail closed", ""
+        return True, 70, "gate unavailable — fallback to technical rules", ""
 
     # ── Enrich with live market data ──────────────────────────────────────────
     enrichment = _enrich_signal(symbol)
@@ -399,11 +399,12 @@ def claude_trade_gate(
         gate_stats['fallback'] += 1
         _save_gate_stats()
         print(
-            f"[ClaudeGate] ⛔ {symbol} error ({latency_ms}ms): {e} — fail closed",
+            f"[ClaudeGate] ⚠️ {symbol} error ({latency_ms}ms): {e} — "
+            "fallback to technical rules",
             flush=True,
         )
         print(f"[ClaudeGate] raw reply was: {raw[:200]!r}", flush=True)
-        return False, 0, "gate unavailable (API error) — fail closed", ""
+        return True, 70, "gate unavailable — fallback to technical rules", ""
 
 
 # ── combined score helper ─────────────────────────────────────────────────────

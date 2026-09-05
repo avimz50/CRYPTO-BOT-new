@@ -1167,6 +1167,12 @@ def adaptive_threshold(fng_value, btc_regime: str, direction: str
         fng_int = 50  # Neutral — bot keeps trading
 
     btc_regime = (btc_regime or 'NEUTRAL').upper()
+    # Callers use both short and descriptive labels. Normalize them so the
+    # regime/direction score and RSI adjustments are applied consistently.
+    btc_regime = {
+        'BULLISH': 'BULL',
+        'BEARISH': 'BEAR',
+    }.get(btc_regime, btc_regime)
     direction  = (direction  or 'LONG').upper()
 
     # ── FNG band lookup ───────────────────────────────────────────────────
