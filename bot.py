@@ -1602,6 +1602,78 @@ def _fire_make_webhook(trade: dict):
 #  place_order() — פונקציה מאוחדת לרישום עסקה
 #  כל נתיבי הפתיחה (Auto / Manual / Scalp / SOL) מדווחים דרכה.
 # ─────────────────────────────────────────────────────────────────
+def _entry_restraint_reason(trade: dict) -> str | None:
+    """Returns a reason when recent results require pausing this entry."""
+    symbol = trade.get('symbol', '')
+    track = trade.get('track') or trade.get('strategy') or 'Swing'
+    now_ts = now_il().timestamp()
+
+    # Persistent per-symbol cooldown derived from the audit ledger, so a bot
+    # restart cannot accidentally clear the restraint.
+    symbol_closes = [
+        r for r in trade_audit_log
+        if r.get('symbol') == symbol and r.get('closed_at')
+    ]
+    if symbol_closes:
+        latest = max(symbol_closes, key=lambda r: r.get('closed_at', ''))
+        try:
+            age_h = (now_ts - datetime.fromisoformat(latest['closed_at']).timestamp()) / 3600
+            latest_net = float(latest.get('net_pnl_usd', latest.get('pnl_usd', 0)) or 0)
+            wait_h = SYMBOL_LOSS_REENTRY_HOURS if latest_net < 0 else SYMBOL_REENTRY_HOURS
+            if age_h < wait_h:
+                remaining = max(1, math.ceil(wait_h - age_h))
+                outcome = 'הפסד' if latest_net < 0 else 'סגירה'
+                return f'{symbol} בקולדאון עוד כ-{remaining} שעות אחרי {outcome}'
+        except (TypeError, ValueError):
+            pass
+
+    # Swing-only circuit breaker: three consecutive losing Swing closes pause
+    # that track for two hours while Breakout remains available.
+    if track == 'Swing':
+        swing_closes = [
+            r for r in trade_audit_log
+            if (r.get('track') or r.get('strategy') or 'Swing') == 'Swing'
+            and r.get('closed_at')
+        ]
+        swing_closes.sort(key=lambda r: r.get('closed_at', ''), reverse=True)
+        recent = swing_closes[:SWING_LOSS_STREAK_LIMIT]
+        if len(recent) == SWING_LOSS_STREAK_LIMIT and all(
+            float(r.get('net_pnl_usd', r.get('pnl_usd', 0)) or 0) < 0
+            for r in recent
+        ):
+            try:
+                age_h = (now_ts - datetime.fromisoformat(recent[0]['closed_at']).timestamp()) / 3600
+                if age_h < SWING_LOSS_PAUSE_HOURS:
+                    remaining_min = max(1, math.ceil((SWING_LOSS_PAUSE_HOURS - age_h) * 60))
+                    return (
+                        f'Swing מושהה לעוד {remaining_min} דקות אחרי '
+                        f'{SWING_LOSS_STREAK_LIMIT} הפסדים רצופים'
+                    )
+            except (TypeError, ValueError):
+                pass
+
+    return None
+
+
+def _entry_spread_reason(symbol: str) -> str | None:
+    """Rejects a market whose live bid/ask spread is too wide."""
+    try:
+        ticker = exchange.fetch_ticker(symbol)
+        bid = float(ticker.get('bid') or 0)
+        ask = float(ticker.get('ask') or 0)
+        midpoint = (bid + ask) / 2
+        if bid > 0 and ask > 0 and midpoint > 0:
+            spread_pct = (ask - bid) / midpoint * 100
+            if spread_pct > MAX_ENTRY_SPREAD_PCT:
+                return (
+                    f'spread {spread_pct:.2f}% גבוה מהמקסימום '
+                    f'{MAX_ENTRY_SPREAD_PCT:.2f}%'
+                )
+    except Exception as exc:
+        print(f"[EntrySpread] ⚠️ {symbol} spread check unavailable: {exc}", flush=True)
+    return None
+
+
 def place_order(trade: dict, margin: float = MARGIN) -> bool:
     """
     רושם עסקה חדשה:
@@ -1626,6 +1698,16 @@ def place_order(trade: dict, margin: float = MARGIN) -> bool:
                 flush=True,
             )
             return False
+
+    restraint_reason = _entry_restraint_reason(trade)
+    if restraint_reason:
+        print(f"[place_order] 🧊 {symbol} blocked — {restraint_reason}", flush=True)
+        return False
+
+    spread_reason = _entry_spread_reason(symbol)
+    if spread_reason:
+        print(f"[place_order] 🚫 {symbol} blocked — {spread_reason}", flush=True)
+        return False
 
     # ══ GLOBAL GUARDS — בדיקה + רישום + ניכוי, הכל אטומי תחת trades_lock ═
     # (מונע race בין threads: שתי עסקאות שנפתחות במקביל לא יכולות לקרוא
@@ -3390,6 +3472,10 @@ def track_trades():
 
     for trade in active_trades[:]:
         try:
+            # Older/Breakout trade records may not contain lifecycle metadata.
+            # Treat them as a normal initial-phase position so SL/TP monitoring
+            # remains active instead of skipping the trade with KeyError.
+            trade.setdefault('phase', 'initial')
             sym_key = trade['symbol']
             if sym_key in _batch_prices:
                 current_price = _batch_prices[sym_key]

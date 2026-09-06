@@ -47,6 +47,14 @@ TP2_PCT = 4.0   # Take Profit 2 = 4% (final target, 1:2 RR)
 # ── Circuit Breaker ────────────────────────────────────────────────────────────
 DAILY_LOSS_LIMIT = -15.0     # -$15 = circuit breaker (3 max losses/day)
 
+# ── Entry Restraint ────────────────────────────────────────────────────────────
+# Avoid illiquid markets and repeated entries into a setup that has not reset.
+MAX_ENTRY_SPREAD_PCT       = 0.8
+SYMBOL_REENTRY_HOURS       = 12
+SYMBOL_LOSS_REENTRY_HOURS  = 24
+SWING_LOSS_STREAK_LIMIT    = 3
+SWING_LOSS_PAUSE_HOURS     = 2
+
 # ── Market Regime Filter (FNG + BTC 4H EMA20) ──────────────────────────────────
 # BEARISH: FNG < 40 OR BTC below 4H EMA20  → LONGs blocked
 # BULLISH: FNG > 60 AND BTC above 4H EMA20 → SHORTs blocked
