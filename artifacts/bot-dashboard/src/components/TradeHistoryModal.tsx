@@ -116,9 +116,9 @@ export function TradeHistoryModal({ trades, loading, onClose, stale, lastSuccess
   ];
 
   const COLS = hasFeeData
-    ? ["#", "PAIR", "DIR", "OPEN TIME", "ENTRY", "CLOSE TIME", "EXIT",
+    ? ["#", "PAIR", "DIR", "TF", "OPEN TIME", "ENTRY", "CLOSE TIME", "EXIT",
        "LEVERAGE", "VOLUME", "DURATION", "GROSS P&L", "FEES", "NET P&L", "P&L %", "REASON"]
-    : ["#", "PAIR", "DIR", "OPEN TIME", "ENTRY", "CLOSE TIME", "EXIT",
+    : ["#", "PAIR", "DIR", "TF", "OPEN TIME", "ENTRY", "CLOSE TIME", "EXIT",
        "LEVERAGE", "VOLUME", "DURATION", "NET P&L", "P&L %", "REASON"];
 
   return (
@@ -286,6 +286,9 @@ export function TradeHistoryModal({ trades, loading, onClose, stale, lastSuccess
                           style={{ color: t.direction === "LONG" ? "#4ade80" : "#f87171" }}>
                           {t.direction === "LONG" ? "▲L" : "▼S"}
                         </span>
+                      </td>
+                      <td className="px-3 py-2.5 font-mono font-semibold" style={{ color: "#93c5fd" }}>
+                        {t.timeframe ?? "—"}
                       </td>
                       <td className="px-3 py-2.5 whitespace-nowrap" style={{ color: "#64748b" }}>
                         {fmtTime(t.opened_at)}

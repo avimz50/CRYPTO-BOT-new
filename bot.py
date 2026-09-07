@@ -3096,7 +3096,7 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         tf_reason = f"טרנד חזק ב-{timeframe}" if timeframe == '4H' else f"פריצה ב-{timeframe}"
 
     msg = (
-        f"*{dir_icon}  |  {symbol_spaced}*\n"
+        f"*{dir_icon}  |  {symbol_spaced} · {timeframe}*\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"📊 *ניקוד:* `{score}/100` | {asset_class} | FNG={fng_v} | {_btc_regime_now}\n"
         f"━━━━━━━━━━━━━━━━━━\n"
@@ -3292,7 +3292,7 @@ def _open_research_trade(
     est_tp2   = round(abs(tp_price  - price) / price * POSITION_SIZE, 2)
 
     msg = (
-        f"*{dir_icon}  |  {spaced}*\n"
+        f"*{dir_icon}  |  {spaced} · Research*\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"🔬 *Dr\\. Sniper Research* — score `{claude_score}/100`\n"
         f"━━━━━━━━━━━━━━━━━━\n"
@@ -3608,6 +3608,7 @@ def track_trades():
             remaining     = pos_size * 0.25                        # 25% נשאר לאחר TP1
             tbadge        = track_badge(trade.get('track', 'Swing'))  # ⚡ Scalp / 🌊 Swing
             t_leverage    = trade.get('leverage', LEVERAGE)
+            trade_tf      = trade.get('timeframe', '4H')
 
             # helpers: "profit direction" — True כאשר המחיר זזה לכיוון הרצוי
             def profit_dir(p):
@@ -3657,7 +3658,7 @@ def track_trades():
                         be_trigger_pct = round(scalp_tp_p * SCALP_TRACK_BE_TRIGGER, 2)
                         print(f"  [SCALP BE] {sym}: SL→BE @ {current_price:.6g} (+{be_trigger_pct}% = 50% to TP1)")
                         send_msg(
-                            f"🔒 *Scalp BE הופעל — {sym.replace('/USDT','')}*\n"
+                            f"🔒 *Scalp BE הופעל — {sym.replace('/USDT','')} · {trade_tf}*\n"
                             f"מחיר: `{current_price:.6g}` (+{be_trigger_pct}% — 50% of way to TP1)\n"
                             f"SL הועבר לכניסה: `{entry:.6g}` | {tbadge}\n"
                             f"💼 {scalp_lev}x · ההון מוגן!"
@@ -3692,7 +3693,7 @@ def track_trades():
                     emoji = "🟢" if direction == 'LONG' else "🔴"
                     pnl_icon = "📈" if scalp_pnl_usd >= 0 else "📉"
                     send_msg(
-                        f"⚡ *Scalp סגור — {sym.replace('/USDT','')} {emoji}*\n"
+                        f"⚡ *Scalp סגור — {sym.replace('/USDT','')} · {trade_tf} {emoji}*\n"
                         f"{label} | {tbadge}\n\n"
                         f"כניסה: `{entry:.6g}` → יציאה: `{current_price:.6g}`\n"
                         f"{pnl_icon} *P&L: ${scalp_pnl_usd:+.2f}* ({scalp_pnl_pct:+.2f}%)\n"
@@ -3736,7 +3737,7 @@ def track_trades():
                 if not trade.get('be_triggered') and be_reached:
                     trade['be_triggered'] = True
                     send_msg(
-                        f"📍 *Velocity BE הופעל — {sym.replace('/USDT','')}*\n"
+                        f"📍 *Velocity BE הופעל — {sym.replace('/USDT','')} · {trade_tf}*\n"
                         f"רווח {CLIFF_BE_TRIGGER_PCT}% הושג — Trailing SL פעיל\n"
                         f"_מסחר ללא סיכון מעכשיו_"
                     )
@@ -3780,7 +3781,7 @@ def track_trades():
                     trade_lbl = "Rocket 🚀" if direction == 'LONG' else "Cliff 🪂"
                     pnl_icon  = "📈" if cliff_pnl_usd >= 0 else "📉"
                     send_msg(
-                        f"⚡ *Velocity {trade_lbl} סגור — {sym.replace('/USDT','')} {emoji_d}*\n"
+                        f"⚡ *Velocity {trade_lbl} סגור — {sym.replace('/USDT','')} · {trade_tf} {emoji_d}*\n"
                         f"{label} | {tbadge}\n\n"
                         f"כניסה: `{entry:.6g}` → יציאה: `{current_price:.6g}`\n"
                         f"{pnl_icon} *P&L: ${cliff_pnl_usd:+.2f}* ({cliff_pnl_pct:+.2f}%)\n"
@@ -3911,7 +3912,7 @@ def track_trades():
                             eq   = _get_equity()
                             slip = trade.get('slippage_pct', 0.0)
                             send_msg(
-                                f"⚡ *Fast-Loss Exit — {sym.replace('/USDT','')}* "
+                                f"⚡ *Fast-Loss Exit — {sym.replace('/USDT','')} · {trade_tf}* "
                                 f"{'🟢' if direction=='LONG' else '🔴'}\n"
                                 f"_Setup נכשל: -{_fl_loss_margin:.1f}% מרג'ין בתוך {_fl_elapsed:.0f} דקות_\n\n"
                                 f"כניסה: `{entry:.6g}` → יציאה: `{current_price:.6g}`\n"
@@ -4024,7 +4025,7 @@ def track_trades():
                             eq   = _get_equity()
                             slip = trade.get('slippage_pct', 0.0)
                             send_msg(
-                                f"⏱ *Smart Timeout — {sym}* "
+                                f"⏱ *Smart Timeout — {sym} · {trade_tf}* "
                                 f"{'🟢' if direction == 'LONG' else '🔴'}\n"
                                 f"_פתוח {_to_elapsed:.1f}h | רווח {_to_profit:+.2f}% < "
                                 f"+{SMART_TIMEOUT_MIN_PROFIT_PCT}% — משחרר מרג'ין_\n\n"
@@ -4108,7 +4109,7 @@ def track_trades():
                     eq  = _get_equity()
                     slip = trade.get('slippage_pct', 0.0)
                     send_msg(
-                        f"📍 *Trailing Stop נגע — {sym}*\n"
+                        f"📍 *Trailing Stop נגע — {sym} · {trade_tf}*\n"
                         f"{'שיא' if direction=='LONG' else 'שפל'}: `{ref:.6g}` → יציאה: `{current_price:.6g}`\n"
                         f"ברוטו: `${trailing_record['gross_pnl_usd']:+.2f}` | עמלה: `${trailing_record['fees_usd']:.2f}`\n"
                         f"{icon} *נטו: {trailing_record['net_pnl_usd']:+.2f}$ ({pnl_pct_r:+.1f}% על מרג'ין)* | {tbadge}\n"
@@ -4175,7 +4176,7 @@ def track_trades():
                             eq   = _get_equity()
                             slip = trade.get('slippage_pct', 0.0)
                             send_msg(
-                                f"⏱ *Max Duration Exit — {sym.replace('/USDT','')}* "
+                                f"⏱ *Max Duration Exit — {sym.replace('/USDT','')} · {trade_tf}* "
                                 f"{'🟢' if direction=='LONG' else '🔴'}\n"
                                 f"_TP1 לא הושג תוך {_md_limit:.0f} דקות — יוצאים_\n\n"
                                 f"כניסה: `{entry:.6g}` → יציאה: `{current_price:.6g}`\n"
@@ -4287,7 +4288,7 @@ def track_trades():
                     trade['sl']           = entry
                     trade['be_triggered'] = True
                     send_msg(
-                        f"🎯 *TP1 הושג — {sym}!*\n"
+                        f"🎯 *TP1 הושג — {sym} · {trade_tf}!*\n"
                         f"מחיר: `{current_price:.6g}` | {direction} | {tbadge}\n"
                         f"75% נסגרו · ברוטו: *+${tp1_pnl}* | עמלה: `${tp1_fee:.2f}`\n"
                         f"🔒 *SL הועבר ל-BE אוטומטית!* `{entry:.6g}` — הון מוגן\n"
@@ -4306,7 +4307,7 @@ def track_trades():
                         _log_closed_trade(trade, 'BE', 0.0, current_price)
                         eq = _get_equity()
                         send_msg(
-                            f"🔒 *Break Even — יצאנו ב-{sym}*\n"
+                            f"🔒 *Break Even — יצאנו ב-{sym} · {trade_tf}*\n"
                             f"מחיר: `{current_price:.6g}` | כניסה: `{entry:.6g}`\n"
                             f"*ללא הפסד · ההון נשמר*\n"
                             f"💼 {t_leverage}x Isolated | {tbadge}\n"
@@ -4328,7 +4329,7 @@ def track_trades():
                         trade_close_cooldown[sym] = time.time()   # 2h cooldown — מניעת כניסה מחדש
                         eq = _get_equity()
                         send_msg(
-                            f"🛑 *SL נגע — {sym}*\n"
+                            f"🛑 *SL נגע — {sym} · {trade_tf}*\n"
                             f"כניסה: `{entry:.6g}` → SL: `{trade['sl']:.6g}`\n"
                             f"❌ *Loss: -${loss}* ({loss_pct}% על מרג'ין)\n"
                             f"💼 {t_leverage}x Isolated | {tbadge}\n"
@@ -4369,7 +4370,7 @@ def track_trades():
                     est_tp_full = round(abs(current_price - entry) / entry * remaining, 2)
                     slip = trade.get('slippage_pct', 0.0)
                     send_msg(
-                        f"✅ *TP מלא הושג — {sym}!* 🎉\n"
+                        f"✅ *TP מלא הושג — {sym} · {trade_tf}!* 🎉\n"
                         f"מחיר: `{current_price:.6g}` | {direction} | {tbadge}\n"
                         f"שאר 25% נסגרו · ✅ *Profit at TP: +${est_tp_full}*\n"
                         f"TP1 + TP סה\"כ: 📈 *+${total}*\n"
@@ -4403,7 +4404,7 @@ def track_trades():
                     ref_price = trade['peak_price']
                     slip = trade.get('slippage_pct', 0.0)
                     send_msg(
-                        f"📍 *Trailing Stop נגע — {sym}*\n"
+                        f"📍 *Trailing Stop נגע — {sym} · {trade_tf}*\n"
                         f"{'שיא' if direction=='LONG' else 'שפל'}: `{ref_price:.6g}` → יציאה: `{current_price:.6g}`\n"
                         f"25% נסגרו: {icon} *{half_pnl:+}$* | {tbadge}\n"
                         f"TP1 + Trailing סה\"כ: {icon} *{total:+}$*\n"
@@ -6546,7 +6547,9 @@ def handle_scanreport(message):
             dir_e = "🟢" if dir_ == 'LONG' else "🔴"
             reason = c.get('reason', '')[:55]
             score_e = "🟡" if score >= 80 else ("🟠" if score >= 60 else "⚫")
-            msg += f"{i}\\. {dir_e} `{c.get('symbol','?')}` {score_e} *{score}/100*\n"
+            scores = c.get('scores', {})
+            tf = max(scores, key=scores.get) if scores and max(scores.values(), default=0) > 0 else '?'
+            msg += f"{i}\\. {dir_e} `{c.get('symbol','?')}` [{tf}] {score_e} *{score}/100*\n"
             msg += f"   _{reason}_\n"
 
     # Bubble Watch section
@@ -7942,7 +7945,7 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
     emoji     = "🟢" if direction == 'LONG' else "🔴"
     dir_label = "Quick-Long (Dip Buy)" if direction == 'LONG' else "Scalp-Short (Bubble)"
     scalp_msg = (
-        f"⚡ *{dir_label}: {symbol.replace('/USDT', '')} {emoji}*\n"
+        f"⚡ *{dir_label}: {symbol.replace('/USDT', '')} · 15m {emoji}*\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"💵 כניסה: `{price:.6g}`\n"
         f"🛑 SL:    `{sl_price:.6g}` (-{sl_pct:.1f}%)\n"
@@ -8154,7 +8157,7 @@ def open_cliff_trade(symbol: str, price: float, direction: str, move_pct: float,
     place_order(trade, CLIFF_MARGIN)
 
     send_msg(
-        f"⚡ *High-Velocity {label}: {symbol.replace('/USDT', '')} {emoji}*{div_note}\n"
+        f"⚡ *High-Velocity {label}: {symbol.replace('/USDT', '')} · 5m {emoji}*{div_note}\n"
         f"_נר 5m {move_word} {move_pct:.1f}% עם Volume {vol_ratio:.1f}× ממוצע_\n\n"
         f"💵 כניסה: `{price:.6g}`\n"
         f"🏃 Trailing SL: `{trail_init:.6g}` ({CLIFF_TRAIL_PCT}% מיידי)\n"
@@ -8606,7 +8609,7 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
 
     short_name = symbol.replace('/USDT', '')
     msg = (
-        f"{dir_emoji} *Breakout {dir_label} — {short_name}*\n"
+        f"{dir_emoji} *Breakout {dir_label} — {short_name} · Breakout*\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"💵 כניסה: `{price:.6g}`\n"
         f"🛑 SL:    `{sl_price:.6g}` ({sl_sign}{sl_pct}%)\n"

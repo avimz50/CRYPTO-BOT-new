@@ -53,7 +53,7 @@ export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSucce
           <thead>
             <tr style={{ background: "#0d1f3c", borderBottom: "1px solid #1e3a5f" }}>
               {[
-                "COIN ↗", "DIR", "LEVERAGE", "AMOUNT", "ENTRY", "CURR PRICE",
+                "COIN ↗", "DIR", "TF", "LEVERAGE", "AMOUNT", "ENTRY", "CURR PRICE",
                 "SL", "BE Target", "Final TP", "EST. PROFIT",
                 "GROSS P&L", "EST. FEES", "NET P&L", "STATUS",
               ].map(h => (
@@ -68,7 +68,7 @@ export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSucce
             {loading && trades.length === 0 ? (
               [...Array(2)].map((_, i) => (
                 <tr key={i} style={{ borderBottom: "1px solid #0d1f3c" }}>
-                  {[...Array(14)].map((_, j) => (
+                  {[...Array(15)].map((_, j) => (
                     <td key={j} className="px-3 py-3">
                       <div className="h-3 rounded animate-pulse" style={{ background: "#0d1f3c", width: "60%" }} />
                     </td>
@@ -77,7 +77,7 @@ export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSucce
               ))
             ) : trades.length === 0 ? (
               <tr>
-                <td colSpan={14} className="px-4 py-6 text-center text-xs"
+                <td colSpan={15} className="px-4 py-6 text-center text-xs"
                   style={{ color: "#475569" }}>
                   No active trades
                 </td>
@@ -131,6 +131,9 @@ export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSucce
                         }}>
                         {isLong ? "▲ LONG" : "▼ SHORT"}
                       </span>
+                    </td>
+                    <td className="px-3 py-2.5 font-mono font-semibold" style={{ color: "#93c5fd" }}>
+                      {t.timeframe ?? "—"}
                     </td>
                     <td className="px-3 py-2.5 font-mono" style={{ color: "#cbd5e1" }}>{leverage}x</td>
                     <td className="px-3 py-2.5 font-mono" style={{ color: "#cbd5e1" }}>${amount}</td>
@@ -216,7 +219,7 @@ export function ActiveTradesTable({ trades, maxTrades, loading, stale, lastSucce
             return (
               <tfoot>
                 <tr style={{ background: "#071222", borderTop: "1px solid #1e3a5f" }}>
-                  <td colSpan={10} className="px-3 py-2 text-xs font-semibold"
+                  <td colSpan={11} className="px-3 py-2 text-xs font-semibold"
                     style={{ color: "#64748b" }}>
                     TOTAL (floating)
                   </td>
