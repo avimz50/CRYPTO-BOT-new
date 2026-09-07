@@ -433,6 +433,24 @@ MAX_DURATION_COOLDOWN_SEC: int   = 2 * 60 * 60   # 2 שעות
 watch_list: dict = {}
 watch_lock = threading.Lock()
 
+# ─── Regime Watchlist — observation only; never opens trades ─────────────────
+REGIME_WATCHLIST_FILE = 'data/regime_watchlist.json'
+REGIME_WATCHLIST_DURATION_SEC = 4 * 60 * 60
+REGIME_WATCHLIST_ENTRY_SCORE = 85
+REGIME_WATCHLIST_DROP_SCORE = 75
+REGIME_WATCHLIST_MAX_MOVE_PCT = 3.0
+REGIME_WATCHLIST_EVENT_LIMIT = 2000
+regime_watchlist_lock = threading.Lock()
+regime_watchlist_state: dict = state_store.load_state(
+    'regime_watchlist',
+    REGIME_WATCHLIST_FILE,
+    {'current': [], 'events': []},
+)
+if not isinstance(regime_watchlist_state, dict):
+    regime_watchlist_state = {'current': [], 'events': []}
+regime_watchlist_state.setdefault('current', [])
+regime_watchlist_state.setdefault('events', [])
+
 # AUDIT_HOURS → config.py (from config import *)
 _last_audit_hour   = None       # מונע כפילות באותה שעה
 
@@ -853,6 +871,7 @@ def save_scan_results(
         'scan_duration_s':         duration,
         'bubble_watch':            bubble_watch or [],
         'sandbox_analysis':        sandbox_analysis or [],
+        'regime_watchlist':        _regime_watchlist_report_snapshot(),
     }
     try:
         with open(SCAN_REPORT_FILE, 'w', encoding='utf-8') as f:
@@ -6504,6 +6523,7 @@ def handle_scanreport(message):
     sys_msg   = d.get('system_message', '')
     duration  = d.get('scan_duration_s', 0)
     rejected  = d.get('rejected_coins', [])
+    regime_watch = _regime_watchlist_report_snapshot()
     regime_e  = "🟢" if regime == 'BULL' else ("🔴" if regime == 'BEAR' else "🟡")
     sig_e     = "✅" if signals > 0 else "⭕"
 
@@ -6547,6 +6567,23 @@ def handle_scanreport(message):
     else:
         msg += f"\n{'─' * 28}\n"
         msg += f"🫧 *Bubble Watch:* _אין מטבעות עם שינוי >10% ב-24h_\n"
+
+    msg += f"\n{'─' * 28}\n"
+    msg += "📋 *Watchlist — Regime observation only*\n"
+    if regime_watch:
+        for item in regime_watch[:10]:
+            direction = item.get('direction', '')
+            dir_e = "🟢" if direction == 'LONG' else "🔴"
+            score = int(item.get('score', 0) or 0)
+            hours_left = max(0.0, float(item.get('hours_remaining', 0) or 0))
+            move_pct = float(item.get('price_move_pct', 0) or 0)
+            timeframe = item.get('timeframe', '?')
+            msg += (
+                f"{dir_e} `{item.get('symbol', '?')}` [{timeframe}] "
+                f"*{score}/100* · {hours_left:.1f}h left · {move_pct:+.2f}%\n"
+            )
+    else:
+        msg += "_No candidates currently waiting for a regime change._\n"
 
     # הוסף רמז ל-Sandbox אם קיים
     sandbox = d.get('sandbox_analysis', [])
@@ -6989,6 +7026,258 @@ def _scan_batch(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
             print(f"[RejectLog] wrapper error: {type(_le).__name__} {_le}", flush=True)
 
 
+def _save_regime_watchlist() -> None:
+    """Persist the observation-only watchlist and its event history."""
+    state_store.save_state(
+        'regime_watchlist',
+        regime_watchlist_state,
+        REGIME_WATCHLIST_FILE,
+    )
+
+
+def _regime_watchlist_event(event_type: str, item: dict, reason: str) -> None:
+    event = {
+        'ts': now_il().isoformat(timespec='seconds'),
+        'event': event_type,
+        'symbol': item.get('symbol'),
+        'direction': item.get('direction'),
+        'score': item.get('score', 0),
+        'timeframe': item.get('timeframe'),
+        'watch_price': item.get('watch_price'),
+        'current_price': item.get('current_price', item.get('watch_price')),
+        'price_move_pct': item.get('price_move_pct', 0.0),
+        'reason': reason,
+    }
+    regime_watchlist_state['events'].append(event)
+    regime_watchlist_state['events'] = regime_watchlist_state['events'][
+        -REGIME_WATCHLIST_EVENT_LIMIT:
+    ]
+    print(
+        f"[RegimeWatchlist] {event_type.upper()} {event['symbol']} "
+        f"{event['direction']} score={event['score']} — {reason}",
+        flush=True,
+    )
+
+
+def _regime_watchlist_report_snapshot() -> list:
+    """Return current entries with report-only derived fields."""
+    now_ts = time.time()
+    with regime_watchlist_lock:
+        rows = []
+        for item in regime_watchlist_state.get('current', []):
+            row = dict(item)
+            row['hours_remaining'] = round(
+                max(0.0, (float(item.get('expires_at', now_ts)) - now_ts) / 3600),
+                2,
+            )
+            rows.append(row)
+        return rows
+
+
+def _score_regime_watch_candidate(
+    candidate: dict,
+    direction: str,
+    fng_value: int,
+    btc_regime: str,
+) -> dict:
+    """
+    Score a regime-blocked candidate without running any execution path.
+    This intentionally stops before advisor, sector execution and open_demo_trade.
+    """
+    symbol = _require_usdt_swap_symbol(candidate.get('symbol', ''))
+    if symbol in SLOW_MOVERS:
+        raise ValueError('slow-mover blacklist')
+
+    df_4h = get_data_cached(symbol, timeframe='4h', limit=250)
+    df_1h = get_data_cached(symbol, timeframe='1h', limit=250)
+    df_15m = get_data_cached(symbol, timeframe='15m', limit=250)
+
+    if MOMENTUM_GATE_ENABLED:
+        gate_ok, gate_reason = momentum_gate(
+            symbol=symbol,
+            df_15m=df_15m,
+            df_1h=df_1h,
+            direction=direction,
+            volume_usd_24h=float(candidate.get('volume_usd', 0) or 0),
+            oi_data=_oi_cache.get(symbol),
+        )
+        if not gate_ok:
+            raise ValueError(f'momentum gate: {gate_reason}')
+
+    _, rsi_long, rsi_short, _ = adaptive_threshold(
+        fng_value, btc_regime, direction
+    )
+    scored = []
+    for timeframe, primary, secondary in (
+        ('4H', df_4h, df_1h),
+        ('1H', df_1h, df_15m),
+        ('15m', df_15m, df_1h),
+    ):
+        score, breakdown, _ = score_symbol(
+            primary,
+            secondary,
+            symbol,
+            direction,
+            fng_v=fng_value,
+            rsi_veto_long=rsi_long,
+            rsi_veto_short=rsi_short,
+            change_24h=candidate.get('change'),
+        )
+        scored.append({
+            'score': int(score or 0),
+            'timeframe': timeframe,
+            'price': float(primary['close'].iloc[-1]),
+            'breakdown': breakdown,
+        })
+
+    best = max(scored, key=lambda row: row['score'])
+    return {
+        'symbol': symbol,
+        'direction': direction,
+        'score': best['score'],
+        'timeframe': best['timeframe'],
+        'current_price': best['price'],
+        'scores': {row['timeframe']: row['score'] for row in scored},
+    }
+
+
+def _update_regime_watchlist(
+    candidates: list,
+    direction: str,
+    regime_allowed: bool,
+    regime_reason: str,
+    fng_value: int,
+    btc_regime: str,
+) -> None:
+    """Recheck, add, remove or graduate candidates without opening trades."""
+    now_ts = time.time()
+    candidate_map = {}
+    for candidate in candidates or []:
+        try:
+            symbol = canonical_swap_symbol(candidate.get('symbol', ''))
+        except Exception:
+            continue
+        candidate_map[symbol] = dict(candidate, symbol=symbol)
+
+    with regime_watchlist_lock:
+        current = regime_watchlist_state.get('current', [])
+        existing = {
+            (item.get('symbol'), item.get('direction')): item
+            for item in current
+        }
+        changed = False
+
+        # Recheck every existing entry for this direction, even when it is no
+        # longer in the current gainers/losers candidate set.
+        for item in list(current):
+            if item.get('direction') != direction:
+                continue
+            if now_ts >= float(item.get('expires_at', 0) or 0):
+                current.remove(item)
+                _regime_watchlist_event('removed', item, 'expired after 4 hours')
+                changed = True
+                continue
+
+            candidate = candidate_map.get(item.get('symbol'), {
+                'symbol': item.get('symbol'),
+                'change': item.get('change'),
+                'volume_usd': item.get('volume_usd', 0),
+            })
+            try:
+                result = _score_regime_watch_candidate(
+                    candidate, direction, fng_value, btc_regime
+                )
+            except Exception as exc:
+                print(
+                    f"[RegimeWatchlist] recheck deferred {item.get('symbol')}: {exc}",
+                    flush=True,
+                )
+                continue
+
+            watch_price = float(item.get('watch_price', result['current_price']) or 0)
+            move_pct = (
+                (result['current_price'] - watch_price) / watch_price * 100
+                if watch_price > 0 else 0.0
+            )
+            item.update(result)
+            item['watch_price'] = watch_price
+            item['price_move_pct'] = round(move_pct, 4)
+            item['last_checked_at'] = now_il().isoformat(timespec='seconds')
+            changed = True
+
+            if abs(move_pct) > REGIME_WATCHLIST_MAX_MOVE_PCT:
+                current.remove(item)
+                _regime_watchlist_event(
+                    'removed',
+                    item,
+                    f'price moved {move_pct:+.2f}% from watch price',
+                )
+            elif result['score'] < REGIME_WATCHLIST_DROP_SCORE:
+                current.remove(item)
+                _regime_watchlist_event(
+                    'removed',
+                    item,
+                    f"technical score dropped below {REGIME_WATCHLIST_DROP_SCORE}",
+                )
+            elif regime_allowed and result['score'] >= REGIME_WATCHLIST_ENTRY_SCORE:
+                current.remove(item)
+                _regime_watchlist_event(
+                    'would-have-entered',
+                    item,
+                    f"regime now allows {direction}; score still >= "
+                    f"{REGIME_WATCHLIST_ENTRY_SCORE}",
+                )
+
+        # New entries are possible only when this direction is blocked solely
+        # by the regime-level gate and the independent technical score is high.
+        if not regime_allowed:
+            for symbol, candidate in candidate_map.items():
+                key = (symbol, direction)
+                if key in existing or any(
+                    row.get('symbol') == symbol and row.get('direction') == direction
+                    for row in current
+                ):
+                    continue
+                try:
+                    result = _score_regime_watch_candidate(
+                        candidate, direction, fng_value, btc_regime
+                    )
+                except Exception as exc:
+                    print(
+                        f"[RegimeWatchlist] candidate skipped {symbol}: {exc}",
+                        flush=True,
+                    )
+                    continue
+                if result['score'] < REGIME_WATCHLIST_ENTRY_SCORE:
+                    continue
+
+                item = {
+                    **result,
+                    'watch_price': result['current_price'],
+                    'price_move_pct': 0.0,
+                    'added_at': now_il().isoformat(timespec='seconds'),
+                    'added_at_ts': now_ts,
+                    'expires_at': now_ts + REGIME_WATCHLIST_DURATION_SEC,
+                    'last_checked_at': now_il().isoformat(timespec='seconds'),
+                    'regime_reason': regime_reason,
+                    'change': candidate.get('change'),
+                    'volume_usd': candidate.get('volume_usd', 0),
+                }
+                current.append(item)
+                existing[key] = item
+                _regime_watchlist_event(
+                    'entered',
+                    item,
+                    f"score >= {REGIME_WATCHLIST_ENTRY_SCORE}; blocked only by regime: "
+                    f"{regime_reason}",
+                )
+                changed = True
+
+        regime_watchlist_state['current'] = current
+        if changed:
+            _save_regime_watchlist()
+
+
 def _scan_batch_inner(candidates, direction, btc_regime='NEUTRAL', rejected_out=None):
     """
     עוזר לסריקה: מריץ score_symbol על רשימת מועמדים.
@@ -7013,43 +7302,50 @@ def _scan_batch_inner(candidates, direction, btc_regime='NEUTRAL', rejected_out=
         flush=True,
     )
 
-    # ── Market Regime Gate (FNG + BTC EMA20 4H) ──────────────────────────────
+    # ── Async OHLCV + OI Pre-fetch — needed by live scan and observation layer ─
+    global _ohlcv_cache, _oi_cache
+    _ohlcv_cache = {}
+    _oi_cache = {}
+    try:
+        asyncio.run(_prefetch_ohlcv(candidates, timeframes=['4h', '1h', '15m']))
+    except RuntimeError:
+        pass
+    except Exception as _ae:
+        print(f"[ASYNC] pre-fetch skipped (non-fatal): {_ae}")
+
+    # ── Market Regime Gate + observation-only watchlist ───────────────────────
     _mr_allowed, _mr_reason = is_direction_allowed(direction, context='Scan')
+    if _mr_allowed and direction == 'SHORT':
+        _parabolic, _rsi_1h, _ema200 = is_btc_parabolic_bull()
+        if _parabolic:
+            _mr_allowed = False
+            _mr_reason = (
+                f'BTC Parabolic Bull (EMA200 4H above + RSI1H={_rsi_1h:.1f}>65) '
+                f'— SHORTs חסומים'
+            )
+
+    _update_regime_watchlist(
+        candidates,
+        direction,
+        _mr_allowed,
+        _mr_reason,
+        fng_v_scan,
+        btc_regime,
+    )
     if not _mr_allowed:
-        print(f"[Scan] REGIME VETO {direction} ({len(candidates)} candidates) — {_mr_reason}",
-              flush=True)
+        print(
+            f"[Scan] REGIME VETO {direction} ({len(candidates)} candidates) — {_mr_reason}",
+            flush=True,
+        )
         for c in candidates:
             rejected_out.append({
-                'symbol': c['symbol'], 'direction': direction, 'best_score': 0,
+                'symbol': c['symbol'],
+                'direction': direction,
+                'best_score': 0,
                 'reason': _mr_reason,
                 'scores': {},
             })
         return 0
-
-    # ── BTC Compass Parabolic Bull Filter — EMA200(4H) + RSI(1H)>60 ────────────
-    if direction == 'SHORT':
-        _parabolic, _rsi_1h, _ema200 = is_btc_parabolic_bull()
-        if _parabolic:
-            print(f"BTC COMPASS VETO: PARABOLIC BULL — RSI1H={_rsi_1h:.1f}>65 above EMA200 → skipping {len(candidates)} SHORT candidates")
-            for c in candidates:
-                rejected_out.append({
-                    'symbol': c['symbol'], 'direction': direction, 'best_score': 0,
-                    'reason': f'BTC Parabolic Bull (EMA200 4H above + RSI1H={_rsi_1h:.1f}>65) — SHORTs חסומים',
-                    'scores': {},
-                })
-            return 0
-
-    # ── Async OHLCV + OI Pre-fetch — parallel fetch 4H+1H+15m + OI ─────────────
-    global _ohlcv_cache, _oi_cache
-    _ohlcv_cache = {}   # clear any stale cache from previous scan
-    _oi_cache    = {}   # clear stale OI data from previous scan
-    try:
-        asyncio.run(_prefetch_ohlcv(candidates, timeframes=['4h', '1h', '15m']))
-    except RuntimeError:
-        # Already in an event loop (shouldn't happen in scan thread, but safe fallback)
-        pass
-    except Exception as _ae:
-        print(f"[ASYNC] pre-fetch skipped (non-fatal): {_ae}")
 
     found = 0
     for candidate in candidates:

@@ -1,0 +1,55 @@
+Implement a "regime watchlist" as a LOG-ONLY feature. It must NOT open
+any trades on its own in this phase — logging and reporting only.
+
+GOAL: When a candidate scores high on technicals but is blocked purely
+by the regime gate (not by a weak technical score), track it across
+subsequent scans instead of discarding it, so we can later evaluate
+whether waiting for regime to flip would have caught good setups.
+
+PARAMETERS:
+- Entry threshold: candidate score >= 85 AND the ONLY reason it was
+  blocked/scored 0 is the regime gate (e.g. "LONG חסום — BTC מתחת
+  EMA20" / "SHORT חסום..."), not a weak technical score.
+- Watchlist duration: 4 hours from when a candidate first enters the
+  list (should align with roughly 4 scan cycles, since scans run
+  hourly).
+- Invalidation: on each subsequent scan, re-check the watchlisted
+  candidate. Remove it from the watchlist (before the 4-hour expiry)
+  if either:
+  (a) current price has moved more than 3% away from the price at
+      which it entered the watchlist, since the original technical
+      setup (FVG/OB/levels) is likely no longer valid, or
+  (b) its re-scored technical score (ignoring the regime gate) drops
+      meaningfully (define and report a reasonable threshold, e.g.
+      below 75).
+- "Graduation" condition: if, on a later scan within the 4-hour window,
+  the regime gate would now allow the trade's direction (e.g. BTC
+  crosses back above/below EMA20, or FNG moves out of the blocking
+  range) AND the candidate still scores >= 85 on that scan — log this
+  as a "would-have-entered" event. Do NOT actually open a trade for it
+  in this phase.
+
+OUTPUT REQUIREMENTS:
+1. Add a "📋 Watchlist" section to the existing /scanreport output,
+   listing current watchlisted candidates with: symbol, direction,
+   score, hours remaining, price move since watchlisted.
+2. Log every watchlist entry, removal (with reason: expired / price
+   moved / score dropped), and "would-have-entered" graduation event
+   to a persistent log (new file or existing audit log — your choice,
+   but it must survive bot restarts).
+3. Do NOT send a separate Telegram alert for entering the watchlist
+   (avoid notification noise). Only the /scanreport should show it.
+4. Do NOT open trades, place orders, or otherwise act on watchlist
+   graduation events in this phase — this is observation-only, to let
+   us evaluate over 1-2 weeks whether the concept finds real
+   opportunities before wiring it to actual trade execution.
+
+Keep this fully isolated from the existing regime gate, scoring, and
+trade-execution logic — it should not change which trades open today,
+only add a parallel observation layer.
+
+Follow the safe-deploy sequence: confirm clean working tree and note
+the commit hash, back up affected files, apply with a guarded script,
+run syntax check, show me the diff, wait for my explicit approval
+before committing. Do not publish without a separate explicit approval
+after that.
