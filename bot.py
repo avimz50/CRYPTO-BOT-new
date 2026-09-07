@@ -81,6 +81,57 @@ exchange_md = ccxt.bitget({
     'options': {'defaultType': 'swap'},
 })
 print("[BOOT] ccxt exchange OK.", flush=True)
+
+
+def _require_usdt_swap_symbol(symbol: str, ex=None) -> str:
+    """Canonicalize and verify a Bitget linear USDT perpetual; fail closed."""
+    canonical = canonical_swap_symbol(symbol)
+    market_exchange = ex or exchange
+    if not market_exchange.markets:
+        market_exchange.load_markets()
+    market = market_exchange.markets.get(canonical)
+    if not market:
+        raise ValueError(f'{canonical} is not listed on Bitget')
+    is_swap = market.get('type') == 'swap' or (
+        market.get('contract') is True and market.get('swap') is True
+    )
+    if not (
+        is_swap
+        and market.get('active') is not False
+        and str(market.get('settle') or '').upper() == 'USDT'
+        and str(market.get('quote') or '').upper() == 'USDT'
+        and market.get('linear') is not False
+    ):
+        raise ValueError(f'{canonical} is not an active linear Bitget USDT swap')
+    return market['symbol']
+
+
+def _log_swap_universe(ex=None) -> int:
+    """Startup invariant: report the exact contract universe the bot may trade."""
+    market_exchange = ex or exchange_md
+    if not market_exchange.markets:
+        market_exchange.load_markets()
+    swaps = [
+        m for m in market_exchange.markets.values()
+        if (m.get('type') == 'swap' or (m.get('contract') and m.get('swap')))
+        and m.get('active') is not False
+        and str(m.get('settle') or '').upper() == 'USDT'
+        and str(m.get('quote') or '').upper() == 'USDT'
+        and m.get('linear') is not False
+    ]
+    assert swaps, 'FATAL: Bitget returned zero active linear USDT swaps'
+    assert all(str(m.get('symbol', '')).endswith('/USDT:USDT') for m in swaps), (
+        'FATAL: non-canonical symbol found in Bitget USDT-swap universe'
+    )
+    print(
+        f"[BOOT] Market invariant OK — {len(swaps)} active Bitget "
+        f"linear USDT perpetual swaps; spot markets excluded.",
+        flush=True,
+    )
+    return len(swaps)
+
+
+_log_swap_universe(exchange_md)
 claude_gate.set_exchange(exchange)      # enrich gate signals with live market data
 claude_research.set_exchange(exchange)  # enrich research with live TA
 
@@ -238,7 +289,7 @@ def check_daily_circuit_breaker() -> bool:
 
 def get_sector(symbol: str) -> str:
     """מחזיר סקטור המטבע לפי SECTOR_MAP, או 'Other' אם לא ידוע."""
-    base = symbol.replace('/USDT', '').replace('USDT', '').upper()
+    base = canonical_swap_symbol(symbol).split('/', 1)[0]
     return SECTOR_MAP.get(base, 'Other')
 
 
@@ -1023,8 +1074,11 @@ def api_make_command():
         return flask_jsonify({'ok': False, 'error': 'unauthorized'}), 401
 
     command = data.get('command', '').lower().strip()
-    symbol_raw = data.get('symbol', '').upper().replace('USDT', '').strip()
-    symbol = f"{symbol_raw}/USDT" if symbol_raw and '/USDT' not in symbol_raw else symbol_raw
+    symbol_raw = data.get('symbol', '').upper().strip()
+    try:
+        symbol = canonical_swap_symbol(symbol_raw) if symbol_raw else ''
+    except ValueError:
+        symbol = ''
 
     # ── news_alert ──
     if command == 'news_alert':
@@ -1162,8 +1216,11 @@ def api_fng_settings_post():
 def api_close_trade():
     """סגירה ידנית מהירה — POST {"symbol":"BNB"} ללא אימות (internal only)."""
     data   = flask_request.get_json(force=True, silent=True) or {}
-    raw    = data.get('symbol', '').upper().replace('USDT', '').strip()
-    symbol = f"{raw}/USDT" if raw and '/USDT' not in raw else raw
+    raw = data.get('symbol', '').upper().strip()
+    try:
+        symbol = canonical_swap_symbol(raw)
+    except ValueError as exc:
+        return flask_jsonify({'ok': False, 'error': str(exc)}), 400
     if not symbol:
         return flask_jsonify({'ok': False, 'error': 'symbol required'}), 400
     with trades_lock:
@@ -1171,6 +1228,7 @@ def api_close_trade():
     if not trade:
         return flask_jsonify({'ok': False, 'error': f'{symbol} לא נמצא'}), 404
     try:
+        symbol    = _require_usdt_swap_symbol(symbol)
         price     = exchange.fetch_ticker(symbol)['last']
         entry     = trade['entry']
         _ps       = _remaining_notional(trade)
@@ -1456,6 +1514,19 @@ def load_active_trades():
         {'updated': None, 'count': 0, 'trades': []},
     )
     loaded = data.get('trades', []) if isinstance(data, dict) else []
+    normalized = []
+    for trade in loaded:
+        try:
+            migrated = dict(trade)
+            migrated['symbol'] = _require_usdt_swap_symbol(trade.get('symbol', ''))
+            normalized.append(migrated)
+        except Exception as exc:
+            print(
+                f"[BOOT] BLOCKED non-swap active trade "
+                f"{trade.get('symbol', '<missing>')}: {exc}",
+                flush=True,
+            )
+    loaded = normalized
     if loaded:
         with trades_lock:
             active_trades = loaded
@@ -1581,7 +1652,7 @@ def _fire_make_webhook(trade: dict):
     def _send():
         try:
             payload = {
-                "symbol":      trade.get('symbol', '').replace('/USDT', ''),
+                "symbol":      canonical_swap_symbol(trade.get('symbol', '')).split('/', 1)[0],
                 "direction":   trade.get('direction', 'LONG'),
                 "entry_price": trade.get('entry', 0),
                 "timestamp":   now_il().isoformat(timespec='seconds'),
@@ -1612,7 +1683,10 @@ def _entry_restraint_reason(trade: dict) -> str | None:
     # restart cannot accidentally clear the restraint.
     symbol_closes = [
         r for r in trade_audit_log
-        if r.get('symbol') == symbol and r.get('closed_at')
+        if (
+            r.get('closed_at')
+            and canonical_swap_symbol(r.get('symbol', '')) == symbol
+        )
     ]
     if symbol_closes:
         latest = max(symbol_closes, key=lambda r: r.get('closed_at', ''))
@@ -1658,6 +1732,7 @@ def _entry_restraint_reason(trade: dict) -> str | None:
 def _entry_spread_reason(symbol: str) -> str | None:
     """Rejects a market whose live bid/ask spread is too wide."""
     try:
+        symbol = _require_usdt_swap_symbol(symbol)
         ticker = exchange.fetch_ticker(symbol)
         bid = float(ticker.get('bid') or 0)
         ask = float(ticker.get('ask') or 0)
@@ -1682,7 +1757,12 @@ def place_order(trade: dict, margin: float = MARGIN) -> bool:
       • שומר active_trades ל-disk (save_active_trades)
     מחזיר True בהצלחה, False אם נחסם (כפילות / MAX_TRADES / יתרה).
     """
-    symbol = trade.get('symbol', '')
+    try:
+        symbol = _require_usdt_swap_symbol(trade.get('symbol', ''))
+        trade['symbol'] = symbol
+    except Exception as exc:
+        print(f"[place_order] 🚫 non-swap symbol blocked: {exc}", flush=True)
+        return False
     direction = trade.get('direction', 'LONG')
     allowed, reason = is_direction_allowed(direction, 'ValidationTrial')
     regime, _, _, _ = get_market_regime()
@@ -2047,6 +2127,7 @@ def wallet_status_text() -> str:
 
 
 def get_data(symbol, timeframe='1h', limit=250):
+    symbol = _require_usdt_swap_symbol(symbol)
     bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
     df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     return df
@@ -2076,7 +2157,13 @@ async def _get_async_exchange():
 
 async def _fetch_ohlcv_async(symbol: str, timeframe: str, limit: int = 250) -> pd.DataFrame:
     """Async wrapper around ccxt fetch_ohlcv."""
+    symbol = canonical_swap_symbol(symbol)
     ex   = await _get_async_exchange()
+    if not ex.markets:
+        await ex.load_markets()
+    market = ex.markets.get(symbol)
+    if not market or market.get('type') != 'swap' or str(market.get('settle')).upper() != 'USDT':
+        raise ValueError(f'non-USDT-swap OHLCV blocked: {symbol}')
     bars = await ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
     return pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
 
@@ -2086,6 +2173,7 @@ async def _fetch_oi_async(symbol: str) -> dict:
     Returns the raw ccxt OI dict (keys: openInterest, openInterestValue, ...)
     or an empty dict on failure — callers must handle missing keys gracefully.
     """
+    symbol = canonical_swap_symbol(symbol)
     ex = await _get_async_exchange()
     return await ex.fetch_open_interest(symbol)
 
@@ -2105,7 +2193,7 @@ async def _prefetch_ohlcv(candidates: list, timeframes: list = None):
     ohlcv_tasks = []
     ohlcv_keys  = []
     for c in candidates:
-        sym = c['symbol'] if isinstance(c, dict) else c
+        sym = canonical_swap_symbol(c['symbol'] if isinstance(c, dict) else c)
         for tf in timeframes:
             key = (sym, tf)
             if key not in _ohlcv_cache:
@@ -2116,7 +2204,7 @@ async def _prefetch_ohlcv(candidates: list, timeframes: list = None):
     oi_tasks = []
     oi_syms  = []
     for c in candidates:
-        sym = c['symbol'] if isinstance(c, dict) else c
+        sym = canonical_swap_symbol(c['symbol'] if isinstance(c, dict) else c)
         oi_tasks.append(_fetch_oi_async(sym))
         oi_syms.append(sym)
 
@@ -2418,9 +2506,16 @@ def get_hot_candidates():
         if not exchange_md.markets:
             exchange_md.load_markets()
         usdt_symbols = [
-            s for s, m in exchange_md.markets.items()
-            if s.endswith('/USDT') and m.get('active')
+            m['symbol'] for m in exchange_md.markets.values()
+            if (m.get('type') == 'swap' or (m.get('contract') and m.get('swap')))
+            and m.get('active') is not False
+            and str(m.get('settle') or '').upper() == 'USDT'
+            and str(m.get('quote') or '').upper() == 'USDT'
+            and m.get('linear') is not False
+            and str(m.get('symbol') or '').endswith('/USDT:USDT')
         ]
+        assert usdt_symbols, 'Bitget scan aborted: zero active linear USDT swaps'
+        assert len(usdt_symbols) == len(set(usdt_symbols)), 'duplicate swap symbols in scan universe'
         if VERBOSE_LOG:
             print(f"[Scan] Fetching {len(usdt_symbols)} USDT swap tickers...")
         tickers = exchange_md.fetch_tickers(usdt_symbols)
@@ -2451,7 +2546,8 @@ def get_hot_candidates():
             elif change_pct < 0:
                 losers.append(row)
 
-        print(f"[Scan] {len(usdt_symbols)} pairs → {len(gainers)}↑ gainers "
+        print(f"[Scan] SWAP-ONLY invariant OK: {len(usdt_symbols)} USDT perpetuals; "
+              f"0 spot markets | {len(gainers)}↑ gainers "
               f"{len(losers)}↓ losers ({low_vol} low-vol filtered)", flush=True)
 
         gainers.sort(key=lambda x: x['change_pct'], reverse=True)
@@ -2776,6 +2872,7 @@ def _pnl_on_half(dist_pct):
 def fetch_symbol_volume_usd(symbol: str) -> float:
     """מחזיר נפח מסחר 24h ($) עבור מטבע נתון. מחזיר 0 בשגיאה."""
     try:
+        symbol = _require_usdt_swap_symbol(symbol)
         ticker = exchange.fetch_ticker(symbol)
         return float(ticker.get('quoteVolume') or 0)
     except Exception as e:
@@ -2789,6 +2886,7 @@ def fetch_symbol_ticker_info(symbol: str) -> tuple:
     מחזיר (0, 0) בשגיאה. קריאה אחת לאחסון נפח + שינוי יחד.
     """
     try:
+        symbol = _require_usdt_swap_symbol(symbol)
         ticker = exchange.fetch_ticker(symbol)
         vol    = float(ticker.get('quoteVolume') or 0)
         chg    = float(ticker.get('percentage')  or 0)
@@ -2815,6 +2913,11 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
     SL=2% | TP1=2% (→ BE אוטומטי) | TP2=4% (RR 1:2).
     מחזיר True רק אם העסקה נרשמה בפועל בארנק וברשימת העסקאות הפעילות.
     """
+    try:
+        symbol = _require_usdt_swap_symbol(symbol)
+    except Exception as exc:
+        print(f"[SWING] non-swap symbol blocked: {exc}", flush=True)
+        return False
     # ── Daily Circuit Breaker ────────────────────────────────────────────────
     if check_daily_circuit_breaker():
         print(f"[SWING] ⛔ Circuit Breaker — לא פותחים {symbol} (הפסד יומי ≤ ${DAILY_LOSS_LIMIT})")
@@ -3044,9 +3147,10 @@ def _open_research_trade(
     if not (0 <= claude_score <= 100):
         print(f"[Research] ⛔ Score {claude_score} out of range — abort", flush=True)
         return False
-    symbol = str(symbol).strip().upper()
-    if not symbol.endswith("/USDT") or len(symbol) < 6:
-        print(f"[Research] ⛔ Bad symbol '{symbol}' — abort", flush=True)
+    try:
+        symbol = _require_usdt_swap_symbol(symbol)
+    except Exception as exc:
+        print(f"[Research] ⛔ Bad swap symbol '{symbol}': {exc} — abort", flush=True)
         return False
     reason   = str(reason).strip()[:200]
     key_risk = str(key_risk).strip()[:200]
@@ -3079,19 +3183,6 @@ def _open_research_trade(
         f"| FNG={_fng_now} — Claude evaluated macro independently",
         flush=True,
     )
-
-    # ── Verify symbol is an active Bitget perpetual market ────────────────────
-    try:
-        mkts = exchange.markets or exchange.load_markets()
-        if symbol not in mkts:
-            print(f"[Research] ⛔ {symbol} not in exchange markets — abort", flush=True)
-            return False
-        m = mkts[symbol]
-        if not (m.get('active', True) and m.get('quote') == 'USDT'):
-            print(f"[Research] ⛔ {symbol} not active USDT market — abort", flush=True)
-            return False
-    except Exception as _me:
-        print(f"[Research] ⚠️  Market check failed for {symbol}: {_me} — proceeding", flush=True)
 
     # ── Balance ───────────────────────────────────────────────────────────────
     if wallet.get('balance', STARTING_BALANCE) < MARGIN:
@@ -3339,7 +3430,14 @@ def track_trades():
     # Replaces N sequential fetch_ticker() calls (2-3s each) with a single
     # fetch_tickers() batch request — drastically shorter loop duration and
     # far less time where trades_lock branches can block Flask/Telegram threads.
-    _tracked_syms   = list({t['symbol'] for t in active_trades[:]})
+    _tracked_syms = []
+    for _trade in active_trades[:]:
+        try:
+            _trade['symbol'] = _require_usdt_swap_symbol(_trade['symbol'])
+            _tracked_syms.append(_trade['symbol'])
+        except Exception as _invalid:
+            print(f"[TRACK] BLOCKED non-swap trade {_trade.get('symbol')}: {_invalid}", flush=True)
+    _tracked_syms = list(set(_tracked_syms))
     _batch_prices: dict[str, float] = {}
     if _tracked_syms:
         try:
@@ -4319,7 +4417,7 @@ def track_trades():
 
 def check_api_connection():
     try:
-        exchange.fetch_ticker('BTC/USDT')
+        exchange.fetch_ticker(canonical_swap_symbol('BTC'))
         return True
     except Exception:
         return False
@@ -4892,7 +4990,7 @@ def handle_update(message):
             return
 
         raw_sym = parts[1].upper()
-        symbol  = raw_sym if '/' in raw_sym else f"{raw_sym}/USDT"
+        symbol = canonical_swap_symbol(raw_sym)
 
         # מציאת העסקה
         trade = next((t for t in active_trades if t['symbol'] == symbol), None)
@@ -4990,7 +5088,7 @@ def handle_close(message):
             return
 
         raw_sym = parts[1].upper()
-        symbol  = raw_sym if '/' in raw_sym else f"{raw_sym}/USDT"
+        symbol = _require_usdt_swap_symbol(raw_sym)
 
         trade = next((t for t in active_trades if t['symbol'] == symbol), None)
         if not trade:
@@ -5041,7 +5139,7 @@ def handle_close_button(call):
     if not _is_authorized(call.from_user.id):
         return
     try:
-        symbol = call.data[len('close_'):]  # e.g. 'BTC/USDT'
+        symbol = canonical_swap_symbol(call.data[len('close_'):])
         bot.answer_callback_query(call.id, f"🔄 סוגר {symbol}...")
 
         trade = next((t for t in active_trades if t['symbol'] == symbol), None)
@@ -5127,7 +5225,7 @@ def handle_addtrade(message):
             return
 
         raw_sym   = parts[1].upper()
-        symbol    = raw_sym if '/' in raw_sym else f"{raw_sym}/USDT"
+        symbol = _require_usdt_swap_symbol(raw_sym)
         direction = parts[2].upper() if len(parts) >= 3 and parts[2].upper() in ('LONG', 'SHORT') else 'LONG'
 
         # מחיר כניסה — ידני או חי
@@ -5641,7 +5739,7 @@ def _register_sol_trade(price: float, sl: float, tp: float, rsi: float | None):
     משתמש בפרמטרי SL/TP של Evening SOL Strategy (3.5% / 5%).
     מדלג אם SOL/USDT כבר בעסקאות פעילות.
     """
-    sym = 'SOL/USDT'
+    sym = 'SOL/USDT:USDT'
     with trades_lock:
         if any(t['symbol'] == sym for t in active_trades):
             send_msg("ℹ️ *SOL/USDT* כבר קיים בעסקאות פעילות — לא נפתחת עסקה כפולה")
@@ -5863,7 +5961,7 @@ def handle_fillslots(message):
     # מטבעות ספציפיים אם צוינו, אחרת TOP10
     if len(parts) > 1:
         requested = [p.upper() for p in parts[1:]]
-        symbols   = [f"{s}/USDT" if '/USDT' not in s else s for s in requested]
+        symbols = [canonical_swap_symbol(s) for s in requested]
     else:
         symbols = list(TOP10_SYMBOLS)
 
@@ -6086,7 +6184,11 @@ def handle_watch(message):
         send_msg("⚠️ כיוון חייב להיות LONG או SHORT\n_דוגמה: /watch SOL LONG_")
         return
 
-    symbol = raw_symbol + '/USDT' if '/' not in raw_symbol else raw_symbol
+    try:
+        symbol = _require_usdt_swap_symbol(raw_symbol)
+    except Exception as exc:
+        send_msg(f"⚠️ חוזה USDT perpetual לא תקין: `{str(exc)[:80]}`")
+        return
 
     # רישום ב-watch_list
     entry = {
@@ -6131,7 +6233,10 @@ def handle_unwatch(message):
         return
 
     raw_symbol = parts[1].upper()
-    symbol = raw_symbol + '/USDT' if '/' not in raw_symbol else raw_symbol
+    try:
+        symbol = canonical_swap_symbol(raw_symbol)
+    except ValueError:
+        symbol = raw_symbol
 
     with watch_lock:
         removed = watch_list.pop(symbol, None)
@@ -6556,11 +6661,11 @@ def handle_major(message):
     lines = []
     for symbol in MAJOR_WATCH_COINS:
         try:
-            ticker_name = symbol.replace('/USDT', '')
+            ticker_name = symbol.split('/', 1)[0]
             coin_icon   = MAJOR_WATCH_ICONS.get(ticker_name, '🔹')
             breakout, price_1h, h4_high, rsi = _coin_1h_breakout_above_4h_high(symbol)
 
-            if symbol == 'BTC/USDT':
+            if symbol == 'BTC/USDT:USDT':
                 try:
                     df_btc4h = get_data('BTC/USDT', timeframe='4h', limit=60)
                     ema50    = ta.ema(df_btc4h['close'], length=50)
@@ -6947,7 +7052,19 @@ def _scan_batch_inner(candidates, direction, btc_regime='NEUTRAL', rejected_out=
         at_capacity = (len(active_trades) >= MAX_TRADES)
         if at_capacity:
             print(f"[Slots] 🔒 {len(active_trades)}/{MAX_TRADES} slots full — scanning for priority comparison")
-        symbol = candidate['symbol']
+        try:
+            symbol = _require_usdt_swap_symbol(candidate['symbol'])
+            candidate['symbol'] = symbol
+        except Exception as exc:
+            rejected_out.append({
+                'symbol': candidate.get('symbol', ''),
+                'direction': direction,
+                'best_score': 0,
+                'reason': f'Non-USDT-swap market blocked: {exc}',
+                'scores': {},
+            })
+            print(f"[Scan] BLOCKED non-swap candidate: {exc}", flush=True)
+            continue
 
         # ── Slow-Movers Blacklist — low-momentum coins skipped ──
         if symbol in SLOW_MOVERS:
@@ -7224,6 +7341,7 @@ def _run_watch_check(symbol: str, entry: dict, silent: bool = False) -> int:
     מחזיר את הציון שנמצא (0 אם שגיאה).
     silent=True → לא שולח הודעה אם אין שינוי משמעותי (רק אם ציון עלה/ירד ≥5)
     """
+    symbol = _require_usdt_swap_symbol(symbol)
     direction    = entry.get('direction', 'LONG')
     last_score   = entry.get('last_score', 0)
     try:
@@ -7792,7 +7910,19 @@ def scalp_scan_loop():
             btc_above_ema = _btc_above_ema20_15m()
             btc_compass   = "✅ BTC מעל EMA20" if btc_above_ema else "⛔ BTC מתחת EMA20"
             print(f"[Scalp] FNG={fng_v} | {btc_compass} — scanning...")
-            tickers = exchange.fetch_tickers()
+            if not exchange.markets:
+                exchange.load_markets()
+            _scalp_swaps = [
+                m['symbol'] for m in exchange.markets.values()
+                if (m.get('type') == 'swap' or (m.get('contract') and m.get('swap')))
+                and m.get('active') is not False
+                and str(m.get('settle') or '').upper() == 'USDT'
+                and str(m.get('quote') or '').upper() == 'USDT'
+                and m.get('linear') is not False
+                and str(m.get('symbol') or '').endswith('/USDT:USDT')
+            ]
+            assert _scalp_swaps, 'Scalp scan aborted: zero active linear USDT swaps'
+            tickers = exchange.fetch_tickers(_scalp_swaps)
 
             # ── SCALP-SHORT: Bubble Watch — עלה >30% ב-24h ───────────────────────
             # ₿ BTC Compass: שורט רק כשBTC יורד/נייטרל — לא כשBTC מטפס
@@ -7803,7 +7933,7 @@ def scalp_scan_loop():
                     [
                         {'symbol': s, 'change_pct': t.get('percentage', 0), 'price': t.get('last', 0)}
                         for s, t in tickers.items()
-                        if s.endswith('/USDT')
+                        if s in _scalp_swaps
                         and t.get('percentage', 0) >= SCALP_BUBBLE_MIN_PCT
                         and t.get('last', 0) > 0
                         and (t.get('quoteVolume') or 0) >= 1_000_000
@@ -7837,7 +7967,7 @@ def scalp_scan_loop():
                 print("[Scalp] ₿ LONG skipped — BTC bearish compass (no longs vs trend)")
             else:
                 for sym, ticker in tickers.items():
-                    if not sym.endswith('/USDT'):
+                    if sym not in _scalp_swaps:
                         continue
                     with trades_lock:
                         if sum(1 for t in active_trades if t.get('scalp')) >= MAX_SCALP_TRADES:
@@ -7991,7 +8121,7 @@ RSI_VETO_BREAKOUT_SHORT       = 60   # RSI מינימום ל-SHORT בפריצה 
 RSI_VETO_BREAKOUT_SHORT_BEAR_MIN = 50  # RSI מינימום ב-BEAR — מתחת = oversold (INJ/XRP audit), לא שורטים
 RSI_VETO_BREAKOUT_SHORT_BEAR_MAX = 65  # RSI מקסימום ב-BEAR — מעל = recovery, לא שורטים
 # BREAKOUT_FNG_REDUCED_MARGIN — REMOVED: margin is always $50, no dynamic reduction
-MAJOR_PRIORITY_SYMBOLS        = {'BTC/USDT', 'ETH/USDT'}  # תמיד ראשונים בתור המועמדים
+MAJOR_PRIORITY_SYMBOLS        = {'BTC/USDT:USDT', 'ETH/USDT:USDT'}  # תמיד ראשונים בתור המועמדים
 
 
 def _coin_breakout_full(symbol: str, direction: str = 'LONG') -> tuple[bool, float, float, float | None, float]:
@@ -8722,11 +8852,11 @@ def major_watch_loop():
 
             for symbol in MAJOR_WATCH_COINS:
                 try:
-                    ticker_name = symbol.replace('/USDT', '')
+                    ticker_name = symbol.split('/', 1)[0]
                     breakout, price_1h, h4_high, rsi = _coin_1h_breakout_above_4h_high(symbol)
 
                     # BTC — פילטר עצמי (EMA50 4H במקום EMA20 15m)
-                    if symbol == 'BTC/USDT':
+                    if symbol == 'BTC/USDT:USDT':
                         try:
                             df_btc4h = get_data('BTC/USDT', timeframe='4h', limit=60)
                             ema50    = ta.ema(df_btc4h['close'], length=50)
@@ -8803,7 +8933,7 @@ def major_watch_loop():
                     if rsi is not None:
                         rsi_tag = "🔥 Overbought" if rsi > 70 else ("❄️ Oversold" if rsi < 30 else "")
                         msg += f"🔍 RSI 4H: `{rsi}` {rsi_tag}\n"
-                    if symbol != 'BTC/USDT':
+                    if symbol != 'BTC/USDT:USDT':
                         msg += f"₿  BTC 15m EMA20: {'✅ מעל' if btc_above_ema else '⛔ מתחת'}\n"
                     else:
                         msg += f"₿  BTC EMA50 4H: {trend_label}\n"

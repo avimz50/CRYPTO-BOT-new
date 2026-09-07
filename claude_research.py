@@ -232,6 +232,19 @@ def _tool_get_technical_data(symbol: str) -> str:
     if _exchange is None:
         return "Exchange not connected."
     try:
+        raw = str(symbol or '').strip().upper()
+        if raw.endswith(':USDT'):
+            raw = raw[:-5]
+        if '/' not in raw:
+            raw = f'{raw}/USDT'
+        if not raw.endswith('/USDT'):
+            return f"Technical data error for {symbol}: not a USDT market"
+        symbol = f'{raw}:USDT'
+        if not _exchange.markets:
+            _exchange.load_markets()
+        market = _exchange.markets.get(symbol)
+        if not market or market.get('type') != 'swap' or str(market.get('settle')).upper() != 'USDT':
+            return f"Technical data error for {symbol}: not an active Bitget USDT swap"
         ohlcv = _exchange.fetch_ohlcv(symbol, '4h', limit=60)
         if not ohlcv or len(ohlcv) < 15:
             return f"Insufficient OHLCV data for {symbol}."
@@ -473,6 +486,17 @@ def _record_recommendation(symbol, direction, score, reason, key_risk, executed)
     price = None
     try:
         if _exchange is not None:
+            raw = str(symbol or '').strip().upper()
+            if raw.endswith(':USDT'):
+                raw = raw[:-5]
+            if '/' not in raw:
+                raw = f'{raw}/USDT'
+            symbol = f'{raw}:USDT'
+            if not _exchange.markets:
+                _exchange.load_markets()
+            market = _exchange.markets.get(symbol)
+            if not market or market.get('type') != 'swap' or str(market.get('settle')).upper() != 'USDT':
+                raise ValueError(f'not an active Bitget USDT swap: {symbol}')
             price = float(_exchange.fetch_ticker(symbol)['last'])
     except Exception as _pe:
         print(f"[Research] price fetch failed for {symbol}: {_pe}", flush=True)
@@ -594,6 +618,8 @@ def run_claude_research(
                 if block.name == "get_technical_data" and result_ok:
                     # Result first line: "Symbol: XYZ/USDT  |  Price: …"
                     sym = str(block.input.get("symbol", "")).strip().upper()
+                    if sym.endswith(':USDT'):
+                        sym = sym[:-5]
                     sym = sym if "/" in sym else f"{sym}/USDT"
                     if _VALID_SYMBOL_RE.match(sym):
                         ta_evidence.add(sym)

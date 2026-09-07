@@ -190,30 +190,52 @@ MOMENTUM_EMA_SLOW      = 50
 MOMENTUM_MIN_VOL_SURGE = 2.0    # 15m candle volume > 2.0× 20-bar average
 VWAP_TIMEFRAME         = '1h'   # Timeframe used for VWAP calculation
 
+def canonical_swap_symbol(symbol: str) -> str:
+    """Return CCXT's canonical Bitget linear USDT-swap symbol."""
+    raw = str(symbol or '').strip().upper()
+    if not raw:
+        raise ValueError('empty symbol')
+    if raw.endswith(':USDT'):
+        base_pair = raw[:-5]
+    else:
+        base_pair = raw
+    if '/' not in base_pair:
+        base_pair = f'{base_pair}/USDT'
+    base, quote = base_pair.split('/', 1)
+    if not base or quote != 'USDT':
+        raise ValueError(f'not a USDT market: {symbol!r}')
+    return f'{base}/USDT:USDT'
+
+
+def display_symbol(symbol: str) -> str:
+    """Human-facing pair without CCXT's settlement suffix."""
+    return canonical_swap_symbol(symbol).split(':', 1)[0]
+
+
 # ── Slow-Movers Blacklist ──────────────────────────────────────────────────────
-SLOW_MOVERS = {'TRX/USDT', 'ADA/USDT', 'DOGE/USDT',   # DOGE: 4/4 MaxDuration הפסדים
-               'BNB/USDT', 'SKYAI/USDT'}              # BNB: 4/5 SHORT losses; SKYAI: 2/3 FastLoss
+SLOW_MOVERS = {'TRX/USDT:USDT', 'ADA/USDT:USDT', 'DOGE/USDT:USDT',   # DOGE: 4/4 MaxDuration הפסדים
+               'BNB/USDT:USDT', 'SKYAI/USDT:USDT'}              # BNB: 4/5 SHORT losses; SKYAI: 2/3 FastLoss
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 VERBOSE_LOG = False
 
 # ── Symbol Lists ──────────────────────────────────────────────────────────────
-ENERGY_GEO = ['POWR/USDT', 'HNT/USDT', 'WLD/USDT']
+ENERGY_GEO = ['POWR/USDT:USDT', 'WLD/USDT:USDT']
 
 TOP10_SYMBOLS = [
-    'BTC/USDT', 'ETH/USDT',
-    'BNB/USDT', 'SOL/USDT', 'XRP/USDT', 'ADA/USDT',
-    'DOGE/USDT', 'AVAX/USDT', 'DOT/USDT', 'LINK/USDT', 'TRX/USDT',
-    'ATOM/USDT', 'NEAR/USDT', 'APT/USDT', 'SUI/USDT', 'ARB/USDT',
-    'OP/USDT',   'INJ/USDT',
-    'FET/USDT', 'RENDER/USDT', 'ONDO/USDT',
+    'BTC/USDT:USDT', 'ETH/USDT:USDT',
+    'BNB/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT', 'ADA/USDT:USDT',
+    'DOGE/USDT:USDT', 'AVAX/USDT:USDT', 'DOT/USDT:USDT', 'LINK/USDT:USDT', 'TRX/USDT:USDT',
+    'ATOM/USDT:USDT', 'NEAR/USDT:USDT', 'APT/USDT:USDT', 'SUI/USDT:USDT', 'ARB/USDT:USDT',
+    'OP/USDT:USDT',   'INJ/USDT:USDT',
+    'FET/USDT:USDT', 'RENDER/USDT:USDT', 'ONDO/USDT:USDT',
 ]
 
-SECTOR_PRIORITY_SYMBOLS = {'FET/USDT', 'RENDER/USDT', 'ONDO/USDT'}
+SECTOR_PRIORITY_SYMBOLS = {'FET/USDT:USDT', 'RENDER/USDT:USDT', 'ONDO/USDT:USDT'}
 
 MAJOR_WATCH_COINS = [
-    'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'XRP/USDT',
-    'SOL/USDT', 'ADA/USDT', 'AVAX/USDT', 'DOGE/USDT',
+    'BTC/USDT:USDT', 'ETH/USDT:USDT', 'BNB/USDT:USDT', 'XRP/USDT:USDT',
+    'SOL/USDT:USDT', 'ADA/USDT:USDT', 'AVAX/USDT:USDT', 'DOGE/USDT:USDT',
 ]
 MAJOR_WATCH_ICONS = {
     'BTC': '₿', 'ETH': '🔷', 'BNB': '🟡', 'XRP': '🔵',
