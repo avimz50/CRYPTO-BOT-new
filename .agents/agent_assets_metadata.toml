@@ -11,33 +11,53 @@ id = "egCt1p49VbgCya_yQB0a-"
 uri = "file://שינויים_בבוט.txt"
 type = "text"
 title = "שינויים בבוט — תבניות נרות יפניים"
+logical_id = "156c8df5-2662-4ee8-a6c0-d28a1e443851"
 
 [[outputs]]
 id = "eoRwqZJMm0-9iXdbzf5qY"
 uri = "file://exports/bot_export.txt"
 type = "text"
 title = "bot.py — Trading Bot Source Code"
+logical_id = "697333d0-7211-4867-8acb-ec542a6957d1"
 
 [[outputs]]
 id = "oUqJbOMarw6KyWPDZJvJm"
 uri = "file://BOT_PARAMETERS.md"
 type = "text"
 title = "Adaptive Sniper — פרמטרים מלאים"
+logical_id = "c38e2c23-7066-442c-982b-3dda22d87bbd"
 
 [[outputs]]
 id = "bSngI43lMKK7WVnuNaMnM"
 uri = "file://bot_architecture_summary.md"
 type = "text"
 title = "Adaptive Sniper Bot — Technical Architecture Summary"
+logical_id = "e38cb0ca-c1c3-4845-aa96-fdae59f05e87"
 
 [[outputs]]
 id = "7cZibxQjHJ2SWrI89I25J"
 uri = "file://trade_report_today.csv"
 type = "table"
 title = "דוח עסקאות — 14 אפריל 2026"
+logical_id = "1dacbb32-db58-479f-91f2-d4ac372b411e"
 
 [[outputs]]
 id = "qSH85TJFdd4Lcj7x0H_vS"
 uri = "file://trading_rules_summary.md"
 type = "text"
 title = "Trading Rules Summary"
+logical_id = "6b486afa-436e-4061-9ec0-14e5aba0b5f1"
+
+[[outputs]]
+id = "UjCKiVjgvRS7P70BWACWT"
+uri = "file://reports/trades_summary_2026-09-06.xlsx"
+type = "table"
+title = "סיכום עסקאות — 6 בספטמבר 2026"
+description = "קובץ Excel הכולל 24 עסקאות שנסגרו אתמול, דף סיכום, כל נתוני העסקאות והנתונים המקוריים. הרווח הנטו הכולל: $8.13."
+logical_id = "1982dd23-db72-4ae4-8166-7e31c7e282a4"
+content_hash = "sha256:abea5f93d3d92262709c0ee66b3f82836c039dd407ceb89f5e61b796ca4eb29d"
+size = 19111
+mtime_ms = 1788758364489
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:95de2b83-78fc-4e84-b223-d602409dd064/1982dd23-db72-4ae4-8166-7e31c7e282a4/1519aad8-f942-4cb1-a8bb-4703de5b6278"
+storage_version_token = "1788758370198734"
+content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
