@@ -136,3 +136,4 @@ timestamp,symbol,side,entry_price,exit_price,pnl_usd,exit_reason
 2026-08-22 10:18:34,POL/USDT,LONG,0.10463,0.10422,-2.56,FastLoss
 2026-08-22 12:18:36,LIT/USDT,LONG,3.241,3.226,-2.91,FastLoss
 2026-09-06 17:49:26,FET/USDT,LONG,0.1699,0.17,-0.31,MaxDuration
+2026-09-07 05:46:58,AVAX/USDT:USDT,LONG,7.96,7.921,-3.05,FastLoss
