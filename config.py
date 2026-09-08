@@ -35,7 +35,7 @@ POSITION_SIZE = MARGIN * LEVERAGE  # $500 controlled
 # Estimated Bitget USDT perpetual taker fee. This is an explicit paper-trading
 # assumption, not an exchange-reported account fee.
 TAKER_FEE_RATE = 0.0006          # 0.06% per filled side
-VALIDATION_TRIAL_TARGET = 100
+VALIDATION_TRIAL_TARGET = 200
 VALIDATION_TRIAL_ENABLED = True
 VALIDATION_STRONG_LONG_MIN_SCORE = 85
 

@@ -1463,10 +1463,22 @@ def _load_validation_trial():
     global validation_trial
     loaded = state_store.load_state('validation_trial', VALIDATION_TRIAL_FILE, _trial_default())
     validation_trial = loaded if isinstance(loaded, dict) else _trial_default()
-    validation_trial.setdefault('target', VALIDATION_TRIAL_TARGET)
+    # Keep the existing ledger, but let a configured target extension continue
+    # the same validation run instead of remaining capped at its persisted value.
+    try:
+        persisted_target = int(validation_trial.get('target', 0) or 0)
+    except (TypeError, ValueError):
+        persisted_target = 0
+    validation_trial['target'] = max(
+        persisted_target,
+        VALIDATION_TRIAL_TARGET,
+    )
     validation_trial.setdefault('status', 'active')
     validation_trial.setdefault('id', validation_trial.get('started_at', now_il().isoformat(timespec='seconds')))
     validation_trial.setdefault('trades', [])
+    if len(validation_trial['trades']) < validation_trial['target']:
+        validation_trial['status'] = 'active'
+        validation_trial['completed_at'] = None
     _save_validation_trial()
     print(f"[ValidationTrial] loaded: {len(validation_trial['trades'])}/{validation_trial['target']} trades", flush=True)
 
@@ -4149,10 +4161,31 @@ def track_trades():
                 # Trailing activation and Greed Early BE must run first. If either
                 # protection exists, let its stop manage the trade instead of
                 # closing it by age on this pass or a later one.
+                # Resolve TP1 (including a wick touch) before MaxDuration so a
+                # valid target hit on the same monitor pass is not discarded.
+                _tp1_check_price = current_price
+                if not trade.get('tp1_triggered'):
+                    try:
+                        _wicks = exchange.fetch_ohlcv(sym, '1m', limit=3)
+                        for _wc in (_wicks[-1], _wicks[-2]) if len(_wicks) >= 2 else (_wicks[-1],):
+                            _wh = _wc[2]
+                            _wl = _wc[3]
+                            if direction == 'LONG' and _wh >= trade['tp1']:
+                                _tp1_check_price = trade['tp1']
+                                print(f"  [WickTP1] {sym} LONG wick high={_wh:.6g} ≥ TP1={trade['tp1']:.6g} → TP1 מופעל", flush=True)
+                                break
+                            elif direction == 'SHORT' and _wl <= trade['tp1']:
+                                _tp1_check_price = trade['tp1']
+                                print(f"  [WickTP1] {sym} SHORT wick low={_wl:.6g} ≤ TP1={trade['tp1']:.6g} → TP1 מופעל", flush=True)
+                                break
+                    except Exception:
+                        pass  # fallback to current price
+
                 if (not trade.get('scalp')
                         and not trade.get('cliff')
                         and not trade.get('be_triggered')
-                        and not trade.get('trailing_sl')):
+                        and not trade.get('trailing_sl')
+                        and not tp1_hit(_tp1_check_price)):
                     try:
                         _md_opened  = datetime.fromisoformat(trade.get('opened_at', now_il().isoformat()))
                         _md_elapsed = (now_il() - _md_opened).total_seconds() / 60
@@ -4222,8 +4255,12 @@ def track_trades():
                     if peak_profit_pct >= PARTIAL_25_TRIGGER and drop_from_peak >= PARTIAL_25_DROP:
                         quarter_pos    = round(pos_size * 0.25, 2)
                         quarter_margin = round(trade.get('margin', MARGIN) * 0.25, 2)
-                        dist_pct       = abs(current_price - entry) / entry * 100
-                        partial_pnl    = round(quarter_pos * dist_pct / 100, 2)
+                        partial_return_pct = (
+                            (current_price - entry) / entry * 100
+                            if direction == 'LONG'
+                            else (entry - current_price) / entry * 100
+                        )
+                        partial_pnl = round(quarter_pos * partial_return_pct / 100, 2)
                         trade['partial_25_triggered'] = True
                         trade['pos_size'] = round(pos_size - quarter_pos, 2)
                         trade['margin']   = round(trade.get('margin', MARGIN) - quarter_margin, 2)
@@ -4248,36 +4285,23 @@ def track_trades():
                 # 2. TP1 — סגור 75%, הפעל Trailing על 25% נותרים
                 # Wick Detection: בדוק High/Low של נר 1m האחרון —
                 # המוניטור רץ כל 60s ועלול להחמיץ שיא שהגיע ל-TP1 בין בדיקות
-                _tp1_check_price = current_price
-                if not trade.get('tp1_triggered'):
-                    try:
-                        _wicks = exchange.fetch_ohlcv(sym, '1m', limit=3)
-                        # בודק 2 נרות אחרונים — מוניטור רץ כל 60s, שיא יכול להיות בנר הקודם
-                        for _wc in (_wicks[-1], _wicks[-2]) if len(_wicks) >= 2 else (_wicks[-1],):
-                            _wh = _wc[2]  # high
-                            _wl = _wc[3]  # low
-                            if direction == 'LONG' and _wh >= trade['tp1']:
-                                _tp1_check_price = trade['tp1']
-                                print(f"  [WickTP1] {sym} LONG wick high={_wh:.6g} ≥ TP1={trade['tp1']:.6g} → TP1 מופעל", flush=True)
-                                break
-                            elif direction == 'SHORT' and _wl <= trade['tp1']:
-                                _tp1_check_price = trade['tp1']
-                                print(f"  [WickTP1] {sym} SHORT wick low={_wl:.6g} ≤ TP1={trade['tp1']:.6g} → TP1 מופעל", flush=True)
-                                break
-                    except Exception as _wick_e:
-                        pass  # fallback שקט — wick detection הוא שיפור, לא חובה
                 if tp1_hit(_tp1_check_price):
-                    dist_pct  = abs(current_price - entry) / entry * 100
-                    tp1_pnl   = round(tp1_close * dist_pct / 100, 2)
+                    tp1_fill_price = _tp1_check_price
+                    tp1_return_pct = (
+                        (tp1_fill_price - entry) / entry * 100
+                        if direction == 'LONG'
+                        else (entry - tp1_fill_price) / entry * 100
+                    )
+                    tp1_pnl   = round(tp1_close * tp1_return_pct / 100, 2)
                     tp1_pct_r = round(tp1_pnl / MARGIN * 100, 1)
                     trade['tp1_triggered'] = True
                     trade['tp1_pnl']       = tp1_pnl
                     trade['phase']         = 'trailing'
-                    trade['peak_price']    = current_price
+                    trade['peak_price']    = tp1_fill_price
                     if direction == 'LONG':
-                        trade['trailing_sl'] = current_price * 0.98
+                        trade['trailing_sl'] = tp1_fill_price * 0.98
                     else:
-                        trade['trailing_sl'] = current_price * 1.02
+                        trade['trailing_sl'] = tp1_fill_price * 1.02
                     add_daily_pnl(tp1_pnl)
                     tp1_fee = _record_exit_leg(trade, tp1_pnl, tp1_close)
                     # 75% is a real filled exit. Credit its gross P&L now while
@@ -4289,7 +4313,7 @@ def track_trades():
                     trade['be_triggered'] = True
                     send_msg(
                         f"🎯 *TP1 הושג — {sym} · {trade_tf}!*\n"
-                        f"מחיר: `{current_price:.6g}` | {direction} | {tbadge}\n"
+                        f"מחיר ביצוע: `{tp1_fill_price:.6g}` | {direction} | {tbadge}\n"
                         f"75% נסגרו · ברוטו: *+${tp1_pnl}* | עמלה: `${tp1_fee:.2f}`\n"
                         f"🔒 *SL הועבר ל-BE אוטומטית!* `{entry:.6g}` — הון מוגן\n"
                         f"📍 Trailing SL: `{trade['trailing_sl']:.6g}` | שאר 25% ממשיכים ל-TP2\n"
