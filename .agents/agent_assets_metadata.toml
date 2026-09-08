@@ -61,3 +61,17 @@ mtime_ms = 1788758364489
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:95de2b83-78fc-4e84-b223-d602409dd064/1982dd23-db72-4ae4-8166-7e31c7e282a4/1519aad8-f942-4cb1-a8bb-4703de5b6278"
 storage_version_token = "1788758370198734"
 content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+[[outputs]]
+id = "EUgLrmGSt3TYx5FT7inTm"
+uri = "file://audit_report.md"
+type = "text"
+title = "Technical Trading System Audit"
+description = "Complete codebase audit of dependencies, indicators, trading logic, pre-trade filters, risk management, file/function inventory, and institutional-grade gaps."
+logical_id = "a0a55637-d1ed-45b4-a270-74cf8dc69335"
+content_hash = "sha256:495f701df80b3003ba75358d94fcef1f7300b5191cdbd6b73c9ea00259ae07a1"
+size = 27796
+mtime_ms = 1788901076726
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:95de2b83-78fc-4e84-b223-d602409dd064/a0a55637-d1ed-45b4-a270-74cf8dc69335/7402e9bf-48e7-4dea-9666-f3905cb498e9"
+storage_version_token = "1788901088174160"
+content_type = "text/markdown"
