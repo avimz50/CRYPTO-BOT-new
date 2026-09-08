@@ -1933,8 +1933,15 @@ def place_order(trade: dict, margin: float = MARGIN) -> bool:
 
     profitability_reason = _entry_profitability_reason(trade, margin)
     if profitability_reason:
+        expected_net = trade.get('expected_tp1_net_usd')
+        net_summary = (
+            f" | TP1 net=${expected_net:.2f} vs minimum=${MIN_EXPECTED_PROFIT_USD:.2f}"
+            if isinstance(expected_net, (int, float))
+            else f" | minimum TP1 net=${MIN_EXPECTED_PROFIT_USD:.2f}"
+        )
         print(
-            f"[place_order] 💰 {symbol} {direction} skipped — {profitability_reason}",
+            f"[place_order] 💰 {symbol} {direction} skipped — "
+            f"{profitability_reason}{net_summary}",
             flush=True,
         )
         return False
@@ -1985,6 +1992,9 @@ def place_order(trade: dict, margin: float = MARGIN) -> bool:
     print(
         f"[place_order] ✅ {trade['symbol']} {trade['direction']} "
         f"@ {trade.get('entry', 0):.6g} | margin=${margin:.0f} "
+        f"| TP1 net=${trade.get('expected_tp1_net_usd', 0):.2f} "
+        f"vs minimum=${MIN_EXPECTED_PROFIT_USD:.2f} "
+        f"| RR={trade.get('entry_risk_reward', 0):.2f} "
         f"| available=${available:.2f} locked=${locked:.2f} equity=${equity:.2f}"
     )
     return True
