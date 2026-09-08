@@ -2,6 +2,7 @@ import os
 import io
 import json
 import csv
+import math
 import signal
 import sys
 import claude_gate
@@ -1822,6 +1823,79 @@ def _entry_spread_reason(symbol: str) -> str | None:
     return None
 
 
+def _entry_profitability_reason(trade: dict, margin: float) -> str | None:
+    """Reject entries whose TP1 economics or final-target RR are insufficient."""
+    symbol = trade.get('symbol', 'UNKNOWN')
+    direction = str(trade.get('direction', 'LONG')).upper()
+    try:
+        entry = float(trade.get('entry', 0) or 0)
+        tp1 = float(trade.get('tp1', 0) or 0)
+        tp = float(trade.get('tp', 0) or 0)
+        sl = float(trade.get('sl', 0) or 0)
+        leverage = float(trade.get('leverage', LEVERAGE) or LEVERAGE)
+        notional = float(trade.get('pos_size', margin * leverage) or 0)
+    except (TypeError, ValueError) as exc:
+        return f'invalid profitability inputs: {exc}'
+
+    values = (entry, tp1, tp, sl, notional)
+    if any(not math.isfinite(value) or value <= 0 for value in values):
+        return (
+            f'invalid profitability inputs: entry={entry}, tp1={tp1}, '
+            f'tp={tp}, sl={sl}, notional={notional}'
+        )
+
+    if direction == 'LONG':
+        tp1_distance = tp1 - entry
+        tp_distance = tp - entry
+        sl_distance = entry - sl
+    elif direction == 'SHORT':
+        tp1_distance = entry - tp1
+        tp_distance = entry - tp
+        sl_distance = sl - entry
+    else:
+        return f'invalid direction {direction!r}'
+
+    if tp1_distance <= 0 or tp_distance <= 0 or sl_distance <= 0:
+        return (
+            f'invalid target geometry for {direction}: '
+            f'entry={entry:.8g}, tp1={tp1:.8g}, tp={tp:.8g}, sl={sl:.8g}'
+        )
+
+    expected_gross = notional * (tp1_distance / entry)
+    estimated_fees = notional * TAKER_FEE_RATE * 2
+    estimated_slippage = notional * ESTIMATED_SLIPPAGE_RATE * 2
+    expected_net = expected_gross - estimated_fees - estimated_slippage
+    risk_reward = tp_distance / sl_distance
+
+    trade['expected_tp1_gross_usd'] = round(expected_gross, 4)
+    trade['expected_round_trip_fees_usd'] = round(estimated_fees, 4)
+    trade['expected_slippage_usd'] = round(estimated_slippage, 4)
+    trade['expected_tp1_net_usd'] = round(expected_net, 4)
+    trade['entry_risk_reward'] = round(risk_reward, 4)
+
+    if expected_gross < MIN_EXPECTED_PROFIT_USD:
+        return (
+            f'expected TP1 gross ${expected_gross:.2f} below required '
+            f'${MIN_EXPECTED_PROFIT_USD:.2f} '
+            f'(notional=${notional:.2f}, TP1 move={tp1_distance / entry * 100:.2f}%)'
+        )
+    if expected_net < MIN_EXPECTED_PROFIT_USD:
+        return (
+            f'expected TP1 net ${expected_net:.2f} below required '
+            f'${MIN_EXPECTED_PROFIT_USD:.2f} '
+            f'(gross=${expected_gross:.2f}, fees=${estimated_fees:.2f}, '
+            f'slippage=${estimated_slippage:.2f})'
+        )
+    if risk_reward < MIN_ENTRY_RISK_REWARD:
+        return (
+            f'risk/reward {risk_reward:.2f} below required '
+            f'{MIN_ENTRY_RISK_REWARD:.2f} '
+            f'(TP distance={tp_distance / entry * 100:.2f}%, '
+            f'SL distance={sl_distance / entry * 100:.2f}%)'
+        )
+    return None
+
+
 def place_order(trade: dict, margin: float = MARGIN) -> bool:
     """
     רושם עסקה חדשה:
@@ -1855,6 +1929,14 @@ def place_order(trade: dict, margin: float = MARGIN) -> bool:
     restraint_reason = _entry_restraint_reason(trade)
     if restraint_reason:
         print(f"[place_order] 🧊 {symbol} blocked — {restraint_reason}", flush=True)
+        return False
+
+    profitability_reason = _entry_profitability_reason(trade, margin)
+    if profitability_reason:
+        print(
+            f"[place_order] 💰 {symbol} {direction} skipped — {profitability_reason}",
+            flush=True,
+        )
         return False
 
     spread_reason = _entry_spread_reason(symbol)
