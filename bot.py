@@ -389,6 +389,48 @@ def claude_filter(symbol: str, direction: str, score: int, breakdown: str,
 
 
 
+def _run_ai_background(label: str, callback, *args, **kwargs) -> None:
+    """Run advisory AI work in a daemon thread; never affect trade execution."""
+    def _runner():
+        try:
+            callback(*args, **kwargs)
+        except Exception as exc:
+            print(f"[AI Advisory] {label} failed: {exc} — technical engine unaffected", flush=True)
+
+    try:
+        threading.Thread(
+            target=_runner,
+            name=f"ai-advisory-{label}"[:64],
+            daemon=True,
+        ).start()
+    except Exception as exc:
+        print(f"[AI Advisory] {label} not started: {exc} — technical engine unaffected", flush=True)
+
+
+def _schedule_trade_advisory(*, symbol: str, direction: str, strategy: str,
+                             price: float, bot_score: int = 0,
+                             regime: str = 'NEUTRAL', fng: int = 50,
+                             btc_above_ema: bool = True, rsi=None,
+                             reason: str = '', extra: dict | None = None) -> None:
+    """Schedule Claude metadata collection without consuming its verdict."""
+    def _collect():
+        approved, ai_score, ai_reason, key_risk = claude_gate.claude_trade_gate(
+            symbol=symbol, direction=direction, strategy=strategy,
+            price=price, bot_score=bot_score, regime=regime, fng=fng,
+            btc_above_ema=btc_above_ema, rsi=rsi, reason=reason, extra=extra,
+            daily_pnl=daily_stats.get('total_pnl', 0.0),
+            open_trades=len(active_trades),
+        )
+        print(
+            f"[AI Advisory/{strategy}] {symbol} | score={ai_score} "
+            f"opinion={'approve' if approved else 'reject'} | {ai_reason} | "
+            f"risk={key_risk} — metadata only",
+            flush=True,
+        )
+
+    _run_ai_background(f"{strategy}-{symbol}", _collect)
+
+
 # IS_DEPLOYED / GEMINI_URL / GEMINI_KEY → config.py (from config import *)
 
 # LEVERAGE / MARGIN / POSITION_SIZE → config.py (from config import *)
@@ -2981,26 +3023,14 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         print(f"[Swing] {symbol} {direction} נדחה — {_reason}", flush=True)
         return False
 
-    # ── Claude AI Gate ────────────────────────────────────────────────────────
+    # ── AI advisory metadata (background only; never gates this trade) ────────
     _cl_regime_sw, _, _cl_btc_sw, _ = get_market_regime()
-    _cl_ok_sw, _cl_score_sw, _cl_reason_sw, _cl_risk_sw = claude_gate.claude_trade_gate(
+    _schedule_trade_advisory(
         symbol=symbol, direction=direction, strategy='Swing',
         price=price, bot_score=int(score or 0),
         regime=_cl_regime_sw, fng=int(fng_v or 50), btc_above_ema=_cl_btc_sw,
         rsi=rsi, reason=str(reason or ''),
-        daily_pnl=daily_stats.get('total_pnl', 0.0),
-        open_trades=len(active_trades),
     )
-    _cl_combined_sw = claude_gate.combined_score(int(score or 0), _cl_score_sw)
-    # Use the same adaptive threshold as the scoring gate (e.g. 69 in BULL+Greed, not hardcoded 75)
-    _eff_min_sw, _, _, _ = adaptive_threshold(fng_v or 50, _cl_regime_sw, direction)
-    print(f"[ClaudeGate/Swing] {symbol} | bot={score} claude={_cl_score_sw} combined={_cl_combined_sw} eff_min={_eff_min_sw} | {_cl_reason_sw}", flush=True)
-    # combined ≥ 80: strong technical signal overrides Claude's binary veto (advisory only)
-    # combined eff_min–79: still require Claude approval
-    # combined < eff_min: always reject
-    if _cl_combined_sw < _eff_min_sw or (not _cl_ok_sw and _cl_combined_sw < 80):
-        print(f"[ClaudeGate] ⛔ {symbol} Swing נדחה — combined={_cl_combined_sw} eff_min={_eff_min_sw} | {_cl_reason_sw}", flush=True)
-        return False
 
     # ── Adaptive Exit Parameters (FNG + BTC Regime) ───────────────────────────
     _btc_regime_now          = get_btc_regime()
@@ -3063,9 +3093,9 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         'peak_price':           price,
         'trailing_sl':          None,
         'score':                score,
-        'claude_score':         _cl_score_sw,
-        'claude_reason':        _cl_reason_sw,
-        'claude_key_risk':      _cl_risk_sw,
+        'claude_score':         None,
+        'claude_reason':        'Background advisory only',
+        'claude_key_risk':      '',
         'atr':                  round(atr, 6),
         'atr_1h':               0.0,
         'timeframe':            timeframe,
@@ -3121,9 +3151,6 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         f"🛡️ סיכון: `${est_loss_sl}` | 💰 רווח(TP1): `${est_profit_tp1}` | (TP2): `${est_profit_tp}`\n"
         f"💼 {leverage}x · ${effective_margin:.0f} מרג'ין · ${pos_size:.0f} נשלט\n"
         f"💵 פנוי בארנק: `${free_cash:.2f}`"
-        + (f"\n🤖 *Dr\\. Sniper:* _{_cl_reason_sw}_"
-           + (f" · ⚠️ _{_cl_risk_sw}_" if _cl_risk_sw else "")
-           if _cl_reason_sw else "")
     )
 
     if df_3h is None:
@@ -5813,23 +5840,13 @@ def _register_sol_trade(price: float, sl: float, tp: float, rsi: float | None):
 
     _sol_fng, _, _ = sentiment_check("sol_open")
     _sol_regime, _, _sol_btc_above, _ = get_market_regime()
-    _sol_gate_ok, _sol_cscore, _sol_creason, _ = claude_gate.claude_trade_gate(
+    # AI is advisory metadata only and runs after local gates have passed.
+    _schedule_trade_advisory(
         symbol=sym, direction='LONG', strategy='SOL',
         price=price, bot_score=100,
         regime=_sol_regime, fng=int(_sol_fng or 50), btc_above_ema=_sol_btc_above,
         rsi=rsi, reason='SOL breakout',
-        daily_pnl=daily_stats.get('total_pnl', 0.0),
-        open_trades=len(active_trades),
     )
-    _sol_combined = claude_gate.combined_score(100, _sol_cscore)
-    # Use adaptive threshold to match the scoring gate (not hardcoded MIN_SCORE)
-    _eff_min_sol, _, _, _ = adaptive_threshold(_sol_fng or 50, _sol_regime, 'LONG')
-    print(f"[ClaudeGate/SOL] {sym} | bot=100 claude={_sol_cscore} "
-          f"combined={_sol_combined} eff_min={_eff_min_sol} | {_sol_creason}", flush=True)
-    # combined ≥ 80: strong technical signal overrides Claude's binary veto (advisory only)
-    if _sol_combined < _eff_min_sol or (not _sol_gate_ok and _sol_combined < 80):
-        print(f"[ClaudeGate] {sym} SOL rejected - combined={_sol_combined} eff_min={_eff_min_sol}", flush=True)
-        return
 
     tgt_sol   = se.calc_targets(price, 'LONG')
     sl        = tgt_sol['sl_price']    # entry × 0.98
@@ -6825,9 +6842,12 @@ def handle_scan(message):
             sandbox_m = []
             if fng_v_m < EXTREME_FEAR_THRESHOLD and bubble_watch_m:
                 print(f"[Sandbox] Running educational analysis (manual scan)...")
-                sandbox_m = claude_sandbox_analysis(
-                    bubble_watch_m, btc_regime, fng_v_m, fng_lbl_m
+                _run_ai_background(
+                    "manual-sandbox",
+                    claude_sandbox_analysis,
+                    bubble_watch_m, btc_regime, fng_v_m, fng_lbl_m,
                 )
+                print("[Sandbox] Educational analysis scheduled in background")
 
             pnl_today = round(daily_stats.get('total_pnl', 0), 2)
             bub_note = ""
@@ -7572,7 +7592,9 @@ def _scan_batch_inner(candidates, direction, btc_regime='NEUTRAL', rejected_out=
 
                 # ── Claude Risk Advisor (ADVISOR MODE — אינו חוסם) ──────────────
                 # Claude = הערה בלבד. ציון ≥ MIN_SCORE + BTC Regime = כניסה.
-                _, claude_note = claude_filter(
+                _run_ai_background(
+                    f"Swing-note-{symbol}",
+                    claude_filter,
                     symbol=symbol, direction=direction, score=score,
                     breakdown=breakdown, price=price, timeframe=chosen_tf,
                     btc_regime=btc_regime, fng_v=fng_v_scan, fng_lbl=fng_lbl_scan,
@@ -7580,8 +7602,7 @@ def _scan_batch_inner(candidates, direction, btc_regime='NEUTRAL', rejected_out=
                     volume_ratio=_vol_ratio, change_24h=_change_24h,
                     daily_pnl=daily_stats.get('total_pnl', 0.0),
                 )
-                # תמיד ממשיך — Claude GO/NO-GO מבוטל
-                print(f"  [Advisor] ✅ Proceeding: {symbol} {direction} — {claude_note}")
+                print(f"  [Advisor] {symbol} {direction} scheduled in background")
 
                 # ── IG-3: Sector Concentration Guard ────────────────────────────
                 sect_blocked, sect_reason = check_sector_concentration(symbol, direction)
@@ -7904,19 +7925,14 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
         print(f"SCALP: insufficient balance (${wallet.get('balance', 0):.2f}) — skip {symbol}")
         return
 
-    # ── Claude AI Gate ────────────────────────────────────────────────────────
+    # ── AI advisory metadata (background only; never gates this trade) ────────
     _cl_regime_sc, _, _cl_btc_sc, _ = get_market_regime()
-    _cl_ok_sc, _cl_score_sc, _cl_reason_sc, _cl_risk_sc = claude_gate.claude_trade_gate(
+    _schedule_trade_advisory(
         symbol=symbol, direction=direction, strategy='Scalp',
         price=price, bot_score=0,
         regime=_cl_regime_sc, fng=int(fng_v_now or 50), btc_above_ema=_cl_btc_sc,
         rsi=None, reason=str(reason or ''),
-        daily_pnl=daily_stats.get('total_pnl', 0.0),
-        open_trades=len(active_trades),
     )
-    if not _cl_ok_sc or _cl_score_sc < 62:
-        print(f"[ClaudeGate] ⛔ {symbol} Scalp נדחה — claude={_cl_score_sc} | {_cl_reason_sc}", flush=True)
-        return
 
     # ── מחירי SL / TP1 / TP ──────────────────────────────────────────────────
     tgt = se.calc_targets(price, direction)
@@ -7944,9 +7960,9 @@ def open_scalp_trade(symbol: str, direction: str, price: float, reason: str):
         'peak_price':      price,
         'trailing_sl':     None,
         'score':           0,
-        'claude_score':    _cl_score_sc,
-        'claude_reason':   _cl_reason_sc,
-        'claude_key_risk': _cl_risk_sc,
+        'claude_score':    None,
+        'claude_reason':   'Background advisory only',
+        'claude_key_risk': '',
         'atr':             0.0,
         'timeframe':       '15m',
         'rsi':             None,
@@ -8108,20 +8124,15 @@ def open_cliff_trade(symbol: str, price: float, direction: str, move_pct: float,
         print(f"[Velocity] {symbol} {direction} נדחה — {_reason_c}", flush=True)
         return
 
-    # ── Claude AI Gate ────────────────────────────────────────────────────────
+    # ── AI advisory metadata (background only; never gates this trade) ────────
     _cl_regime_cl, _cl_fng_cl, _cl_btc_cl, _ = get_market_regime()
-    _cl_ok_cl, _cl_score_cl, _cl_reason_cl, _cl_risk_cl = claude_gate.claude_trade_gate(
+    _schedule_trade_advisory(
         symbol=symbol, direction=direction, strategy='Velocity',
         price=price, bot_score=0,
         regime=_cl_regime_cl, fng=int(_cl_fng_cl or 50), btc_above_ema=_cl_btc_cl,
         rsi=None, reason=f"move={move_pct:.1f}% vol={vol_ratio:.1f}x",
         extra={'RSI Divergence': str(rsi_divergence)},
-        daily_pnl=daily_stats.get('total_pnl', 0.0),
-        open_trades=len(active_trades),
     )
-    if not _cl_ok_cl or _cl_score_cl < 60:
-        print(f"[ClaudeGate] ⛔ {symbol} Velocity נדחה — claude={_cl_score_cl} | {_cl_reason_cl}", flush=True)
-        return
 
     if direction == 'LONG':
         sl_price   = round(price * (1 - CLIFF_SL_PCT         / 100), 8)
@@ -8160,9 +8171,9 @@ def open_cliff_trade(symbol: str, price: float, direction: str, move_pct: float,
         'peak_price':      price,
         'trailing_sl':     trail_init,
         'score':           0,
-        'claude_score':    _cl_score_cl,
-        'claude_reason':   _cl_reason_cl,
-        'claude_key_risk': _cl_risk_cl,
+        'claude_score':    None,
+        'claude_reason':   'Background advisory only',
+        'claude_key_risk': '',
         'atr':             0.0,
         'timeframe':       '5m',
         'rsi':             None,
@@ -8545,20 +8556,15 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
         print(f"[Breakout] {symbol} {direction} נדחה — {_reason_b}", flush=True)
         return
 
-    # ── Claude AI Gate ────────────────────────────────────────────────────────
+    # ── AI advisory metadata (background only; never gates this trade) ────────
     _cl_regime_br, _, _cl_btc_br, _ = get_market_regime()
-    _cl_ok_br, _cl_score_br, _cl_reason_br, _cl_risk_br = claude_gate.claude_trade_gate(
+    _schedule_trade_advisory(
         symbol=symbol, direction=direction, strategy='Breakout',
         price=price, bot_score=0,
         regime=_cl_regime_br, fng=int(fng_v or 50), btc_above_ema=_cl_btc_br,
         rsi=rsi, reason=f"breakout h4={h4_level:.6g} vol={vol_ratio:.1f}x",
         extra={'H4 Level': f"${h4_level:.6g}", 'Vol Ratio': f"{vol_ratio:.1f}x"},
-        daily_pnl=daily_stats.get('total_pnl', 0.0),
-        open_trades=len(active_trades),
     )
-    if not _cl_ok_br or _cl_score_br < 62:
-        print(f"[ClaudeGate] ⛔ {symbol} Breakout נדחה — claude={_cl_score_br} | {_cl_reason_br}", flush=True)
-        return
 
     tgt_b     = se.calc_targets(price, direction)
     sl_pct    = tgt_b['sl_pct']
@@ -8617,9 +8623,9 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
         'trailing_sl':     None,
         'score':           95,
         'atr':             atr_val,
-        'claude_score':    _cl_score_br,
-        'claude_reason':   _cl_reason_br,
-        'claude_key_risk': _cl_risk_br,
+        'claude_score':    None,
+        'claude_reason':   'Background advisory only',
+        'claude_key_risk': '',
         'timeframe':       'Breakout',
         'rsi':             round(rsi, 2) if rsi is not None else None,
         'ema200':          None,
@@ -9429,11 +9435,12 @@ def scan_loop():
             sandbox_results = []
             if fng_v_loop < EXTREME_FEAR_THRESHOLD and bubble_watch_list:
                 print(f"[Sandbox] Extreme Fear (FNG={fng_v_loop}) — running educational Claude analysis...")
-                sandbox_results = claude_sandbox_analysis(
-                    bubble_watch_list, btc_regime, fng_v_loop, fng_lbl_loop
+                _run_ai_background(
+                    "scheduled-sandbox",
+                    claude_sandbox_analysis,
+                    bubble_watch_list, btc_regime, fng_v_loop, fng_lbl_loop,
                 )
-                if sandbox_results:
-                    print(f"[Sandbox] Analysis complete: {len(sandbox_results)} coin(s) analyzed")
+                print("[Sandbox] Educational analysis scheduled in background")
 
             # ── סיכום סריקה ──
             now       = now_il().strftime('%H:%M')
