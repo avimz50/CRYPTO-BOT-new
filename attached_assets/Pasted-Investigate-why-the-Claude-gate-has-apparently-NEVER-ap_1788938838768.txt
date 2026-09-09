@@ -1,0 +1,46 @@
+Investigate why the Claude gate has apparently NEVER approved a trade
+across its entire history, before we decide whether to permanently
+remove it as a blocking gate (a change already partially made — see
+changes_2026-09-08.md, sections 6-7).
+
+STEPS:
+
+1. Pull every historical claude_gate record from trade_audit.json (or
+   wherever gate decisions are logged) that is NOT a fallback record
+   (i.e. Claude actually returned a real response, not a
+   credit/timeout/error default). Report:
+   - Total count of real (non-fallback) gate evaluations, all-time.
+   - Distribution of scores returned (min, max, median, histogram in
+     buckets of 10).
+   - The approval threshold(s) used at each point in time (this may have
+     changed — check git history of claude_gate.py / config.py for
+     threshold changes).
+   - Count of records where approved=True, at any point in history.
+
+2. If the score distribution shows scores clustering below the
+   threshold (e.g. Claude rarely/never scores above 75 but the threshold
+   is 75), report the actual score distribution vs threshold explicitly,
+   so we can see the gap.
+
+3. Check the gate's decision logic itself for a possible bug: is there
+   any code path where a score >= threshold could still result in
+   approved=False (e.g. an AND condition with another check, a sign
+   error, a default that never gets overwritten)? Show the exact
+   approval logic.
+
+4. Check claude_gate.py's prompt/instructions sent to Claude — is it
+   written in a way that biases toward always finding a reason to
+   reject (e.g. asking Claude to find risks without a balanced
+   framing)? Quote the relevant part of the prompt.
+
+5. Separately, report: of trades that were rejected by the gate with a
+   real (non-fallback) score, what fraction would have been profitable
+   if opened anyway (using recorded technical data if available)? This
+   tells us if the rejections were at least directionally correct even
+   if none crossed into "approved".
+
+Report findings only — do not change threshold, prompt, or gate logic
+in this step. This is diagnostic only, to inform whether the gate
+removal in changes_2026-09-08.md sections 6-7 was the right call or
+whether the gate should be fixed and reinstated as a blocking check
+(with the neutral-fallback-score-70 pattern already implemented).
