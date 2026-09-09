@@ -75,3 +75,17 @@ mtime_ms = 1788901076726
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:95de2b83-78fc-4e84-b223-d602409dd064/a0a55637-d1ed-45b4-a270-74cf8dc69335/7402e9bf-48e7-4dea-9666-f3905cb498e9"
 storage_version_token = "1788901088174160"
 content_type = "text/markdown"
+
+[[outputs]]
+id = "gSSQnr0E3CXrIiO1nysqh"
+uri = "file://changes_2026-09-08.md"
+type = "text"
+title = "סיכום כל התיקונים — 8 בספטמבר 2026"
+description = "קובץ מסודר בעברית הכולל את תיקוני ה-P&L, האימות ל-200 עסקאות, AI לא-חוסם, מסנן הרווח והבדיקות שבוצעו."
+logical_id = "1fd96f16-c20b-47bc-af34-7246bb54231b"
+content_hash = "sha256:03038463621e0e4c60a0d906beb87109e44613adca3ec8de77977e947e25219a"
+size = 7376
+mtime_ms = 1788938310941
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:95de2b83-78fc-4e84-b223-d602409dd064/1fd96f16-c20b-47bc-af34-7246bb54231b/56b5d2e0-cac8-4720-8ee1-63af364a2db8"
+storage_version_token = "1788938317058158"
+content_type = "text/markdown"
