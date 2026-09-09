@@ -66,6 +66,15 @@ REGIME_BEARISH_FNG       = 38   # FNG threshold below = bearish (<38 = Fear+Extr
 REGIME_BULLISH_FNG       = 60   # FNG threshold above = bullish
 REGIME_NEUTRAL_MAX_TRADES = 2   # max concurrent trades in choppy/neutral market
 
+# ── ADX Regime Shadow Signal (observation only; never gates or scores trades) ──
+ADX_PERIOD              = 14
+ADX_CHOP_THRESHOLD      = 20.0
+ADX_REGIME_CHOP         = 'CHOP'
+ADX_REGIME_TRENDING     = 'TRENDING'
+ADX_REGIME_UNKNOWN      = 'UNKNOWN'
+ADX_SHADOW_LOG_FILE     = 'data/adx_shadow_log.jsonl'
+ADX_SHADOW_LOG_MAX_BYTES = 2_000_000
+
 # ── Scoring Thresholds ─────────────────────────────────────────────────────────
 MIN_SCORE           = 75     # Entry threshold
 RSI_VETO_LONG       = 62     # Hard veto — LONG forbidden if RSI > 62 (overbought)

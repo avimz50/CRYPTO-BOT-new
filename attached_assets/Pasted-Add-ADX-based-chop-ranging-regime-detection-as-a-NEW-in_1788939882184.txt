@@ -1,0 +1,40 @@
+Add ADX-based "chop/ranging" regime detection as a NEW independent
+regime signal, running in SHADOW MODE only — log-only, must not change
+which trades open or how they're scored in this phase.
+
+CONTEXT: The bot currently classifies BTC regime as BULL/BEAR only
+(via EMA20 on 4H), which blocks LONG or SHORT accordingly. There's no
+detection of "ranging/choppy" conditions where neither trend-following
+strategy (Swing/Breakout) tends to work well.
+
+REQUIRED:
+1. Compute ADX(14) on BTC 4H candles (or the same timeframe used for
+   the existing BULL/BEAR regime check) on each scan cycle.
+2. Classify: ADX < 20 = "CHOP", ADX >= 20 = "TRENDING" (keep these as
+   named constants, easy to tune later — don't hardcode magic numbers
+   inline).
+3. Log this classification alongside the existing BULL/BEAR regime on
+   every scan (in the scan report / audit log), e.g.:
+   "Regime: BEAR | ADX: 17.3 (CHOP)"
+4. For every trade candidate that scores well but is in a CHOP
+   period, log what WOULD have happened if a mean-reversion filter
+   were applied instead of the current trend-following filter — but
+   do NOT actually change entry logic, scoring, or which trades open.
+   This is observation only.
+5. Add the ADX/CHOP status to /scanreport output so it's visible going
+   forward.
+
+Do NOT implement the mean-reversion strategy itself yet, and do NOT let
+this affect real trade entries — that's a separate, future step once we
+have a few weeks of CHOP-period data to see how often it actually
+triggers and whether it lines up with periods of low signal count.
+
+Follow the safe-deploy sequence: confirm clean working tree, note
+commit hash, back up files, guarded edit, syntax check, show diff, wait
+for explicit approval before commit, separate approval before publish.
+
+SEPARATELY: before this combined publish goes live, give me a clear
+summary of exactly which changes are bundled into this release (P&L
+fix, Claude gate removal, profitability filter, ADX shadow logging) so
+I have a clean reference point for "everything after this timestamp is
+the new combined version."

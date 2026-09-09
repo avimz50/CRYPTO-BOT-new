@@ -882,6 +882,7 @@ def save_scan_results(
     """שומר last_scan_results.json לאחר כל סריקה."""
     import time as _t
     duration = round(_t.time() - scan_start_ts, 1)
+    adx_value, adx_regime = get_adx_shadow_regime()
 
     # top 5 near-misses — הגבוהים ביותר שלא עברו
     near_misses = sorted(all_rejections, key=lambda x: x.get('best_score', 0), reverse=True)[:5]
@@ -906,6 +907,10 @@ def save_scan_results(
         'max_trades':              MAX_TRADES,
         'min_score':               MIN_SCORE,
         'btc_regime':              btc_regime,
+        'btc_adx_4h':              adx_value,
+        'adx_regime':              adx_regime,
+        'adx_shadow_mode':         True,
+        'adx_shadow_candidates':   _adx_shadow_snapshot(),
         'fng_value':               fng_value,
         'fng_label':               fng_label,
         'market_sentiment_factor': sentiment_note,
@@ -2778,8 +2783,73 @@ def get_btc_regime():
 
 
 # ── Market Regime Cache (TTL 5 min) ───────────────────────────────────────────
-_market_regime_cache: dict = {'ts': 0.0, 'regime': 'NEUTRAL', 'fng_v': 50, 'btc_above': True, 'ema20': 0.0}
+_market_regime_cache: dict = {
+    'ts': 0.0, 'regime': 'NEUTRAL', 'fng_v': 50, 'btc_above': True,
+    'ema20': 0.0, 'adx': None, 'adx_regime': ADX_REGIME_UNKNOWN,
+}
 _MARKET_REGIME_TTL = 300   # seconds
+_adx_shadow_candidates: list[dict] = []
+_adx_shadow_lock = threading.Lock()
+
+
+def get_adx_shadow_regime() -> tuple[float | None, str]:
+    """Return cached BTC 4H ADX observation; never used by entry logic."""
+    return (
+        _market_regime_cache.get('adx'),
+        _market_regime_cache.get('adx_regime', ADX_REGIME_UNKNOWN),
+    )
+
+
+def _reset_adx_shadow_candidates() -> None:
+    with _adx_shadow_lock:
+        _adx_shadow_candidates.clear()
+
+
+def _adx_shadow_snapshot() -> list[dict]:
+    with _adx_shadow_lock:
+        return [dict(item) for item in _adx_shadow_candidates]
+
+
+def _log_adx_shadow_candidate(symbol, direction, score, effective_min, timeframe):
+    """Persist a high-scoring CHOP observation without changing execution."""
+    adx_value, adx_regime = get_adx_shadow_regime()
+    if adx_regime != ADX_REGIME_CHOP:
+        return
+
+    item = {
+        'ts': now_il().isoformat(timespec='seconds'),
+        'symbol': symbol,
+        'direction': direction,
+        'score': score,
+        'effective_min_score': effective_min,
+        'timeframe': timeframe,
+        'btc_adx_4h': adx_value,
+        'adx_regime': adx_regime,
+        'shadow_only': True,
+        'current_path': 'trend-following rules continue unchanged',
+        'would_happen': 'candidate would be routed to mean-reversion review',
+    }
+    with _adx_shadow_lock:
+        _adx_shadow_candidates.append(item)
+
+    try:
+        os.makedirs(os.path.dirname(ADX_SHADOW_LOG_FILE), exist_ok=True)
+        with open(ADX_SHADOW_LOG_FILE, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(item, ensure_ascii=False) + '\n')
+        if os.path.getsize(ADX_SHADOW_LOG_FILE) > ADX_SHADOW_LOG_MAX_BYTES:
+            with open(ADX_SHADOW_LOG_FILE, encoding='utf-8') as f:
+                keep = f.readlines()[-10000:]
+            with open(ADX_SHADOW_LOG_FILE, 'w', encoding='utf-8') as f:
+                f.writelines(keep)
+    except Exception as exc:
+        print(f"[ADXShadow] audit write skipped: {exc}", flush=True)
+
+    print(
+        f"[ADXShadow] {symbol} {direction} score={score}/{effective_min} "
+        f"[{timeframe}] | ADX={adx_value:.1f} ({adx_regime}) | "
+        f"WOULD route to mean-reversion review; current entry logic unchanged",
+        flush=True,
+    )
 
 
 def get_market_regime() -> tuple[str, int, bool, float]:
@@ -2800,6 +2870,8 @@ def get_market_regime() -> tuple[str, int, bool, float]:
     fng_v     = 0      # treat unknown FNG as extreme fear → triggers BEARISH
     btc_above = False  # treat unknown BTC position as below EMA → triggers BEARISH
     ema20_4h  = _market_regime_cache.get('ema20', 0.0)
+    adx_4h    = None
+    adx_regime = ADX_REGIME_UNKNOWN
     _fng_ok   = False
     _btc_ok   = False
     _df_btc   = None
@@ -2810,6 +2882,20 @@ def get_market_regime() -> tuple[str, int, bool, float]:
         ema20_4h  = float(ta.ema(_df_btc['close'], length=20).iloc[-1])
         btc_price = float(_df_btc['close'].iloc[-1])
         btc_above = btc_price > ema20_4h
+        _adx_df = ta.adx(
+            _df_btc['high'], _df_btc['low'], _df_btc['close'],
+            length=ADX_PERIOD,
+        )
+        if _adx_df is not None and not _adx_df.empty:
+            adx_4h = float(_adx_df[f'ADX_{ADX_PERIOD}'].iloc[-1])
+            if pd.isna(adx_4h):
+                adx_4h = None
+            else:
+                adx_regime = (
+                    ADX_REGIME_CHOP
+                    if adx_4h < ADX_CHOP_THRESHOLD
+                    else ADX_REGIME_TRENDING
+                )
         _btc_ok   = True
     except Exception as _be:
         print(f"[MarketRegime] BTC EMA20 fetch failed: {_be} — defaulting btc_above=False (BEARISH safe)", flush=True)
@@ -2835,12 +2921,17 @@ def get_market_regime() -> tuple[str, int, bool, float]:
         print(f"[MarketRegime] DUAL BLOCK - FNG={fng_v} < {REGIME_BEARISH_FNG} "
               f"blocks LONG while BTC above EMA20 may block SHORT. Scanner "
               f"may return zero signals; a decision, not a fault.", flush=True)
-    _market_regime_cache = {'ts': now_ts, 'regime': regime, 'fng_v': fng_v,
-                             'btc_above': btc_above, 'ema20': ema20_4h}
+    _market_regime_cache = {
+        'ts': now_ts, 'regime': regime, 'fng_v': fng_v,
+        'btc_above': btc_above, 'ema20': ema20_4h,
+        'adx': adx_4h, 'adx_regime': adx_regime,
+    }
     _data_src = f"{'FNG✓' if _fng_ok else 'FNG✗(safe)'} {'BTC✓' if _btc_ok else 'BTC✗(safe)'}"
+    _adx_text = f"{adx_4h:.1f} ({adx_regime})" if adx_4h is not None else ADX_REGIME_UNKNOWN
     print(
         f"[MarketRegime] {regime} | FNG={fng_v} | "
-        f"BTC {'above' if btc_above else 'below'} EMA20(4H)={ema20_4h:.0f} | {_data_src}",
+        f"BTC {'above' if btc_above else 'below'} EMA20(4H)={ema20_4h:.0f} | "
+        f"ADX={_adx_text} [SHADOW] | {_data_src}",
         flush=True
     )
     return regime, fng_v, btc_above, ema20_4h
@@ -6651,6 +6742,9 @@ def handle_scanreport(message):
     total     = d.get('total_scanned', 0)
     signals   = d.get('signals_found', 0)
     regime    = d.get('btc_regime', 'NEUTRAL')
+    adx_value = d.get('btc_adx_4h')
+    adx_regime = d.get('adx_regime', ADX_REGIME_UNKNOWN)
+    adx_candidates = d.get('adx_shadow_candidates', [])
     fng_v     = d.get('fng_value', 50)
     fng_lbl   = d.get('fng_label', 'Neutral')
     sentiment = d.get('market_sentiment_factor', '')
@@ -6667,6 +6761,8 @@ def handle_scanreport(message):
     msg += f"📦 נסרקו: *{total}* מטבעות\n"
     msg += f"{sig_e} איתותים שנמצאו: *{signals}*\n"
     msg += f"{regime_e} BTC Regime: *{regime}*\n"
+    adx_text = f"{float(adx_value):.1f}" if adx_value is not None else "N/A"
+    msg += f"🧭 ADX\\({ADX_PERIOD}\\) 4H: *{adx_text}* \\({adx_regime}\\) — _Shadow only_\n"
     msg += f"📊 FNG: *{fng_v}* ({fng_lbl})\n\n"
     msg += f"📈 *Sentiment Factor:*\n_{sentiment}_\n\n"
     msg += f"💬 *System Message:*\n_{sys_msg}_\n"
@@ -6720,6 +6816,18 @@ def handle_scanreport(message):
             )
     else:
         msg += "_No candidates currently waiting for a regime change._\n"
+
+    if adx_candidates:
+        msg += f"\n{'─' * 28}\n"
+        msg += "🧭 *ADX CHOP Shadow Candidates*\n"
+        msg += "_Observation only — scoring and entries were not changed._\n"
+        for item in adx_candidates[:10]:
+            msg += (
+                f"• `{item.get('symbol', '?')}` {item.get('direction', '?')} "
+                f"[{item.get('timeframe', '?')}] "
+                f"*{item.get('score', 0)}/{item.get('effective_min_score', MIN_SCORE)}* "
+                f"→ mean\\-reversion review\n"
+            )
 
     # הוסף רמז ל-Sandbox אם קיים
     sandbox = d.get('sandbox_analysis', [])
@@ -6902,8 +7010,11 @@ def handle_scan(message):
         global _scan_running
         _scan_running = True
         try:
+            _reset_adx_shadow_candidates()
             now_str    = now_il().strftime('%H:%M:%S')
             btc_regime = get_btc_regime()
+            get_market_regime()
+            adx_value, adx_regime = get_adx_shadow_regime()
             regime_emoji = "🟢" if btc_regime == 'BULL' else ("🔴" if btc_regime == 'BEAR' else "🟡")
             regime_note  = (
                 "BULL — LONGs מאושרים" if btc_regime == 'BULL' else
@@ -6917,7 +7028,12 @@ def handle_scan(message):
             send_msg(
                 f"🔍 *Manual Scan* — {now_str}\n"
                 f"🟢 Gainers: *{len(gainers)}*  🔴 Losers: *{len(losers)}*\n"
-                f"{regime_emoji} BTC Regime: *{regime_note}*"
+                f"{regime_emoji} BTC Regime: *{regime_note}*\n"
+                + (
+                    f"🧭 ADX: *{adx_value:.1f} ({adx_regime})* — _Shadow only_"
+                    if adx_value is not None else
+                    f"🧭 ADX: *N/A ({adx_regime})* — _Shadow only_"
+                )
             )
 
             fng_v_m, fng_lbl_m, _ = sentiment_check("manual_scan")
@@ -7640,6 +7756,11 @@ def _scan_batch_inner(candidates, direction, btc_regime='NEUTRAL', rejected_out=
                         chosen_df = df_15m
                         price     = df_15m['close'].iloc[-1]
                         tf_reason = f'Scalp Entry ב-15m (4H={score_4h}, 1H={score_1h} < {eff_min})'
+
+            if score >= eff_min:
+                _log_adx_shadow_candidate(
+                    symbol, direction, score, eff_min, chosen_tf,
+                )
 
             # ── Priority Score Logging — compare with open trades when slots full ─
             if at_capacity:
@@ -9480,9 +9601,12 @@ def scan_loop():
             check_daily_report()
             now_str = now_il().strftime('%H:%M:%S')
             scan_start_ts = time.time()
+            _reset_adx_shadow_candidates()
 
             # ── שלב 1: BTC Market Regime ──
             btc_regime = get_btc_regime()
+            get_market_regime()
+            adx_value, adx_regime = get_adx_shadow_regime()
             regime_emoji = "🟢" if btc_regime == 'BULL' else ("🔴" if btc_regime == 'BEAR' else "🟡")
             regime_note  = (
                 "BULL — LONGs מאושרים, SHORTs חסומים" if btc_regime == 'BULL' else
@@ -9505,7 +9629,12 @@ def scan_loop():
                 f"🟢 Gainers (LONG): *{len(gainers)}*  🔴 Losers (SHORT): *{len(losers)}*\n"
                 f"📐 סף: *{MIN_SCORE}/100* · גרפים: 4H → 1H → 15m\n"
                 f"🛡️ Anti-FOMO: RSI≤{RSI_VETO_LONG} · EMA±{EMA_PROXIMITY_PCT}% · Wick Filter\n"
-                f"{regime_emoji} *BTC Regime: {regime_note}*"
+                f"{regime_emoji} *BTC Regime: {regime_note}*\n"
+                + (
+                    f"🧭 *ADX: {adx_value:.1f} ({adx_regime})* — _Shadow only_"
+                    if adx_value is not None else
+                    f"🧭 *ADX: N/A ({adx_regime})* — _Shadow only_"
+                )
             )
 
             signals_found  = 0
