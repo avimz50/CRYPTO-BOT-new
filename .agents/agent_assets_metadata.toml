@@ -89,3 +89,17 @@ mtime_ms = 1788938310941
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:95de2b83-78fc-4e84-b223-d602409dd064/1fd96f16-c20b-47bc-af34-7246bb54231b/56b5d2e0-cac8-4720-8ee1-63af364a2db8"
 storage_version_token = "1788938317058158"
 content_type = "text/markdown"
+
+[[outputs]]
+id = "zOJKcGHVnkhdX8qchHCH7"
+uri = "file://claude_gate_diagnostic_he.md"
+type = "text"
+title = "דוח אבחון שער Claude"
+description = "דוח מלא בעברית להורדה, כולל הנתונים, הכשלים הלוגיים, מגבלות המידע והמסקנה הסופית."
+logical_id = "b153a397-3250-44cc-855e-c740f9f2402d"
+content_hash = "sha256:412a70811daec447c37f20d729af826e844e2c82caf99f3ed5872a6e1ada230a"
+size = 12290
+mtime_ms = 1788939337073
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:95de2b83-78fc-4e84-b223-d602409dd064/b153a397-3250-44cc-855e-c740f9f2402d/040d66a7-356e-421d-8558-b8e6d7b7eb68"
+storage_version_token = "1788939341435317"
+content_type = "text/markdown"
