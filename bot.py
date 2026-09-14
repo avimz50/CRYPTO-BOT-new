@@ -2945,12 +2945,6 @@ def is_direction_allowed(direction: str, context: str = '') -> tuple[bool, str]:
     regime, fng_v, btc_above, ema20 = get_market_regime()
     btc_lbl = f"BTC {'מעל' if btc_above else 'מתחת'} EMA20(4H)={ema20:.0f}"
 
-    if VALIDATION_TRIAL_ENABLED and regime == 'NEUTRAL':
-        reason = "Validation Trial — NEUTRAL/sideways market, no new entries"
-        if context:
-            print(f"[RegimeGate/{context}] {reason}", flush=True)
-        return False, reason
-
     if regime == 'BEARISH' and direction == 'LONG':
         # הדגש את הסיבה הספציפית: BTC מתחת ל-EMA20 vs FNG
         if not btc_above:
