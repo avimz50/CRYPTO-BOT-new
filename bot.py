@@ -264,6 +264,7 @@ def check_daily_circuit_breaker() -> bool:
     מתאפס אוטומטית בחצות (daily_stats מאופס ב-manage_risk).
     """
     global _daily_circuit_notified
+    reset_daily_stats_if_new_day()
     today_pnl = daily_stats.get('total_pnl', 0.0)
     if today_pnl <= DAILY_LOSS_LIMIT:
         if not _daily_circuit_notified:
@@ -505,6 +506,36 @@ daily_stats = {
     'date':         now_il().date(),
     'close_reasons': {'TP': 0, 'TP1+Trail': 0, 'Trailing': 0, 'SL': 0, 'BE': 0, 'Manual': 0},
 }
+
+
+def reset_daily_stats_if_new_day() -> bool:
+    """Reset daily risk counters even when there are no active trades."""
+    global daily_stats, _daily_circuit_notified
+    today = now_il().date()
+    if daily_stats.get('date') == today:
+        return False
+
+    previous_date = daily_stats.get('date')
+    with trades_lock:
+        if daily_stats.get('date') == today:
+            return False
+        daily_stats = {
+            'wins': 0,
+            'losses': 0,
+            'total_pnl': 0.0,
+            'date': today,
+            'close_reasons': {
+                'TP': 0, 'TP1+Trail': 0, 'Trailing': 0,
+                'SL': 0, 'BE': 0, 'Manual': 0,
+            },
+        }
+        _daily_circuit_notified = False
+    print(
+        f"[DailyStats] Reset stale daily counters: {previous_date} → {today}",
+        flush=True,
+    )
+    return True
+
 
 def add_daily_pnl(amount: float):
     """מוסיף ל-daily_stats['total_pnl'] באופן אטומי (מוזן ל-Circuit Breaker — קריטי תחת ריבוי threads)."""
@@ -3650,13 +3681,7 @@ def track_trades():
     תומך ב-LONG וב-SHORT.
     """
     global active_trades, daily_stats, _daily_circuit_notified
-
-    if daily_stats['date'] != now_il().date():
-        daily_stats = {
-            'wins': 0, 'losses': 0, 'total_pnl': 0.0, 'date': now_il().date(),
-            'close_reasons': {'TP': 0, 'TP1+Trail': 0, 'Trailing': 0, 'SL': 0, 'BE': 0, 'Manual': 0},
-        }
-        _daily_circuit_notified = False  # איפוס Circuit Breaker עם פתיחת יום חדש
+    reset_daily_stats_if_new_day()
 
     # FNG once per manage cycle (avoid spamming API/log)
     fng_v_mgr, _, _ = sentiment_check("manage_risk")
@@ -7235,6 +7260,7 @@ def trade_monitor_loop():
             try:
                 # ── FNG state change detection ──
                 check_fng_state_change()
+                reset_daily_stats_if_new_day()
 
                 if active_trades:
                     track_trades()
