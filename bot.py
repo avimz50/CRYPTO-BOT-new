@@ -2015,6 +2015,8 @@ def place_order(trade: dict, margin: float = MARGIN) -> bool:
         )
         trade['validation_trial'] = trial_open
         trade['validation_trial_id'] = validation_trial.get('id') if trial_open else None
+        # Capture opening risk once. The live `sl` may later move to break-even.
+        trade.setdefault('sl_at_open', trade.get('sl'))
         _ensure_fee_accounting(trade, charge_entry_fee=True)
         active_trades.append(trade)
         wallet_deduct(margin)
@@ -2198,7 +2200,7 @@ def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_pric
     net_pnl = round(gross_pnl - fees_usd, 2)
     entry_p    = trade['entry']
     close_p    = close_price or trade.get('current_price', entry_p)
-    sl_at_open = trade.get('sl')
+    sl_at_open = trade.get('sl_at_open')
     tp_at_open = trade.get('tp')
     closed_at  = now_il().isoformat(timespec='seconds')
 
@@ -2995,7 +2997,7 @@ def is_direction_allowed(direction: str, context: str = '') -> tuple[bool, str]:
     if regime == 'NEUTRAL':
         # ── BTC Strong Uptrend — חוסם SHORTs כשBTC מעל EMA200 בשני גרפים ──────
         if direction == 'SHORT':
-            _strong_up, _ema200_1h, _ema200_4h = check_btc_strong_uptrend()
+            _strong_up, _ema200_1h, _ema200_4h = is_btc_strong_uptrend()
             if _strong_up:
                 reason = (
                     f"NEUTRAL + BTC STRONG UPTREND "
@@ -9618,6 +9620,8 @@ def scan_loop():
             time.sleep(60)
             continue
         try:
+            # Calendar-based reset must run even when there are no open trades.
+            reset_daily_stats_if_new_day()
             check_daily_report()
             now_str = now_il().strftime('%H:%M:%S')
             scan_start_ts = time.time()

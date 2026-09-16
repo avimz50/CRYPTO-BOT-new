@@ -1,0 +1,44 @@
+Fix three diagnosed bugs from the previous investigation. Follow the
+safe-deploy sequence: confirm clean working tree and note commit hash,
+back up affected files, apply guarded edits, run syntax check across
+bot.py/claude_gate.py/claude_research.py/market_logic.py/config.py, show
+me the diff, and wait for my explicit approval before committing. Do not
+publish without a separate explicit approval after that.
+
+BUG 1 (priority): Stale daily circuit-breaker. The daily loss reset
+currently only runs inside track_trades(), which is only called when
+active_trades is non-empty. When active_trades becomes empty (no open
+positions), the daily reset is never reached, so a stale loss value from
+a prior day can remain active and block all new entries (Swing/Breakout/
+Scalp/Research) via the -$15 circuit breaker even on a new day.
+Fix: make the daily reset time-based (keyed off calendar date, e.g.
+compare current date to last-reset date) and run it unconditionally on
+each scan/heartbeat cycle, independent of whether there are active
+trades. Show me exactly where this reset is checked and fixed.
+
+BUG 2: Undefined function check_btc_strong_uptrend() is called inside
+the NEUTRAL regime branch (if regime == 'NEUTRAL' and direction ==
+'SHORT': check_btc_strong_uptrend()) but is neither defined nor imported
+anywhere in the codebase, causing the hourly scan to throw an exception
+and abort every time execution reaches that branch.
+Find the call site, and either: (a) define the missing function with
+sensible logic matching what its name implies (checking if BTC is in a
+strong uptrend, to inform the NEUTRAL+SHORT decision), or (b) if you
+determine from context/git history that this call was leftover from a
+removed feature and shouldn't be there, remove the call safely. Tell me
+which you find and why before applying either fix.
+
+BUG 3: In _log_closed_trade(), the code reads sl_at_open from the live
+mutable trade['sl'] field, which gets overwritten to entry price when
+break-even triggers after TP1. This corrupts the recorded opening SL and
+resulting RR calculation for any trade that hit break-even before final
+close (18 of the last 100 audit records affected).
+Fix: store the original opening SL in a separate immutable field (e.g.
+trade['sl_at_open']) set once when the trade is opened and never mutated
+afterward, and have _log_closed_trade() read from that field instead of
+the live 'sl' field.
+
+After fixing, report which of the 18 previously-corrupted audit records
+(if reconstructable) would now show correct RR values, and confirm all
+44 existing tests still pass plus any new tests you add for these three
+fixes.
