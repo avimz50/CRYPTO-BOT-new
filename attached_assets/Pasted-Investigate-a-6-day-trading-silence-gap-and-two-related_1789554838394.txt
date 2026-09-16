@@ -1,0 +1,50 @@
+Investigate a 6-day trading silence gap and two related data-quality
+findings. DIAGNOSIS ONLY — do not change scoring, thresholds, or logic.
+
+ISSUE 1 (priority): Trading gap from 2026-09-09 16:39 to 2026-09-15
+03:54 — nearly 6 days with only ONE trade opening (vs 15 trades on
+2026-09-09 alone).
+
+Check:
+- Did the scan loop / heartbeat actually run continuously during this
+  window? Pull logs/heartbeat records for 09/10 through 09/14.
+- If it ran: what were candidate scores during this window — were they
+  consistently below MIN_SCORE, or was something blocking entries
+  (regime gate, daily loss limit, cooldown, max concurrent positions,
+  an exception/crash in the scan or order-placement path)?
+- If it did NOT run continuously: find where and why it stopped
+  (crash, restart failure, API error not caught, rate limit, etc.) and
+  when normal operation resumed.
+- Report BTC regime and FNG for each day in the gap, to see if this
+  coincides with a persistent BEAR/blocking regime rather than a bug.
+
+ISSUE 2: 8 of 13 losses on 09/09 were FastLoss exits within 0.1–11.4
+minutes, all sharing this signature: RSI already extended in the
+trade's direction at entry (RSI 58-74 for LONGs, RSI 31.79 for the one
+SHORT) combined with a volume spike (Vol×1.9 to ×8.1), scoring RSI=0/10
+in the breakdown but still reaching a high total score (85-96) because
+Trend/MACD/Volume components dominate. Several of these show an
+"EMA_bypass(vol×X≥1.5)" tag in the score breakdown, suggesting high
+volume overrides an EMA-based confirmation check.
+
+Check:
+- Find the EMA_bypass logic: what condition does it normally enforce,
+  and what happens when it's bypassed by volume? Is this intentional,
+  and does the current 1.5x volume threshold seem too easy to trigger
+  (i.e., does normal volatile crypto volume routinely exceed 1.5x)?
+- Report, across all historical trades where EMA_bypass fired, the win
+  rate vs trades where it did NOT fire — does bypassing correlate with
+  worse outcomes?
+- This is diagnostic only — do not change the RSI weighting, the
+  EMA_bypass threshold, or add an RSI veto in this step.
+
+ISSUE 3 (data quality): Trades #7 (USELESS) and #8 (LIT) in the
+detailed trade log show SL recorded as exactly equal to entry price
+(0% distance) and RR=0.00, despite both trades exiting via TP1+Trail
+with real profit. Find where the SL value is written to the trade
+record and why it shows entry price instead of the actual initial SL
+(this looks like the SL field is being overwritten or read at the
+wrong point in the trade lifecycle, e.g. after a break-even move,
+rather than at open time). Report root cause. Do not fix yet.
+
+Report findings for all three issues. No code changes, no publish.
