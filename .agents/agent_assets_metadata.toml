@@ -117,3 +117,17 @@ mtime_ms = 1789554393081
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:95de2b83-78fc-4e84-b223-d602409dd064/64904929-27d2-4d6f-bed3-9f4e63adf2e1/f276b1cb-8cb6-4e25-87e5-9fc1a9f49b69"
 storage_version_token = "1789554400949968"
 content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+[[outputs]]
+id = "p3HZKAIDIpUzy7Git_tS1"
+uri = "file://reports/detailed_trades_2026-09-09_to_2026-09-16.xlsx"
+type = "table"
+title = "דוח מפורט — כניסה ויציאה מכל עסקה"
+description = "Excel מפורט ל-16 עסקאות: זמן ומחיר כניסה, SL/TP, RR, מדדי כניסה, זמן ומחיר יציאה, סיבת יציאה, משך, Gross P&L, עמלות ו-Net P&L."
+logical_id = "397309e8-e0c5-42c8-8189-b3100521d12c"
+content_hash = "sha256:5afd275ac572231e4a4955b0f3178e32b9b17e0962f4870137bf3cf560dba56b"
+size = 18438
+mtime_ms = 1789554584927
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:95de2b83-78fc-4e84-b223-d602409dd064/397309e8-e0c5-42c8-8189-b3100521d12c/b722a93a-0059-4e06-9d49-ba217e56ea9a"
+storage_version_token = "1789554591922308"
+content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
