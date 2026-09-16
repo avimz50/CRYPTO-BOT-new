@@ -103,3 +103,17 @@ mtime_ms = 1788939337073
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:95de2b83-78fc-4e84-b223-d602409dd064/b153a397-3250-44cc-855e-c740f9f2402d/040d66a7-356e-421d-8558-b8e6d7b7eb68"
 storage_version_token = "1788939341435317"
 content_type = "text/markdown"
+
+[[outputs]]
+id = "-lrjSwelqbKVPDCvlWj3j"
+uri = "file://reports/bot_report_2026-09-09_to_2026-09-16.xlsx"
+type = "table"
+title = "דוח עסקאות וסריקות — 9–16 בספטמבר"
+description = "קובץ Excel להורדה עם סיכום שבועי, 16 עסקאות סגורות, נתוני סריקות הכניסה והסבר על מגבלת ארכיון הסריקות."
+logical_id = "64904929-27d2-4d6f-bed3-9f4e63adf2e1"
+content_hash = "sha256:59a610c6ef8d20e67f04304dfae798c889059852f65a0a9843d2d59169ca285c"
+size = 14248
+mtime_ms = 1789554393081
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:95de2b83-78fc-4e84-b223-d602409dd064/64904929-27d2-4d6f-bed3-9f4e63adf2e1/f276b1cb-8cb6-4e25-87e5-9fc1a9f49b69"
+storage_version_token = "1789554400949968"
+content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
