@@ -165,6 +165,7 @@ RSI_REVERSAL_CACHE_TTL     = 120    # שניות: cache RSI לכל סימבול
 # ── Breakout Strategy Enable ─────────────────────────────────────────────────────
 # False = חסום את כל עסקאות ה-Breakout (להפעלה כשהאסטרטגיה מפסידה)
 ENABLE_BREAKOUT_STRATEGY = True
+BREAKOUT_TP1_PCT = 1.5  # $7.50 gross / about $6.70 net on the fixed $500 position
 
 # ── Scalp Scan Triggers ────────────────────────────────────────────────────────
 SCALP_BUBBLE_MIN_PCT   = 30.0

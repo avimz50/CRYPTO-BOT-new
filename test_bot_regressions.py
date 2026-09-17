@@ -146,3 +146,26 @@ class TestBreakoutOpenAlert(unittest.TestCase):
             and node.func.id == "send_chart_alert"
         )
         self.assertLess(guarded_line, alert_line)
+
+    def test_breakout_uses_dedicated_tp1_and_chart_includes_tp2(self):
+        open_breakout = next(
+            item for item in BOT_TREE.body
+            if isinstance(item, ast.FunctionDef) and item.name == "open_breakout_trade"
+        )
+        calc_call = next(
+            node for node in ast.walk(open_breakout)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "calc_targets"
+        )
+        tp1_keyword = next(kw for kw in calc_call.keywords if kw.arg == "tp1_pct")
+        self.assertEqual(tp1_keyword.value.id, "BREAKOUT_TP1_PCT")
+
+        chart_call = next(
+            node for node in ast.walk(open_breakout)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "generate_chart"
+        )
+        tp2_keyword = next(kw for kw in chart_call.keywords if kw.arg == "tp2")
+        self.assertEqual(tp2_keyword.value.id, "tp_price")

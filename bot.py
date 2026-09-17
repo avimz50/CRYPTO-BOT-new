@@ -2458,9 +2458,10 @@ def get_data_cached(symbol: str, timeframe: str = '1h', limit: int = 250) -> pd.
     return get_data(symbol, timeframe, limit)
 
 def generate_chart(df, symbol, entry, sl, tp, direction='LONG',
-                   fvg_top=None, fvg_bot=None):
+                   fvg_top=None, fvg_bot=None, tp2=None):
     """מייצר גרף נרות עם EMA200, Bollinger Bands, RSI, ווליום וקווי SL/Entry/TP.
        fvg_top / fvg_bot — אם מסופקים, מצייר אזור FVG (ICT Fair Value Gap).
+       tp2 — יעד סופי אופציונלי; כשמסופק, tp מוצג כ-TP1 ו-tp2 כ-TP2.
        direction='LONG' → ירוק | 'SHORT' → אדום.
        מחזיר BytesIO או None אם נכשל."""
     global CHARTS_ENABLED, _mpl_imported, plt, mpf
@@ -2500,6 +2501,7 @@ def generate_chart(df, symbol, entry, sl, tp, direction='LONG',
 
         # ── נתונים: 72 נרות אחרונים (3 ימים ב-1H) ──
         plot_df = df.tail(72).copy()
+        plot_len = len(plot_df)
         plot_df.index = pd.to_datetime(plot_df['timestamp'], unit='ms')
         plot_df = plot_df[['open', 'high', 'low', 'close', 'volume']].rename(
             columns={'open': 'Open', 'high': 'High', 'low': 'Low',
@@ -2508,10 +2510,14 @@ def generate_chart(df, symbol, entry, sl, tp, direction='LONG',
 
         # ── אינדיקטורים ──
         _ema200 = ta.ema(df['close'], length=200)
-        ema200_vals = _ema200.tail(72).values if _ema200 is not None else [None] * 72
+        ema200_vals = None
+        if _ema200 is not None:
+            _ema200_tail = _ema200.tail(plot_len)
+            if _ema200_tail.notna().any():
+                ema200_vals = _ema200_tail.values
 
         _rsi = ta.rsi(df['close'], length=14)
-        rsi_vals = _rsi.tail(72).values if _rsi is not None else [50.0] * 72
+        rsi_vals = _rsi.tail(plot_len).values if _rsi is not None else [50.0] * plot_len
 
         # ── Bollinger Bands (20, 2σ) ──
         try:
@@ -2526,12 +2532,10 @@ def generate_chart(df, symbol, entry, sl, tp, direction='LONG',
         except Exception:
             bb_ok = False
 
-        rsi_30 = [30] * 72
-        rsi_70 = [70] * 72
+        rsi_30 = [30.0] * plot_len
+        rsi_70 = [70.0] * plot_len
 
         apds = [
-            mpf.make_addplot(ema200_vals, color='#f5a623', width=1.8,
-                             label='EMA 200'),
             mpf.make_addplot(rsi_vals, panel=2, color='#9b59b6',
                              ylabel='RSI', ylim=(0, 100)),
             mpf.make_addplot(rsi_30, panel=2, color='#27ae60',
@@ -2539,6 +2543,13 @@ def generate_chart(df, symbol, entry, sl, tp, direction='LONG',
             mpf.make_addplot(rsi_70, panel=2, color='#e74c3c',
                              linestyle='--', width=0.8),
         ]
+        if ema200_vals is not None:
+            apds.insert(
+                0,
+                mpf.make_addplot(
+                    ema200_vals, color='#f5a623', width=1.8, label='EMA 200'
+                ),
+            )
 
         # הוסף BB לגרף
         if bb_ok:
@@ -2590,8 +2601,9 @@ def generate_chart(df, symbol, entry, sl, tp, direction='LONG',
         # הרחבת ציר Y כך ש-SL ו-TP תמיד גלויים (עם מרווח 2%)
         y_min, y_max = ax.get_ylim()
         pad = (y_max - y_min) * 0.02
-        new_ymin = min(y_min, sl - pad, tp - pad)
-        new_ymax = max(y_max, sl + pad, tp + pad)
+        target_levels = [tp] + ([tp2] if tp2 is not None else [])
+        new_ymin = min([y_min, sl - pad] + [level - pad for level in target_levels])
+        new_ymax = max([y_max, sl + pad] + [level + pad for level in target_levels])
         ax.set_ylim(new_ymin, new_ymax)
 
         if direction == 'SHORT':
@@ -2612,7 +2624,11 @@ def generate_chart(df, symbol, entry, sl, tp, direction='LONG',
         ax.axhline(entry, color='#3498db',    linewidth=1.8,
                    linestyle='--', label=f'🔵 Entry  {entry:.4f}')
         ax.axhline(tp,    color='forestgreen', linewidth=1.8,
-                   linestyle='--', label=f'✅ TP     {tp:.4f}')
+                   linestyle='--',
+                   label=f'✅ {"TP1" if tp2 is not None else "TP"}    {tp:.4f}')
+        if tp2 is not None:
+            ax.axhline(tp2, color='#00e676', linewidth=1.8,
+                       linestyle='-.', label=f'✅ TP2    {tp2:.4f}')
         ax.axhline(sl,    color='crimson',     linewidth=1.8,
                    linestyle='--', label=f'🛑 SL     {sl:.4f}')
 
@@ -2620,7 +2636,8 @@ def generate_chart(df, symbol, entry, sl, tp, direction='LONG',
         y_min, y_max = ax.get_ylim()
         x_pos = ax.get_xlim()[1] * 0.98
         for price_lvl, label_txt, col in [
-            (tp,    'TP',    'forestgreen'),
+            (tp,    'TP1' if tp2 is not None else 'TP', 'forestgreen'),
+            *([(tp2, 'TP2', '#00e676')] if tp2 is not None else []),
             (entry, 'ENTRY', '#3498db'),
             (sl,    'SL',    'crimson'),
         ]:
@@ -2678,7 +2695,7 @@ def send_chart_alert(chart_buf, symbol, caption):
     """שולח גרף עם כיתוב קצר, ואז את ההודעה המלאה בנפרד + כפתור Close."""
     try:
         if chart_buf:
-            short = f"📊 *{symbol}* — גרף 1H עם BB / SL / Entry / TP"
+            short = f"📊 *{symbol}* — גרף 1H עם BB / SL / Entry / TP1 / TP2"
             bot.send_photo(CHAT_ID, chart_buf, caption=short,
                            parse_mode='Markdown')
         markup = _make_close_markup(symbol)
@@ -8746,7 +8763,7 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
     פותח עסקת Breakout LONG או SHORT — Breakout Strategy.
     margin   = MARGIN ($50 fixed — caller value is ignored).
     pos_size = POSITION_SIZE ($500 = MARGIN × LEVERAGE).
-    SL=2% | TP1=2% | TP2=4% (RR 1:2).
+    SL=2% | TP1=1.5% | TP2=4% (final RR 1:2).
     """
     margin   = MARGIN        # always $50 — ignore caller-provided value
     pos_size = POSITION_SIZE  # always $500
@@ -8801,7 +8818,7 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
         extra={'H4 Level': f"${h4_level:.6g}", 'Vol Ratio': f"{vol_ratio:.1f}x"},
     )
 
-    tgt_b     = se.calc_targets(price, direction)
+    tgt_b     = se.calc_targets(price, direction, tp1_pct=BREAKOUT_TP1_PCT)
     sl_pct    = tgt_b['sl_pct']
     tp_pct    = tgt_b['tp_pct']
     tp1_pct   = tgt_b['tp1_pct']
@@ -8889,7 +8906,9 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
         f"━━━━━━━━━━━━━━━━━━\n"
         f"📊 RSI: {rsi_str} | Vol ×{vol_ratio:.1f} | FNG {fng_v} | 💼 {LEVERAGE}x · ${margin:.0f}"
     )
-    chart_buf = generate_chart(df_1h, symbol, price, sl_price, tp1_price, direction) \
+    chart_buf = generate_chart(
+        df_1h, symbol, price, sl_price, tp1_price, direction, tp2=tp_price
+    ) \
                 if df_1h is not None else None
     send_chart_alert(chart_buf, symbol, msg)
     print(f"[Breakout] ✅ {direction} {symbol} @ {price:.6g} | margin=${margin:.0f} | RSI={rsi_str} | FNG={fng_v}")
