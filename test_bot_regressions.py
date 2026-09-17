@@ -116,3 +116,33 @@ class TestOpeningSlAudit(unittest.TestCase):
         value = assignments[0].value
         self.assertIsInstance(value, ast.Call)
         self.assertEqual(value.args[0].value, "sl_at_open")
+
+
+class TestBreakoutOpenAlert(unittest.TestCase):
+    def test_alert_is_after_successful_place_order_guard(self):
+        open_breakout = next(
+            item for item in BOT_TREE.body
+            if isinstance(item, ast.FunctionDef) and item.name == "open_breakout_trade"
+        )
+        place_order_guard = next(
+            node for node in ast.walk(open_breakout)
+            if isinstance(node, ast.If)
+            and isinstance(node.test, ast.UnaryOp)
+            and isinstance(node.test.op, ast.Not)
+            and isinstance(node.test.operand, ast.Call)
+            and isinstance(node.test.operand.func, ast.Name)
+            and node.test.operand.func.id == "place_order"
+        )
+        self.assertTrue(
+            any(isinstance(node, ast.Return) and node.value.value is False
+                for node in place_order_guard.body)
+        )
+
+        guarded_line = place_order_guard.lineno
+        alert_line = next(
+            node.lineno for node in ast.walk(open_breakout)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "send_chart_alert"
+        )
+        self.assertLess(guarded_line, alert_line)

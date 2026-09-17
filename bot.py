@@ -8870,7 +8870,13 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
         'margin':          margin,
         'fng_at_entry':    fng_v,
     }
-    place_order(trade, margin)
+    if not place_order(trade, margin):
+        print(
+            f"[Breakout] {symbol} {direction} signal passed strategy checks "
+            "but order placement was blocked — no Telegram open alert sent.",
+            flush=True,
+        )
+        return False
 
     short_name = symbol.replace('/USDT', '')
     msg = (
@@ -8887,6 +8893,7 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
                 if df_1h is not None else None
     send_chart_alert(chart_buf, symbol, msg)
     print(f"[Breakout] ✅ {direction} {symbol} @ {price:.6g} | margin=${margin:.0f} | RSI={rsi_str} | FNG={fng_v}")
+    return True
 
 
 def _breakout_determine_direction(btc_above_ema: bool, fng_v: int) -> str | None:
