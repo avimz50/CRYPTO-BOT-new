@@ -6,6 +6,8 @@ from pathlib import Path
 import threading
 import unittest
 
+import pandas as pd
+
 
 BOT_SOURCE = Path(__file__).with_name("bot.py").read_text(encoding="utf-8")
 BOT_TREE = ast.parse(BOT_SOURCE)
@@ -169,3 +171,58 @@ class TestBreakoutOpenAlert(unittest.TestCase):
         )
         tp2_keyword = next(kw for kw in chart_call.keywords if kw.arg == "tp2")
         self.assertEqual(tp2_keyword.value.id, "tp_price")
+
+
+class TestEarlyBreakoutEntry(unittest.TestCase):
+    @staticmethod
+    def _frame(close, high=None, low=None, volume=None):
+        return pd.DataFrame({
+            "close": close,
+            "high": high if high is not None else close,
+            "low": low if low is not None else close,
+            "volume": volume if volume is not None else [100.0] * len(close),
+        })
+
+    def _check(self, price_15m, volume_15m=200.0, direction="LONG"):
+        df_4h = self._frame([90.0 + i * 0.1 for i in range(25)])
+        df_1h = self._frame(
+            [99.0] * 15,
+            high=[100.0] * 15,
+            low=[98.0] * 15,
+        )
+        df_15m = self._frame(
+            [99.5] * 14 + [price_15m],
+            volume=[100.0] * 14 + [volume_15m],
+        )
+        frames = {"4h": df_4h, "1h": df_1h, "15m": df_15m}
+
+        class FakeTa:
+            @staticmethod
+            def rsi(series, length):
+                return pd.Series([55.0] * len(series))
+
+        check = load_function("_coin_breakout_full", {
+            "get_data": lambda symbol, timeframe, limit: frames[timeframe],
+            "ta": FakeTa,
+            "BREAKOUT_MIN_VOL": 1.5,
+            "BREAKOUT_MAX_EXTENSION_PCT": 1.0,
+        })
+        return check("FET/USDT:USDT", direction)
+
+    def test_long_uses_15m_confirmation_before_1h_close(self):
+        signal, price, level, _, vol_ratio = self._check(100.5)
+        self.assertTrue(signal)
+        self.assertEqual(price, 100.5)
+        self.assertEqual(level, 100.0)
+        self.assertEqual(vol_ratio, 2.0)
+
+    def test_long_rejects_late_chased_entry(self):
+        signal, price, level, _, _ = self._check(102.0)
+        self.assertFalse(signal)
+        self.assertEqual(price, 102.0)
+        self.assertEqual(level, 100.0)
+
+    def test_long_still_requires_volume_confirmation(self):
+        signal, _, _, _, vol_ratio = self._check(100.5, volume_15m=120.0)
+        self.assertFalse(signal)
+        self.assertEqual(vol_ratio, 1.2)

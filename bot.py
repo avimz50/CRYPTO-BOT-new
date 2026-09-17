@@ -8706,6 +8706,7 @@ BREAKOUT_FNG_SHORT_MAX        = 65   # FNG מקסימום ל-SHORT (מעל = ח�
 # RSI_VETO_SHORT = 52  ← REMOVED: היה דורס את ערך config.py (65) גלובלית ופוגע ב-fillslots
 #                        Breakout משתמש ב-RSI_VETO_BREAKOUT_SHORT/BEAR_MIN/MAX בלבד
 BREAKOUT_MIN_VOL              = 1.5  # volume ratio מינימלי (150% מהממוצע = 50% מעל)
+BREAKOUT_MAX_EXTENSION_PCT    = 1.0  # Anti-chase: no entry >1% beyond breakout level
 RSI_VETO_BREAKOUT_LONG        = 62   # RSI מקסימום ל-LONG בפריצה — אסור אם RSI > 62 (overbought)
 RSI_VETO_BREAKOUT_SHORT       = 60   # RSI מינימום ל-SHORT בפריצה [NEUTRAL/BULL בלבד] — fade pumps
 RSI_VETO_BREAKOUT_SHORT_BEAR_MIN = 50  # RSI מינימום ב-BEAR — מתחת = oversold (INJ/XRP audit), לא שורטים
@@ -8716,41 +8717,49 @@ MAJOR_PRIORITY_SYMBOLS        = {'BTC/USDT:USDT', 'ETH/USDT:USDT'}  # תמיד �
 
 def _coin_breakout_full(symbol: str, direction: str = 'LONG') -> tuple[bool, float, float, float | None, float]:
     """
-    Breakout / Breakdown check + Volume ratio — לשימוש Top10 Auto-Loop.
+    Early Breakout / Breakdown check + 15m Volume ratio — לשימוש Top10 Auto-Loop.
 
-    LONG:  breakout=True אם 1H close > highest HIGH של 10 נרות 1H שלמים.
-    SHORT: breakout=True אם 1H close < lowest  LOW  של 10 נרות 1H שלמים
-           + volume חייב להיות מעל הממוצע (anti-fakeout filter).
+    רמת הפריצה נקבעת מ-10 נרות 1H שלמים, אבל האישור והנפח מגיעים מהנר
+    הנוכחי ב-15m כדי לא להמתין עד שרוב נר ה-1H כבר הושלם.
 
-    שינויים מגרסה קודמת:
-      - הוחלף חלון 5×4H ב-10×1H לתגובה מהירה יותר לשינויי כיוון
-      - SHORT דורש vol_ratio ≥ BREAKOUT_MIN_VOL (anti-fakeout)
+    LONG:  15m close > 10H resistance + 15m volume ≥ BREAKOUT_MIN_VOL.
+    SHORT: 15m close < 10H support    + 15m volume ≥ BREAKOUT_MIN_VOL.
+    Anti-chase: לא נכנסים אם המחיר כבר התרחק ביותר מ-1% מהרמה.
 
-    מחזיר (signal, price_1h, level_1h, rsi_4h, vol_ratio).
+    מחזיר (signal, price_15m, level_1h, rsi_4h, vol_ratio_15m).
     """
     try:
         df_4h     = get_data(symbol, timeframe='4h', limit=25)
         df_1h     = get_data(symbol, timeframe='1h', limit=15)
-        price_1h  = float(df_1h['close'].iloc[-1])
+        df_15m    = get_data(symbol, timeframe='15m', limit=15)
+        price_15m = float(df_15m['close'].iloc[-1])
 
         if direction == 'LONG':
             level_1h = float(df_1h['high'].iloc[-11:-1].max())  # 10 complete 1H candles
-            signal   = price_1h > level_1h
+            extension_pct = (price_15m - level_1h) / level_1h * 100
+            signal = (
+                price_15m > level_1h
+                and extension_pct <= BREAKOUT_MAX_EXTENSION_PCT
+            )
         else:  # SHORT
             level_1h = float(df_1h['low'].iloc[-11:-1].min())   # 10 complete 1H candles
-            signal   = price_1h < level_1h
+            extension_pct = (level_1h - price_15m) / level_1h * 100
+            signal = (
+                price_15m < level_1h
+                and extension_pct <= BREAKOUT_MAX_EXTENSION_PCT
+            )
 
         rsi_s     = ta.rsi(df_4h['close'], length=14)
         rsi       = round(float(rsi_s.iloc[-1]), 1) if (rsi_s is not None and not rsi_s.isna().all()) else None
-        vol_cur   = float(df_1h['volume'].iloc[-1])
-        vol_avg   = float(df_1h['volume'].iloc[-11:-1].mean())
+        vol_cur   = float(df_15m['volume'].iloc[-1])
+        vol_avg   = float(df_15m['volume'].iloc[-11:-1].mean())
         vol_ratio = round(vol_cur / vol_avg, 2) if vol_avg > 0 else 1.0
 
-        # SHORT anti-fakeout: require volume above average to confirm breakdown
-        if direction == 'SHORT' and signal and vol_ratio < BREAKOUT_MIN_VOL:
+        # Both directions require prompt 15m volume confirmation.
+        if signal and vol_ratio < BREAKOUT_MIN_VOL:
             signal = False
 
-        return signal, price_1h, level_1h, rsi, vol_ratio
+        return signal, price_15m, level_1h, rsi, vol_ratio
     except Exception:
         return False, 0.0, 0.0, None, 1.0
 
@@ -8814,8 +8823,8 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
         symbol=symbol, direction=direction, strategy='Breakout',
         price=price, bot_score=0,
         regime=_cl_regime_br, fng=int(fng_v or 50), btc_above_ema=_cl_btc_br,
-        rsi=rsi, reason=f"breakout h4={h4_level:.6g} vol={vol_ratio:.1f}x",
-        extra={'H4 Level': f"${h4_level:.6g}", 'Vol Ratio': f"{vol_ratio:.1f}x"},
+        rsi=rsi, reason=f"breakout level={h4_level:.6g} 15m-vol={vol_ratio:.1f}x",
+        extra={'Breakout Level': f"${h4_level:.6g}", '15m Vol Ratio': f"{vol_ratio:.1f}x"},
     )
 
     tgt_b     = se.calc_targets(price, direction, tp1_pct=BREAKOUT_TP1_PCT)
@@ -8828,12 +8837,12 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
     be_price  = tgt_b['be_price']
 
     if direction == 'LONG':
-        level_lbl = f"4H High `${h4_level:.6g}`"
+        level_lbl = f"10H Resistance `${h4_level:.6g}`"
         dir_emoji = "🚀"
         dir_label = "LONG"
         sl_sign   = "-"; tp_sign = "+"
     else:  # SHORT
-        level_lbl = f"4H Low `${h4_level:.6g}`"
+        level_lbl = f"10H Support `${h4_level:.6g}`"
         dir_emoji = "🩸"
         dir_label = "SHORT"
         sl_sign   = "+"; tp_sign = "-"
@@ -8841,8 +8850,8 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
     rsi_str = f"{rsi:.1f}" if rsi is not None else "N/A"
     cmp_sym = ">" if direction == 'LONG' else "<"
     reason  = (
-        f"Breakout Strategy {direction}: 1H ${price:.6g} {cmp_sym} {level_lbl} | "
-        f"FNG={fng_v} | RSI={rsi_str} | Vol×{vol_ratio:.1f}"
+        f"Breakout Strategy {direction}: 15m ${price:.6g} {cmp_sym} {level_lbl} | "
+        f"FNG={fng_v} | RSI={rsi_str} | 15m Vol×{vol_ratio:.1f}"
     )
 
     # ── נתוני 1H: לגם ATR וגם גרף (80 נרות = ~3.3 ימים) ─────────────────
@@ -8951,7 +8960,7 @@ def _breakout_determine_direction(btc_above_ema: bool, fng_v: int) -> str | None
 
 def top10_breakout_loop():
     """
-    Thread 7 — Top 10 Breakout Auto-Scanner, כל 15 דקות.
+    Thread 7 — Top 10 Breakout Auto-Scanner, כל 5 דקות.
 
     כיוון נקבע לפי FNG + BTC EMA20:
       LONG:  BTC > EMA20 + FNG ≥ 20 (פחד/נייטרל/חמדנות + BTC עולה)
@@ -8959,8 +8968,9 @@ def top10_breakout_loop():
       Skip:  סיגנלים מנוגדים (Extreme Fear + BTC עולה, או High Greed + BTC יורד)
 
     סריקה:
-      LONG:  1H close > 4H High + RSI < 65 + Volume ≥ 0.8x
-      SHORT: 1H close < 4H Low  + RSI > 35 + Volume ≥ 0.8x
+      LONG:  15m close > 10H resistance + RSI gate + Volume ≥ 1.5x
+      SHORT: 15m close < 10H support    + RSI gate + Volume ≥ 1.5x
+      Anti-chase: דילוג אם המחיר כבר יותר מ-1% מעבר לרמת הפריצה.
 
     מרג'ין = 10% מהיתרה הפנויה | RR 1:3 | Trailing 2.5%
     הרצה ראשונה מיידית (כולל ETH).
