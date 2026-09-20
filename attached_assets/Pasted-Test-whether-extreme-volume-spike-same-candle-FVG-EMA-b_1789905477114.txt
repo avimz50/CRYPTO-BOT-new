@@ -1,0 +1,47 @@
+Test whether "extreme volume spike + same-candle FVG/EMA_bypass"
+predicts FastLoss across the full clean audit history (since the last
+publish, commit 183f626 on 2026-09-14 and later — exclude anything
+before that, since prior data may still include unfixed-bug artifacts).
+
+BACKGROUND: Two independent daily samples (2026-09-09, n=7 FastLoss;
+2026-09-20, n=6 FastLoss vs n=4 winners) suggest that LONG entries with
+very high volume ratio (roughly ≥3.7x) combined with EMA_bypass and a
+same-candle FVG tend to reverse within 1-3 minutes via FastLoss,
+regardless of RSI. Entries with moderate volume (roughly 1.6x-3.2x)
+tended to win even at high RSI. The hypothesis is that extreme volume
+often signals a climax/exhaustion candle rather than trend confirmation,
+and the scoring system currently rewards it as if it were fresh
+confirmation, double-counting the same candle across Trend, MACD,
+EMA_bypass, and FVG components.
+
+STEPS:
+
+1. Pull ALL closed LONG trades since 2026-09-14 (post-fix) from the
+   audit log where score_breakdown includes volume ratio, EMA_bypass
+   status, and FVG score.
+
+2. Bucket trades by entry volume ratio: <2x, 2-3x, 3-5x, 5-10x, >10x.
+   For each bucket, report: trade count, win rate, avg net P&L, and
+   FastLoss rate specifically (FastLoss count / bucket count).
+
+3. Within trades that had EMA_bypass AND FVG score > 0 on the SAME
+   entry (i.e., both triggered by what looks like the same volume
+   candle), report win rate and FastLoss rate vs trades that had
+   EMA_bypass alone, FVG alone, or neither.
+
+4. Report whether FastLoss trades cluster at shorter time-to-close (1-3
+   minutes) and shallower adverse move (well inside 1 ATR) compared to
+   other losing exits (MaxDuration, regular SL) — to confirm this is a
+   distinct "immediate reversal" signature, not ordinary stop-outs.
+
+5. If sample size since 2026-09-14 is too small (say, under 30 relevant
+   trades) to draw a confident conclusion, say so explicitly rather than
+   overstating the pattern — and report exactly how many qualifying
+   trades exist so we know how much more data to wait for.
+
+Report findings only — do NOT change scoring, volume thresholds, or add
+any FVG/EMA_bypass cap in this step. This is purely to confirm or
+disconfirm the hypothesis on a larger sample before considering a
+targeted fix (e.g. capping volume-ratio score contribution above a
+threshold, or requiring 1-2 candles of distance from a volume spike
+before EMA_bypass/FVG can both apply).
