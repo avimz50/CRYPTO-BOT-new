@@ -3,6 +3,7 @@ import io
 import json
 import csv
 import math
+import re
 import signal
 import sys
 import claude_gate
@@ -1932,6 +1933,48 @@ def _entry_profitability_reason(trade: dict, margin: float) -> str | None:
     return None
 
 
+def _ensure_entry_audit_context(trade: dict) -> None:
+    """Normalize comparable entry signals without running or changing strategy logic."""
+    breakdown = str(trade.get('score_breakdown') or '')
+
+    volume_ratio = trade.get('volume_ratio')
+    if not isinstance(volume_ratio, (int, float)):
+        volume_match = re.search(
+            r'(?:Vol=\d+/30\(×|15m Vol×|Vol×|Vol )(\d+(?:\.\d+)?)',
+            breakdown,
+        )
+        volume_ratio = float(volume_match.group(1)) if volume_match else None
+    trade['volume_ratio'] = round(float(volume_ratio), 4) if volume_ratio is not None else None
+
+    fvg_match = re.search(r'FVG=(?:\+)?(-?\d+)', breakdown)
+    fvg_not_evaluated = 'FVG=N/A' in breakdown
+    trade['fvg_evaluated'] = bool(fvg_match)
+    trade['fvg_score'] = int(fvg_match.group(1)) if fvg_match else None
+
+    ema_match = re.search(r'EMA_bypass=(1|0)\b', breakdown)
+    legacy_ema_match = re.search(r'EMA_bypass\(vol×', breakdown)
+    ema_not_evaluated = 'EMA_bypass=N/A' in breakdown
+    legacy_scored_entry = bool(fvg_match and re.search(r'Vol=\d+/30', breakdown))
+    ema_evaluated = bool(ema_match or legacy_ema_match or legacy_scored_entry)
+    trade['ema_bypass_evaluated'] = ema_evaluated
+    trade['ema_bypass'] = (
+        ema_match.group(1) == '1' if ema_match
+        else True if legacy_ema_match
+        else False if legacy_scored_entry
+        else None
+    )
+
+    if not ema_evaluated or not fvg_match:
+        missing = []
+        if not ema_evaluated and not ema_not_evaluated:
+            missing.append('EMA_bypass=N/A(not evaluated)')
+        if not fvg_match and not fvg_not_evaluated:
+            missing.append('FVG=N/A(not evaluated)')
+        suffix = ' | '.join(missing)
+        if suffix:
+            trade['score_breakdown'] = f"{breakdown} | {suffix}" if breakdown else suffix
+
+
 def place_order(trade: dict, margin: float = MARGIN) -> bool:
     """
     רושם עסקה חדשה:
@@ -1986,6 +2029,8 @@ def place_order(trade: dict, margin: float = MARGIN) -> bool:
     if spread_reason:
         print(f"[place_order] 🚫 {symbol} blocked — {spread_reason}", flush=True)
         return False
+
+    _ensure_entry_audit_context(trade)
 
     # ══ GLOBAL GUARDS — בדיקה + רישום + ניכוי, הכל אטומי תחת trades_lock ═
     # (מונע race בין threads: שתי עסקאות שנפתחות במקביל לא יכולות לקרוא
@@ -2193,6 +2238,7 @@ class TradeLogger:
 def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_price: float = None):
     """מוסיף עסקה סגורה ל-closed_trades_log + Audit Log מתמיד."""
     global closed_trades_log, trade_audit_log
+    _ensure_entry_audit_context(trade)
     _record_exit_leg(trade, pnl_usd, _remaining_notional(trade))
     accounting = _ensure_fee_accounting(trade)
     gross_pnl = round(accounting.get('gross_pnl_usd', pnl_usd), 2)
@@ -2261,6 +2307,10 @@ def _log_closed_trade(trade: dict, close_reason: str, pnl_usd: float, close_pric
         'duration_min':    duration_m,
         'scalp':           trade.get('scalp', False),
         'volume_ratio':    trade.get('volume_ratio'),
+        'ema_bypass':      trade.get('ema_bypass'),
+        'ema_bypass_evaluated': bool(trade.get('ema_bypass_evaluated')),
+        'fvg_score':       trade.get('fvg_score'),
+        'fvg_evaluated':   bool(trade.get('fvg_evaluated')),
         'market_regime':   trade.get('market_regime', 'Unknown'),
         'validation_trial': bool(trade.get('validation_trial')),
         'validation_trial_id': trade.get('validation_trial_id'),
@@ -3207,7 +3257,7 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
                     direction='LONG', score=0, atr=0, timeframe='4H', tf_reason='',
                     rsi=None, ema200=None, fng_v=None,
                     ob_found=None, ob_high=None, ob_low=None, df_ob=None,
-                    df_1h=None) -> bool:
+                    df_1h=None, volume_ratio=None) -> bool:
     """
     פותח עסקת Swing — גודל קבוע: $20 מרג'ין, 10x, $200 נשלט.
     SL=2% | TP1=2% (→ BE אוטומטי) | TP2=4% (RR 1:2).
@@ -3329,6 +3379,7 @@ def open_demo_trade(symbol, price, reason, df_3h=None,
         'rsi':                  round(rsi, 2) if rsi is not None else None,
         'ema200':               round(ema200, 6) if ema200 is not None else None,
         'score_breakdown':      reason,
+        'volume_ratio':         volume_ratio,
         'opened_at':            now_il().isoformat(timespec='seconds'),
         'pos_size':             pos_size,
         'margin':               effective_margin,
@@ -6189,7 +6240,7 @@ def handle_top10(message):
             for sym in TOP10_SYMBOLS:
                 short = sym.replace('/USDT', '')
                 try:
-                    breakout, price, h4_high, rsi = _coin_1h_breakout_above_4h_high(sym)
+                    breakout, price, h4_high, rsi, _vol_ratio = _coin_1h_breakout_above_4h_high(sym)
                     rsi_str = f" | RSI {rsi:.0f}" if rsi is not None else ""
                     if breakout:
                         execute_lines.append(
@@ -6986,7 +7037,7 @@ def handle_major(message):
         try:
             ticker_name = symbol.split('/', 1)[0]
             coin_icon   = MAJOR_WATCH_ICONS.get(ticker_name, '🔹')
-            breakout, price_1h, h4_high, rsi = _coin_1h_breakout_above_4h_high(symbol)
+            breakout, price_1h, h4_high, rsi, _vol_ratio = _coin_1h_breakout_above_4h_high(symbol)
 
             if symbol == 'BTC/USDT:USDT':
                 try:
@@ -8680,10 +8731,10 @@ def _sol_1h_breakout_above_4h_high() -> tuple[bool, float, float]:
         return False, 0.0, 0.0
 
 
-def _coin_1h_breakout_above_4h_high(symbol: str) -> tuple[bool, float, float, float | None]:
+def _coin_1h_breakout_above_4h_high(symbol: str) -> tuple[bool, float, float, float | None, float | None]:
     """
     Generic Breakout Check — כל מטבע.
-    מחזיר (breakout, price_1h, high_1h, rsi_4h).
+    מחזיר (breakout, price_1h, high_1h, rsi_4h, volume_ratio_1h).
     breakout=True אם 1H close > highest high של 10 נרות 1H שלמים אחרונים.
     (שונה מ-5×4H ל-10×1H — תגובה מהירה יותר לשינויי טרנד)
     """
@@ -8695,9 +8746,12 @@ def _coin_1h_breakout_above_4h_high(symbol: str) -> tuple[bool, float, float, fl
         breakout       = price_1h > recent_1h_high
         rsi_s          = ta.rsi(df_4h['close'], length=14)
         rsi            = round(float(rsi_s.iloc[-1]), 1) if (rsi_s is not None and not rsi_s.isna().all()) else None
-        return breakout, price_1h, recent_1h_high, rsi
+        vol_cur        = float(df_1h['volume'].iloc[-1])
+        vol_avg        = float(df_1h['volume'].iloc[-11:-1].mean())
+        volume_ratio   = round(vol_cur / vol_avg, 2) if vol_avg > 0 else None
+        return breakout, price_1h, recent_1h_high, rsi, volume_ratio
     except Exception:
-        return False, 0.0, 0.0, None
+        return False, 0.0, 0.0, None, None
 
 
 # ── Breakout Strategy Constants ───────────────────────────────────────────────
@@ -8891,6 +8945,7 @@ def open_breakout_trade(symbol: str, price: float, margin: float,
         'rsi':             round(rsi, 2) if rsi is not None else None,
         'ema200':          None,
         'score_breakdown': reason,
+        'volume_ratio':    vol_ratio,
         'opened_at':       now_il().isoformat(timespec='seconds'),
         'pos_size':        pos_size,
         'margin':          margin,
@@ -9457,7 +9512,7 @@ def major_watch_loop():
             for symbol in MAJOR_WATCH_COINS:
                 try:
                     ticker_name = symbol.split('/', 1)[0]
-                    breakout, price_1h, h4_high, rsi = _coin_1h_breakout_above_4h_high(symbol)
+                    breakout, price_1h, h4_high, rsi, volume_ratio = _coin_1h_breakout_above_4h_high(symbol)
 
                     # BTC — פילטר עצמי (EMA50 4H במקום EMA20 15m)
                     if symbol == 'BTC/USDT:USDT':
@@ -9571,6 +9626,7 @@ def major_watch_loop():
                                 tf_reason = f"פריצה מעל 4H High",
                                 rsi       = rsi,
                                 fng_v     = None,
+                                volume_ratio = volume_ratio,
                             ),
                             daemon=True,
                         ).start()

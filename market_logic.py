@@ -883,12 +883,13 @@ def score_symbol(df_3h, df_1h, symbol: str, direction: str = 'LONG',
         ema_gap_pct      = (price - ema200_v) / ema200_v * 100
         vol_ema_bypassed = (vol_rat >= VOL_EMA_BYPASS_MULT)
         if vol_ema_bypassed and abs(ema_gap_pct) > EMA_PROXIMITY_PCT:
-            parts.append(f"EMA_bypass(vol×{vol_rat:.1f}≥{VOL_EMA_BYPASS_MULT})")
+            parts.append(f"EMA_bypass=1(vol×{vol_rat:.1f}≥{VOL_EMA_BYPASS_MULT})")
         else:
             if direction == 'LONG' and ema_gap_pct > EMA_PROXIMITY_PCT:
                 return 0, f"EMA200 chase veto ({ema_gap_pct:.1f}% above EMA200)", atr_v
             if direction == 'SHORT' and ema_gap_pct < -EMA_PROXIMITY_PCT:
                 return 0, f"EMA200 chase veto ({abs(ema_gap_pct):.1f}% below EMA200)", atr_v
+            parts.append(f"EMA_bypass=0(vol×{vol_rat:.1f})")
 
         last_c  = df_3h.iloc[-2]
         c_body  = abs(last_c['close'] - last_c['open'])

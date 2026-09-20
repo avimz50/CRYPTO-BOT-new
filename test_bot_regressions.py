@@ -3,6 +3,7 @@
 import ast
 from datetime import date, datetime
 from pathlib import Path
+import re
 import threading
 import unittest
 
@@ -118,6 +119,79 @@ class TestOpeningSlAudit(unittest.TestCase):
         value = assignments[0].value
         self.assertIsInstance(value, ast.Call)
         self.assertEqual(value.args[0].value, "sl_at_open")
+
+
+class TestEntryAuditContext(unittest.TestCase):
+    def setUp(self):
+        self.normalize = load_function("_ensure_entry_audit_context", {"re": re})
+
+    def test_swing_positive_signals_become_structured_fields(self):
+        trade = {
+            "score_breakdown": (
+                "EMA_bypass=1(vol×4.2≥1.5) | Vol=30/30(×4.2) | FVG=+10(bullish)"
+            )
+        }
+        self.normalize(trade)
+        self.assertEqual(trade["volume_ratio"], 4.2)
+        self.assertTrue(trade["ema_bypass"])
+        self.assertTrue(trade["ema_bypass_evaluated"])
+        self.assertEqual(trade["fvg_score"], 10)
+        self.assertTrue(trade["fvg_evaluated"])
+        self.assertNotIn("N/A", trade["score_breakdown"])
+
+    def test_swing_zero_signals_remain_explicit(self):
+        trade = {
+            "score_breakdown": (
+                "EMA_bypass=0(vol×1.7) | Vol=20/30(×1.7) | FVG=0(no gap)"
+            )
+        }
+        self.normalize(trade)
+        self.assertFalse(trade["ema_bypass"])
+        self.assertEqual(trade["fvg_score"], 0)
+
+    def test_legacy_swing_without_bypass_token_is_inferred_as_false(self):
+        trade = {
+            "score_breakdown": "Vol=20/30(×1.7) | FVG=0(no gap)"
+        }
+        self.normalize(trade)
+        self.assertFalse(trade["ema_bypass"])
+        self.assertTrue(trade["ema_bypass_evaluated"])
+        self.assertNotIn("EMA_bypass=N/A", trade["score_breakdown"])
+
+    def test_unscored_strategy_is_marked_not_evaluated(self):
+        trade = {
+            "score_breakdown": "Breakout Strategy LONG: 15m Vol×3.4",
+            "volume_ratio": 3.37,
+        }
+        self.normalize(trade)
+        self.assertEqual(trade["volume_ratio"], 3.37)
+        self.assertIsNone(trade["ema_bypass"])
+        self.assertFalse(trade["ema_bypass_evaluated"])
+        self.assertIsNone(trade["fvg_score"])
+        self.assertFalse(trade["fvg_evaluated"])
+        self.assertIn("EMA_bypass=N/A(not evaluated)", trade["score_breakdown"])
+        self.assertIn("FVG=N/A(not evaluated)", trade["score_breakdown"])
+        first_breakdown = trade["score_breakdown"]
+        self.normalize(trade)
+        self.assertEqual(trade["score_breakdown"], first_breakdown)
+
+    def test_closed_trade_audit_preserves_structured_context(self):
+        close_logger = next(
+            item for item in BOT_TREE.body
+            if isinstance(item, ast.FunctionDef) and item.name == "_log_closed_trade"
+        )
+        record = next(
+            node.value for node in ast.walk(close_logger)
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "record"
+                    for target in node.targets)
+            and isinstance(node.value, ast.Dict)
+        )
+        keys = {key.value for key in record.keys if isinstance(key, ast.Constant)}
+        self.assertTrue({
+            "volume_ratio", "ema_bypass", "ema_bypass_evaluated",
+            "fvg_score", "fvg_evaluated",
+        }.issubset(keys))
 
 
 class TestBreakoutOpenAlert(unittest.TestCase):
