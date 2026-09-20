@@ -1,0 +1,51 @@
+Investigate whether today's (2026-09-20) FastLoss trades share a common
+signature. DIAGNOSIS ONLY — do not change scoring, thresholds, RSI
+weighting, or veto logic.
+
+Six trades closed via FastLoss today, ALL of them LONG:
+- ZAMA: entry 0.08359 → exit 0.08277, -$5.50
+- CELR: entry 0.004574 → exit 0.004533, -$5.08
+- EVAA: entry 0.6768 → exit 0.6739, -$2.74
+- ZIL: entry 0.004038 → exit 0.004004, -$4.81
+- 龙虾: entry 0.23363 → exit 0.23245, -$3.13
+- ALLO: entry 0.26032 → exit 0.2579, -$5.25
+
+Meanwhile 4 winning trades today (AR, AVAX, C, SKL) were also all LONG
+and closed via TP1+Trail or full TP.
+
+For EACH of the 6 FastLoss trades and, for comparison, EACH of the 4
+winning trades, pull from the audit/score_breakdown log:
+1. RSI at entry
+2. Score breakdown (Trend/MACD/Volume/RSI/FVG/OB/Squeeze components and
+   total score)
+3. Whether EMA_bypass fired, and if so the volume multiplier
+4. Timeframe/strategy (Swing/Breakout/Scalp/etc.)
+5. Time-to-close (duration)
+6. BTC regime and FNG at entry time
+7. Volume ratio (vol×) at entry
+
+Then report:
+- Is there a common RSI range, score-component pattern, EMA_bypass
+  status, or timeframe shared by the 6 FastLoss trades that differs
+  from the 4 winners?
+- Specifically check whether RSI at entry was already extended (high,
+  since these are all LONGs) for the losers vs winners — similar to a
+  pattern seen on 2026-09-09.
+- Report the FastLoss exit distances: how far price moved against
+  entry before FastLoss triggered on each (as % and in ATR terms) —
+  are these unusually fast/shallow reversals, or normal stop-outs?
+- Check whether all 6 FastLoss trades entered within a short time
+  window of each other (possible correlated-market-move explanation
+  vs individual setup failures) — report exact entry timestamps for
+  all 10 trades.
+- Compare this cluster against the 2026-09-09 FastLoss cluster
+  (7 trades, RSI 55-74 for LONGs, 5/7 had EMA_bypass) — does today's
+  cluster match that signature, contradict it, or show something new?
+
+Report findings only. This is the third time a FastLoss cluster with
+high entry scores has been observed (previously flagged 2026-09-06 and
+2026-09-09) — if today's data confirms the same signature a third time,
+say so explicitly, since three independent clean samples showing the
+same pattern would be strong enough evidence to consider a targeted fix
+(e.g. a hard RSI veto for extended entries) rather than further
+observation.
