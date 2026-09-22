@@ -9,14 +9,12 @@ echo "=== [Bot] Production startup — REPO=$(pwd) ==="
 echo "=== [Bot] uv=$(which uv 2>/dev/null || echo MISSING) | py=$(which python3 2>/dev/null || echo MISSING) ==="
 
 if command -v uv &>/dev/null; then
-  if [ -f ".venv/pyvenv.cfg" ]; then
-    echo "=== [Bot] .venv ready — uv run --no-sync ==="
-    PYTHON_RUN="uv run --no-sync python"
-  else
-    echo "=== [Bot] .venv missing — running uv sync ==="
-    uv sync --frozen --no-dev 2>&1 | tail -5 || echo "[WARN] uv sync failed"
-    PYTHON_RUN="uv run python"
+  echo "=== [Bot] Using build-prepared Python environment — uv run --no-sync ==="
+  if ! uv run --no-sync python -c "import ccxt" 2>/dev/null; then
+    echo "=== [Bot] FATAL: Python environment missing or incomplete; production build must run uv sync ==="
+    exit 1
   fi
+  PYTHON_RUN="uv run --no-sync python"
 elif command -v python3 &>/dev/null; then
   echo "=== [Bot] uv not found — using python3 ==="
   python3 -c "import ccxt" 2>/dev/null || pip3 install -r requirements.txt --quiet 2>&1 | tail -5 || true

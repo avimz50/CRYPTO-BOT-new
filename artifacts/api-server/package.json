@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "export NODE_ENV=development && pnpm run build && pnpm run start",
     "build": "node ./build.mjs",
-    "postbuild": "if [ \"$CI\" = 'true' ]; then echo '[postbuild] uv sync — building .venv...'; cd ../../.. && uv sync --frozen --no-dev 2>&1 | tail -5 && echo '[postbuild] .venv ready' || echo '[postbuild] uv sync failed'; else echo '[postbuild] dev — skip'; fi",
+    "postbuild": "if [ \"$CI\" = 'true' ]; then echo '[postbuild] uv sync — building Python environment...'; cd ../.. && uv sync --frozen --no-dev && echo '[postbuild] Python environment ready'; else echo '[postbuild] dev — skip'; fi",
     "start": "bash ./scripts/start_production.sh",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

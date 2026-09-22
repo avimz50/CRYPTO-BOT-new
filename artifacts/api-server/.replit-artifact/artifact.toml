@@ -20,6 +20,7 @@ args = ["pnpm", "--filter", "@workspace/api-server", "run", "build"]
 
 [services.production.build.env]
 NODE_ENV = "production"
+CI = "true"
 
 [services.production.run]
 # Startup script: launches bot.py in background, then API server in foreground
