@@ -131,3 +131,17 @@ mtime_ms = 1789554584927
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:95de2b83-78fc-4e84-b223-d602409dd064/397309e8-e0c5-42c8-8189-b3100521d12c/b722a93a-0059-4e06-9d49-ba217e56ea9a"
 storage_version_token = "1789554591922308"
 content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+[[outputs]]
+id = "qfuEAfzKTFDsCdyqXw7su"
+uri = "file://reports/fastloss_diagnostic_2026-09-22.md"
+type = "text"
+title = "FastLoss Diagnostic Report — 2026-09-22"
+description = "Complete downloadable report with the 18-trade breakdown, logging-completeness check, combined statistics, confidence assessment, and time-cluster analysis."
+logical_id = "5fcb15c3-c534-45ec-8b44-6e48b00937bc"
+content_hash = "sha256:900bb10d0a78b4ece8fa17031ba60498faefe824275521cbaad16436c6434d15"
+size = 17109
+mtime_ms = 1790065655283
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:95de2b83-78fc-4e84-b223-d602409dd064/5fcb15c3-c534-45ec-8b44-6e48b00937bc/e5109ac9-ecf8-49e1-adf3-99902eb2b4af"
+storage_version_token = "1790065655884465"
+content_type = "text/markdown"
