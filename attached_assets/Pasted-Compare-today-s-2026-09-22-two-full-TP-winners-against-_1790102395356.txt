@@ -1,0 +1,42 @@
+Compare today's (2026-09-22) two full-TP winners against the FastLoss
+cluster, to see if there's an identifiable entry signature that
+distinguishes trades that capture a real move from trades that enter
+at the tail of an already-exhausted spike. DIAGNOSIS ONLY — no scoring
+or logic changes.
+
+Full detailed score_breakdown for these two trades (entry RSI, full
+score component breakdown, EMA_bypass status + volume ratio, FVG score,
+OB score, timeframe/strategy, entry time, price move to TP):
+- CHR: entry 0.0237 → exit 0.02589 (+$19.20, +9.2% move, "TP מלא")
+- MUBARAK: entry 0.06584 → exit 0.06858 (+$12.85, +4.2% move, "TP מלא")
+
+Also pull the other two winners from today for context:
+- MINA: entry 0.15205 → exit 0.15225 (+$7.81, TP1+Trail)
+- FET: entry 0.2085 → exit 0.2081 (+$4.79, TP1+Trail)
+
+Compare against today's 9 FastLoss trades (BTW, WLD, EVAA, ARM, PEPE,
+LINK, ADA, BROCCOLI, FLOCK) using the same fields.
+
+Specifically report:
+1. Do CHR/MUBARAK show meaningfully LOWER entry volume ratio than the
+   FastLoss cluster (continuing the volume-extremity pattern from the
+   prior investigation), or were they also high-volume entries that
+   simply happened to keep moving?
+2. Do they show VolBuild, Squeeze, or other score components that were
+   0 across the FastLoss cluster — i.e. any positive signal present in
+   winners but absent in losers, rather than just "less of a bad
+   signal"?
+3. Compare RSI at entry — is there a distinguishing pattern, or (as
+   found previously) is RSI not a reliable differentiator?
+4. Report distance from the most recent local high/resistance at entry
+   time if reconstructable — i.e. did the winners enter closer to a
+   retest/pullback rather than right at the spike candle, unlike the
+   FastLoss entries?
+5. Given the earlier finding that Swing underperforms Breakout/Major
+   Watch by strategy regardless of EMA_bypass (25% vs 33-50% win rate),
+   report which strategy/timeframe each of these 6 trades used, and
+   whether today's pattern is consistent with that finding.
+
+Be honest if the winning sample (2-4 trades) is too small to identify
+a reliable signature distinct from the losers, rather than
+overfitting a story to 2 data points. No code changes.
