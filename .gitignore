@@ -52,3 +52,4 @@ artifacts/bot-dashboard/public/wallet.json
 artifacts/bot-dashboard/public/trade_audit.json
 artifacts/bot-dashboard/public/hot_candidates.json
 artifacts/bot-dashboard/public/last_scan_results.json
+data/gate_stats.json
