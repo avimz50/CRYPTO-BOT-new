@@ -53,3 +53,26 @@ artifacts/bot-dashboard/public/trade_audit.json
 artifacts/bot-dashboard/public/hot_candidates.json
 artifacts/bot-dashboard/public/last_scan_results.json
 data/gate_stats.json
+
+# Python
+__pycache__/
+*.pyc
+.pythonlibs/
+.upm/
+.venv/
+
+# Bot runtime data (not code)
+data/
+reports/
+exports/
+attached_assets/
+active_trades.json
+wallet.json
+trade_history.csv
+trade_report_today.csv
+audit_report.json
+audit_report.md
+*.db
+out.txt
+bot.zip
+*.zip
