@@ -1,0 +1,97 @@
+nohup: ignoring input
+[data] TRAIN: 40d starting 2026-07-29
+[data] TEST:  20d starting 2026-09-07
+[data] fetching 20 symbols x 2 windows ...
+  [skip] ADA/USDT: DDoSProtection bitget {"code":"429","msg":"Too Many Requests","requestTime"
+  [skip] AVAX/USDT: DDoSProtection bitget {"code":"429","msg":"Too Many Requests","requestTime"
+  [skip] DOT/USDT: DDoSProtection bitget {"code":"429","msg":"Too Many Requests","requestTime"
+  [skip] ATOM/USDT: DDoSProtection bitget {"code":"429","msg":"Too Many Requests","requestTime"
+  [skip] ARB/USDT: DDoSProtection bitget {"code":"429","msg":"Too Many Requests","requestTime"
+[data] usable symbols: train=15 test=20
+
+====================================================================================================
+EXIT PROFILE = swing   threshold=70.0  fee=0.06%/side  slip=0.1%  fill=taker
+====================================================================================================
+  scorer=random
+    TRAIN  ALL   n=2914  net= -2755.76  mean= -0.946  win= 34.2%  CI=[ -1.079, -0.812]  r=+0.003  NEGATIVE
+    TRAIN  LONG  n=1714  net= -1478.25  mean= -0.862  win= 34.8%  CI=[ -1.030, -0.694]  r=+0.020  NEGATIVE
+    TRAIN  SHORT n=1200  net= -1277.51  mean= -1.065  win= 33.3%  CI=[ -1.282, -0.847]  r=-0.019  NEGATIVE
+    TEST   ALL   n=2188  net= -2235.72  mean= -1.022  win= 33.7%  CI=[ -1.176, -0.867]  r=-0.014  NEGATIVE
+    TEST   LONG  n=1298  net= -1171.81  mean= -0.903  win= 35.1%  CI=[ -1.106, -0.700]  r=-0.030  NEGATIVE
+    TEST   SHORT n= 890  net= -1063.91  mean= -1.195  win= 31.8%  CI=[ -1.432, -0.959]  r=+0.010  NEGATIVE
+  scorer=bot_like
+    TRAIN  ALL   n=2933  net= -3104.54  mean= -1.058  win= 31.6%  CI=[ -1.191, -0.926]  r=+0.013  NEGATIVE
+    TRAIN  LONG  n=1516  net= -1550.80  mean= -1.023  win= 31.9%  CI=[ -1.213, -0.833]  r=+0.011  NEGATIVE
+    TRAIN  SHORT n=1417  net= -1553.75  mean= -1.097  win= 31.3%  CI=[ -1.281, -0.912]  r=+0.015  NEGATIVE
+    TEST   ALL   n=2213  net= -2135.54  mean= -0.965  win= 33.9%  CI=[ -1.120, -0.810]  r=-0.006  NEGATIVE
+    TEST   LONG  n=1123  net=  -888.97  mean= -0.792  win= 35.6%  CI=[ -1.016, -0.567]  r=+0.008  NEGATIVE
+    TEST   SHORT n=1090  net= -1246.58  mean= -1.144  win= 32.1%  CI=[ -1.356, -0.932]  r=-0.019  NEGATIVE
+  scorer=trend
+    TRAIN  ALL   n= 787  net=  -508.35  mean= -0.646  win= 36.8%  CI=[ -0.928, -0.364]  r=-0.054  NEGATIVE
+    TRAIN  LONG  n= 516  net=   -92.95  mean= -0.180  win= 42.2%  CI=[ -0.546, +0.186]  r=-0.013  noise
+    TRAIN  SHORT n= 271  net=  -415.40  mean= -1.533  win= 26.6%  CI=[ -1.946, -1.120]  r=-0.128  NEGATIVE
+    TEST   ALL   n= 722  net=  -563.62  mean= -0.781  win= 34.1%  CI=[ -1.071, -0.490]  r=+0.009  NEGATIVE
+    TEST   LONG  n= 460  net=  -222.97  mean= -0.485  win= 38.3%  CI=[ -0.865, -0.104]  r=-0.043  NEGATIVE
+    TEST   SHORT n= 262  net=  -340.65  mean= -1.300  win= 26.7%  CI=[ -1.734, -0.867]  r=+0.105  NEGATIVE
+  scorer=meanrev
+    TRAIN  ALL   n=1817  net= -1607.74  mean= -0.885  win= 36.6%  CI=[ -1.054, -0.716]  r=-0.015  NEGATIVE
+    TRAIN  LONG  n= 840  net=  -362.53  mean= -0.432  win= 42.7%  CI=[ -0.689, -0.175]  r=-0.043  NEGATIVE
+    TRAIN  SHORT n= 977  net= -1245.22  mean= -1.275  win= 31.3%  CI=[ -1.496, -1.054]  r=+0.001  NEGATIVE
+    TEST   ALL   n=1369  net= -1109.59  mean= -0.811  win= 37.6%  CI=[ -1.012, -0.609]  r=+0.047  NEGATIVE
+    TEST   LONG  n= 654  net=  -321.85  mean= -0.492  win= 41.7%  CI=[ -0.782, -0.202]  r=+0.041  NEGATIVE
+    TEST   SHORT n= 715  net=  -787.74  mean= -1.102  win= 33.8%  CI=[ -1.380, -0.823]  r=+0.049  NEGATIVE
+  scorer=sweep
+    TRAIN  ALL   n=1414  net= -1419.38  mean= -1.004  win= 33.0%  CI=[ -1.200, -0.808]  r=-0.000  NEGATIVE
+    TRAIN  LONG  n= 665  net=  -559.64  mean= -0.842  win= 35.6%  CI=[ -1.127, -0.556]  r=+0.038  NEGATIVE
+    TRAIN  SHORT n= 749  net=  -859.74  mean= -1.148  win= 30.6%  CI=[ -1.417, -0.879]  r=-0.033  NEGATIVE
+    TEST   ALL   n=1044  net=  -647.42  mean= -0.620  win= 38.4%  CI=[ -0.855, -0.385]  r=+0.036  NEGATIVE
+    TEST   LONG  n= 529  net=  -271.39  mean= -0.513  win= 38.2%  CI=[ -0.823, -0.203]  r=+0.119  NEGATIVE
+    TEST   SHORT n= 515  net=  -376.02  mean= -0.730  win= 38.6%  CI=[ -1.084, -0.376]  r=-0.050  NEGATIVE
+
+====================================================================================================
+EXIT PROFILE = scalp   threshold=70.0  fee=0.06%/side  slip=0.1%  fill=taker
+====================================================================================================
+  scorer=random
+    TRAIN  ALL   n=4499  net= -4715.65  mean= -1.048  win= 45.0%  CI=[ -1.107, -0.989]  r=+0.003  NEGATIVE
+    TRAIN  LONG  n=2614  net= -2598.33  mean= -0.994  win= 45.9%  CI=[ -1.071, -0.917]  r=+0.000  NEGATIVE
+    TRAIN  SHORT n=1885  net= -2117.32  mean= -1.123  win= 43.7%  CI=[ -1.216, -1.030]  r=+0.006  NEGATIVE
+    TEST   ALL   n=3382  net= -3479.46  mean= -1.029  win= 48.3%  CI=[ -1.102, -0.956]  r=-0.014  NEGATIVE
+    TEST   LONG  n=1981  net= -1907.31  mean= -0.963  win= 49.2%  CI=[ -1.058, -0.868]  r=-0.015  NEGATIVE
+    TEST   SHORT n=1401  net= -1572.15  mean= -1.122  win= 47.1%  CI=[ -1.236, -1.009]  r=-0.013  NEGATIVE
+  scorer=bot_like
+    TRAIN  ALL   n=4570  net= -5270.00  mean= -1.153  win= 42.6%  CI=[ -1.212, -1.094]  r=+0.015  NEGATIVE
+    TRAIN  LONG  n=2400  net= -2569.94  mean= -1.071  win= 44.2%  CI=[ -1.153, -0.989]  r=+0.002  NEGATIVE
+    TRAIN  SHORT n=2170  net= -2700.06  mean= -1.244  win= 40.8%  CI=[ -1.328, -1.160]  r=+0.027  NEGATIVE
+    TEST   ALL   n=3425  net= -3633.44  mean= -1.061  win= 48.8%  CI=[ -1.134, -0.988]  r=+0.006  NEGATIVE
+    TEST   LONG  n=1773  net= -1643.73  mean= -0.927  win= 50.5%  CI=[ -1.030, -0.824]  r=+0.005  NEGATIVE
+    TEST   SHORT n=1652  net= -1989.72  mean= -1.204  win= 46.9%  CI=[ -1.307, -1.102]  r=+0.010  NEGATIVE
+  scorer=trend
+    TRAIN  ALL   n= 992  net=  -887.52  mean= -0.895  win= 57.6%  CI=[ -1.067, -0.722]  r=+0.027  NEGATIVE
+    TRAIN  LONG  n= 671  net=  -440.12  mean= -0.656  win= 61.8%  CI=[ -0.868, -0.444]  r=+0.033  NEGATIVE
+    TRAIN  SHORT n= 321  net=  -447.40  mean= -1.394  win= 48.6%  CI=[ -1.684, -1.104]  r=+0.015  NEGATIVE
+    TEST   ALL   n= 932  net= -1024.42  mean= -1.099  win= 53.9%  CI=[ -1.280, -0.918]  r=-0.002  NEGATIVE
+    TEST   LONG  n= 616  net=  -611.97  mean= -0.993  win= 56.2%  CI=[ -1.216, -0.771]  r=-0.003  NEGATIVE
+    TEST   SHORT n= 316  net=  -412.45  mean= -1.305  win= 49.4%  CI=[ -1.614, -0.996]  r=-0.008  NEGATIVE
+  scorer=meanrev
+    TRAIN  ALL   n=2335  net= -2212.16  mean= -0.947  win= 47.5%  CI=[ -1.031, -0.864]  r=+0.019  NEGATIVE
+    TRAIN  LONG  n=1086  net=  -732.23  mean= -0.674  win= 53.1%  CI=[ -0.795, -0.554]  r=+0.038  NEGATIVE
+    TRAIN  SHORT n=1249  net= -1479.94  mean= -1.185  win= 42.6%  CI=[ -1.300, -1.070]  r=-0.013  NEGATIVE
+    TEST   ALL   n=1731  net= -1540.27  mean= -0.890  win= 53.0%  CI=[ -0.993, -0.787]  r=+0.039  NEGATIVE
+    TEST   LONG  n= 811  net=  -517.45  mean= -0.638  win= 57.7%  CI=[ -0.783, -0.493]  r=+0.054  NEGATIVE
+    TEST   SHORT n= 920  net= -1022.82  mean= -1.112  win= 48.9%  CI=[ -1.257, -0.967]  r=+0.023  NEGATIVE
+  scorer=sweep
+    TRAIN  ALL   n=1722  net= -1925.25  mean= -1.118  win= 43.2%  CI=[ -1.214, -1.022]  r=-0.047  NEGATIVE
+    TRAIN  LONG  n= 818  net=  -865.52  mean= -1.058  win= 44.1%  CI=[ -1.192, -0.924]  r=-0.058  NEGATIVE
+    TRAIN  SHORT n= 904  net= -1059.73  mean= -1.172  win= 42.4%  CI=[ -1.309, -1.036]  r=-0.036  NEGATIVE
+    TEST   ALL   n=1274  net= -1027.21  mean= -0.806  win= 52.6%  CI=[ -0.923, -0.690]  r=+0.002  NEGATIVE
+    TEST   LONG  n= 638  net=  -539.34  mean= -0.845  win= 52.2%  CI=[ -1.007, -0.684]  r=+0.053  NEGATIVE
+    TEST   SHORT n= 636  net=  -487.87  mean= -0.767  win= 53.0%  CI=[ -0.935, -0.599]  r=-0.048  NEGATIVE
+
+====================================================================================================
+HOW TO READ THIS
+====================================================================================================
+  A scorer only passes the Step-1 gate if: (a) TEST beats random on
+  the same candidates, (b) TEST does not flip sign from TRAIN, and
+  (c) the result holds in at least one direction without the other
+  direction being NEGATIVE. n counts must reach the spec's 200+
+  per track before any of this is trusted over noise.
