@@ -1,0 +1,96 @@
+nohup: ignoring input
+[data] TRAIN 40d / TEST 20d, 20 symbols (incl. BTC/USDT for regime)
+[data] usable: train=20 test=20
+  [TRAIN] 16400 sampled decision bars
+  [TEST] 9200 sampled decision bars
+
+====================================================================================================
+HORIZON h1 = 60 minutes forward
+====================================================================================================
+
+  --- horizon=h1 (TRAIN) ---
+  feature            n     LONG r      t    SHORT r      t
+  ema9_21_gap    16400     -0.007  -0.84     +0.007  +0.84
+  ema21_50_gap   16400     +0.028  +3.58     -0.028  -3.58  <-- look
+  dist_ema200    16400     +0.008  +1.02     -0.008  -1.02
+  macd_norm      16400     +0.005  +0.66     -0.005  -0.66
+  rsi_c          16400     -0.009  -1.19     +0.009  +1.19
+  atr_pct        16400     -0.006  -0.80     +0.006  +0.80
+  atr_pctile     16400     +0.028  +3.60     -0.028  -3.60  <-- look
+  vol_ratio      16400     +0.013  +1.71     -0.013  -1.71
+  vol_trend      16400     +0.005  +0.66     -0.005  -0.66
+  donchian_pos   16400     +0.002  +0.27     -0.002  -0.27
+  chg_1h         16400     -0.026  -3.29     +0.026  +3.29  <-- look
+  chg_24h        16400     -0.015  -1.96     +0.015  +1.96
+  hour_sin       16400     +0.013  +1.64     -0.013  -1.64
+  hour_cos       16400     +0.017  +2.21     -0.017  -2.21
+  btc_regime     16400     +0.009  +1.19     -0.009  -1.19
+
+  --- horizon=h1 (TEST) ---
+  feature            n     LONG r      t    SHORT r      t
+  ema9_21_gap     9200     -0.019  -1.79     +0.019  +1.79
+  ema21_50_gap    9200     -0.005  -0.45     +0.005  +0.45
+  dist_ema200     9200     +0.006  +0.58     -0.006  -0.58
+  macd_norm       9200     -0.016  -1.49     +0.016  +1.49
+  rsi_c           9200     -0.031  -3.02     +0.031  +3.02  <-- look
+  atr_pct         9200     +0.023  +2.17     -0.023  -2.17
+  atr_pctile      9200     +0.015  +1.39     -0.015  -1.39
+  vol_ratio       9200     +0.006  +0.62     -0.006  -0.62
+  vol_trend       9200     +0.010  +0.93     -0.010  -0.93
+  donchian_pos    9200     -0.025  -2.43     +0.025  +2.43
+  chg_1h          9200     -0.023  -2.18     +0.023  +2.18
+  chg_24h         9200     +0.036  +3.41     -0.036  -3.41  <-- look
+  hour_sin        9200     +0.013  +1.21     -0.013  -1.21
+  hour_cos        9200     -0.033  -3.16     +0.033  +3.16  <-- look
+  btc_regime      9200     +0.008  +0.77     -0.008  -0.77
+
+====================================================================================================
+HORIZON h2 = 120 minutes forward
+====================================================================================================
+
+  --- horizon=h2 (TRAIN) ---
+  feature            n     LONG r      t    SHORT r      t
+  ema9_21_gap    16400     +0.019  +2.48     -0.019  -2.48
+  ema21_50_gap   16400     +0.045  +5.72     -0.045  -5.72  <-- look
+  dist_ema200    16400     +0.020  +2.53     -0.020  -2.53  <-- look
+  macd_norm      16400     +0.030  +3.88     -0.030  -3.88  <-- look
+  rsi_c          16400     -0.004  -0.47     +0.004  +0.47
+  atr_pct        16400     -0.010  -1.27     +0.010  +1.27
+  atr_pctile     16400     +0.034  +4.33     -0.034  -4.33  <-- look
+  vol_ratio      16400     +0.017  +2.22     -0.017  -2.22
+  vol_trend      16400     +0.011  +1.44     -0.011  -1.44
+  donchian_pos   16400     +0.005  +0.58     -0.005  -0.58
+  chg_1h         16400     -0.004  -0.47     +0.004  +0.47
+  chg_24h        16400     -0.016  -2.07     +0.016  +2.07
+  hour_sin       16400     +0.018  +2.32     -0.018  -2.32
+  hour_cos       16400     +0.023  +2.90     -0.023  -2.90  <-- look
+  btc_regime     16400     +0.018  +2.37     -0.018  -2.37
+
+  --- horizon=h2 (TEST) ---
+  feature            n     LONG r      t    SHORT r      t
+  ema9_21_gap     9200     -0.016  -1.52     +0.016  +1.52
+  ema21_50_gap    9200     +0.002  +0.16     -0.002  -0.16
+  dist_ema200     9200     +0.017  +1.65     -0.017  -1.65
+  macd_norm       9200     -0.010  -1.00     +0.010  +1.00
+  rsi_c           9200     -0.021  -2.02     +0.021  +2.02
+  atr_pct         9200     +0.033  +3.12     -0.033  -3.12  <-- look
+  atr_pctile      9200     +0.047  +4.51     -0.047  -4.51  <-- look
+  vol_ratio       9200     +0.020  +1.88     -0.020  -1.88
+  vol_trend       9200     +0.008  +0.73     -0.008  -0.73
+  donchian_pos    9200     -0.015  -1.44     +0.015  +1.44
+  chg_1h          9200     -0.027  -2.60     +0.027  +2.60  <-- look
+  chg_24h         9200     +0.045  +4.32     -0.045  -4.32  <-- look
+  hour_sin        9200     +0.023  +2.24     -0.023  -2.24
+  hour_cos        9200     -0.040  -3.81     +0.040  +3.81  <-- look
+  btc_regime      9200     +0.009  +0.86     -0.009  -0.86
+
+====================================================================================================
+HOW TO READ THIS
+====================================================================================================
+  r is the correlation between the feature (known at decision time)
+  and the forward return (LONG) or its negative (SHORT). A feature
+  only deserves a place in a new scorer if the SAME direction shows
+  |t| > ~2.5 in BOTH train and test, with the SAME sign. A feature
+  that only works in one window is fitting noise.
+  Windows overlap (hourly sampling, up to 2h horizon), so treat t
+  as a screening heuristic, not a final significance test.
